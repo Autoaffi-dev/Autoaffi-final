@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     const txt = await res.text();
     return NextResponse.json({ ok:false, error: txt }, { status: 502 });
   }
-  const data = await res.json();
+  const data: any = await res.json();
   const products = (data.products||data).map((p:any)=>({ id:p.productId || p.id, name: p.title || p.name, advertiser: p.merchantName }));
   return NextResponse.json({ ok:true, products });
 }

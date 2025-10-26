@@ -25,7 +25,7 @@ export async function POST(req: Request) {
     const txt = await tokenRes.text();
     return NextResponse.json({ ok:false, error: txt }, { status: 502 });
   }
-  const tokenData = await tokenRes.json();
+  const tokenData: any = await tokenRes.json();
   const accessToken = tokenData.access_token;
 
   // Search example (adjust to correct Impact endpoint)
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     const txt = await res.text();
     return NextResponse.json({ ok:false, error: txt }, { status: 502 });
   }
-  const data = await res.json();
+  const data: any = await res.json();
   const products = (data.items||data).map((p:any)=>({ id:p.id, name:p.name || p.title, advertiser: p.advertiserName || '' }));
   return NextResponse.json({ ok:true, products });
 }

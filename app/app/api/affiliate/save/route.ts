@@ -1,36 +1,37 @@
-// app/api/affiliate/save/route.ts
-import { NextResponse } from 'next/server';
-import fetch from 'node-fetch';
+import { NextResponse } from "next/server";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function POST(req: Request) {
-  const body = await req.json();
-  const { postId, userId, provider, product_title, affiliate_url, commission } = body;
+  try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      return NextResponse.json(
+        { ok: false, error: "Missing Supabase credentials" },
+        { status: 500 }
+      );
+    }
 
-  if (!SUPABASE_KEY) return NextResponse.json({ ok:false, error:'no supabase key' }, { status:500 });
+    const body = await req.json();
+    const insertUrl = `${SUPABASE_URL}/rest/v1/affiliate_links`;
 
-  const insertUrl = `${https://xhxynfvxecekdmhjipgt.supabase.co}/rest/v1/affiliate_links`;
-  const res = await fetch(insertUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type':'application/json',
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-      'Prefer': 'return=representation'
-    },
-    body: JSON.stringify({
-      post_id: postId,
-      user_id: userId,
-      provider,
-      product_title,
-      affiliate_url,
-      commission
-    })
-  });
+    const res = await fetch(insertUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+      },
+      body: JSON.stringify(body),
+    });
 
-  const data = await res.json();
-  if (!res.ok) return NextResponse.json({ ok:false, error:data }, { status:500 });
-  return NextResponse.json({ ok:true, row: data[0] });
+    const data = await res.json();
+    return NextResponse.json({ ok: true, data });
+  } catch (err: any) {
+    console.error("Affiliate Save Error:", err);
+    return NextResponse.json(
+      { ok: false, error: err.message || "Unknown error" },
+      { status: 500 }
+    );
+  }
 }

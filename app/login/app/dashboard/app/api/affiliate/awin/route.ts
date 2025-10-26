@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     const txt = await res.text();
     return NextResponse.json({ ok: false, error: txt }, { status: 502 });
   }
-  const data = await res.json();
+  const data: any = await res.json();
 
   // Map to simplified format
   const products = (data.items || data).map((p: any) => ({
