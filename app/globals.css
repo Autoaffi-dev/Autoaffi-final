@@ -1,13 +1,119 @@
-:root{
-  --bg1:#B9E6FF;
-  --bg2:#C8FCEA;
-  --accent:#2563eb;
-  --mint:#06b6d4;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 🌍 Global Styles for Autoaffi Platform */
+html, body {
+  scroll-behavior: smooth;
+  background-color: #f9fafb;
+  color: #0f172a;
+  font-family: 'Inter', sans-serif;
 }
-html,body,#__next { height:100%; }
-body { font-family: Inter, Arial, sans-serif; background: linear-gradient(180deg,var(--bg1),var(--bg2)); margin:0; }
-.container{ max-width:1100px; margin:36px auto; }
-.card{ background:#fff; border-radius:16px; padding:20px; box-shadow:0 10px 30px rgba(2,6,23,0.06);}
-.btn{ padding:10px 16px; border-radius:10px; cursor:pointer; }
-.btn-primary{ background:var(--accent); color:#fff; border:none;}
-.btn-ghost{ background:transparent; border:1px solid var(--accent); color:var(--accent);}
+
+/* ✨ Smooth transitions for all elements */
+* {
+  transition: all 0.3s ease-in-out;
+}
+
+/* 🌟 Gradient Text Utility */
+.text-gold {
+  @apply text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-yellow-600;
+}
+
+/* 💫 Button Styles */
+.btn-gold {
+  @apply bg-gradient-to-r from-yellow-400 to-yellow-600 text-white font-semibold rounded-full shadow-md hover:shadow-xl transition-all duration-300;
+}
+
+.btn-outline {
+  @apply border border-white/70 text-white rounded-full hover:bg-white/10 transition-all duration-300;
+}
+
+/* 🌀 Pulsing Animation */
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 10px rgba(250, 204, 21, 0.7); }
+  50% { box-shadow: 0 0 25px rgba(250, 204, 21, 1); }
+}
+
+.animate-gold-pulse {
+  animation: pulseGlow 2s infinite ease-in-out;
+}
+
+/* 🎥 Hero Section Styles */
+#hero {
+  position: relative;
+  overflow: hidden;
+}
+
+#hero video {
+  filter: brightness(0.75) contrast(1.15) saturate(1.2);
+}
+
+/* 📜 Fade & Slide Animations */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in-up {
+  animation: fadeInUp 1s ease-out forwards;
+}
+
+/* 🔔 Toast / Notification Base */
+.toast {
+  @apply fixed bottom-6 right-6 bg-yellow-500 text-white px-5 py-3 rounded-lg shadow-xl z-50;
+  animation: fadeInUp 0.8s ease forwards;
+}
+
+/* 💡 Section Reveal */
+section {
+  animation: fadeInUp 1s ease-in-out both;
+}
+
+/* 🪶 Footer */
+footer {
+  background: linear-gradient(to right, #0f172a, #1e293b);
+  color: white;
+}
+
+footer a {
+  color: #facc15;
+  transition: color 0.3s;
+}
+
+footer a:hover {
+  color: #fde68a;
+}
+
+/* 📱 Responsive Video Fix */
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ✨ Scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #facc15, #f59e0b);
+  border-radius: 5px;
+}
+
+/* 🏆 Utility classes */
+.section-title {
+  @apply text-4xl md:text-5xl font-extrabold mb-6 text-center;
+}
+
+.section-subtitle {
+  @apply text-gray-600 text-lg md:text-xl text-center max-w-3xl mx-auto mb-12;
+}
+
+.text-gradient-gold {
+  background: linear-gradient(to right, #facc15, #f59e0b);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
