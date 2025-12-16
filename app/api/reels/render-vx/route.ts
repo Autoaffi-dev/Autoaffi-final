@@ -83,6 +83,25 @@ export async function POST(req: NextRequest) {
 
     formData.set("vx41_meta", JSON.stringify(metadata));
 
+    // ----------------------------------------------------
+    // 🆕 NYA VX 4.1 / 4.2 FÄLT — måste skickas vidare
+    // OBS: Vi tar INGET bort — vi lägger endast till dessa.
+    // ----------------------------------------------------
+
+    const beatMap = formData.get("beatMap") ?? "[]";
+    const voiceTimeline = formData.get("voiceTimeline") ?? "[]";
+    const exportTimeline = formData.get("exportTimeline") ?? "{}";
+    const thumbnailIntelligence = formData.get("thumbnailIntelligence") ?? "{}";
+    const hookIntelligence = formData.get("hookIntelligence") ?? "{}";
+    const ctaIntelligence = formData.get("ctaIntelligence") ?? "{}";
+
+    formData.set("beatMap", String(beatMap));
+    formData.set("voiceTimeline", String(voiceTimeline));
+    formData.set("exportTimeline", String(exportTimeline));
+    formData.set("thumbnailIntelligence", String(thumbnailIntelligence));
+    formData.set("hookIntelligence", String(hookIntelligence));
+    formData.set("ctaIntelligence", String(ctaIntelligence));
+
     // --------------------------
     // SKICKA TILL WORKER
     // --------------------------

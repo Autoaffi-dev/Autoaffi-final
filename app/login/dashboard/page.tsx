@@ -395,19 +395,20 @@ onSkip={() => {
               ]}
             />
 
-            <DashboardCard
-              plan={activePlan}
-              minPlan="basic"
-              title="Networks Overview"
-              badge="Networks"
-              href="/login/dashboard/affiliate-networks"
-              description="Compare Digistore24, MyLead, Amazon & more."
-              points={[
-                "Recurring vs one-time",
-                "Top EPC picks",
-                "Grow smarter",
-              ]}
-            />
+<DashboardCard
+  plan={activePlan}
+  minPlan="basic"
+  title="Autoaffi AI Coach"
+  badge="AI Coach"
+  href="/login/dashboard/ai-coach"
+  description="Your personal 60-day execution coach powered by Autoaffi & ChatGPT."
+  points={[
+    "Daily execution guidance",
+    "Personalized to your offers & funnels",
+    "Calls out inconsistency",
+    "Built for real results — not motivation",
+  ]}
+/>
           </div>
         </SectionBlock>
 

@@ -8,6 +8,9 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
+// --------------------------------------
+// INPUT TYPES
+// --------------------------------------
 type OfferMetaInput = {
   name?: string;
   mode?: string;
@@ -42,8 +45,9 @@ type GenerateBody = {
   selectedOffer?: SelectedOfferInput | null;
 };
 
-// (optional) typer för svar – frontenden behöver inte referera till dem,
-// men de hjälper här i filen.
+// --------------------------------------
+// RESPONSE TYPES (VX 4.1 / 4.2 ULTRA)
+// --------------------------------------
 interface StoryboardFrame {
   time: number;
   description: string;
@@ -70,10 +74,19 @@ interface ThumbnailIntelligence {
 interface CtaIntelligence {
   hookType?: string;
   urgencyLevel?: string;
-  clarityScore?: number;
+  clarityScore?: number; // 1–10 skala
   powerWords?: string[];
   frictionPhrases?: string[];
   finalCtaLine?: string;
+}
+
+// 🔥 NYTT – HOOK INTELLIGENCE v2.0
+interface HookIntelligence {
+  angle: string; // ex. “pain-to-dream”, “status shift”, “time freedom”
+  promise: string; // tydlig outcome
+  patternBreak: string; // vad som gör öppningen annorlunda i feeden
+  tension: string; // risk, förlust, FOMO
+  curiosity: string; // fråga / konflikt som drar vidare
 }
 
 interface OfferMeta {
@@ -127,8 +140,14 @@ interface GenerateReelResponse {
   beatMap: BeatMark[];
   voiceTimeline: VoiceTimelineEntry[];
   exportTimeline: ExportTimeline;
+
+  // VX 4.2 – extra hjärna (frivillig, bryter inget)
+  hookIntelligence?: HookIntelligence;
 }
 
+// --------------------------------------
+// ROUTE HANDLER
+// --------------------------------------
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as GenerateBody;
@@ -162,7 +181,7 @@ export async function POST(req: Request) {
     }
 
     // --------------------------------------------------------------------
-    // 🔥 AUTOAFFI VX 4.1 — bygger vidare på din VX 3.5 (INGET borttaget)
+    // 🔥 AUTOAFFI VX 4.2 ULTRA — bygger vidare på din VX 3.5 / 4.1
     // --------------------------------------------------------------------
     //
     //  - Extreme Hook Engine (2–3 sek, alltid)
@@ -170,16 +189,21 @@ export async function POST(req: Request) {
     //  - Social Hints SEO Engine
     //  - OfferMeta Awareness (recurring, product, high-ticket, osv.)
     //  - Media-adaption (mixed / video / stills)
+    //
     //  - VX 4.1 tillägg:
-    //      • beatMap       → musik & impact-karta
-    //      • voiceTimeline → ord-för-ord med timestamps
-    //      • exportTimeline→ universell scen-timeline (CapCut / Canva / egna exports)
+    //       • beatMap        → musik & impact-karta
+    //       • voiceTimeline  → ord-för-ord med timestamps
+    //       • exportTimeline → universell scen-timeline (CapCut / Canva / egna exports)
+    //
+    //  - VX 4.2 ULTRA tillägg:
+    //       • hookIntelligence → ren breakdown av hookens psykologi
+    //       • ctaIntelligence v3 → klarhet 1–10, power words, friktion
     //
     //  Allt detta ligger som extra fält i JSON:en och stör inte din nuvarande front.
     // --------------------------------------------------------------------
 
     const systemPrompt = `
-You are Autoaffi VX v4.1 — the most advanced Reels/Shorts generator available.
+You are Autoaffi VX v4.2 ULTRA — a Reels/Shorts generator focused on conversions for affiliate offers.
 
 You output ONLY valid JSON.
 NO explanations.
@@ -214,10 +238,18 @@ interface ThumbnailIntelligence {
 interface CtaIntelligence {
   hookType?: string;
   urgencyLevel?: string;
-  clarityScore?: number;
+  clarityScore?: number; // 1–10
   powerWords?: string[];
   frictionPhrases?: string[];
   finalCtaLine?: string;
+}
+
+interface HookIntelligence {
+  angle: string;
+  promise: string;
+  patternBreak: string;
+  tension: string;
+  curiosity: string;
 }
 
 interface OfferMeta {
@@ -269,22 +301,30 @@ interface GenerateReelResponse {
   beatMap: BeatMark[];
   voiceTimeline: VoiceTimelineEntry[];
   exportTimeline: ExportTimeline;
+  hookIntelligence?: HookIntelligence;
 }
 
 ---------------------------------
-RULES FOR VX 4.1 ENGINE
+RULES FOR VX 4.2 ULTRA
 ---------------------------------
 
-1) HOOK ENGINE (2–3 seconds, EXTREME)
+1) HOOK ENGINE (2–3 seconds, EXTREME & OFFER-AWARE)
    - MUST start the video.
    - Based on offerMeta.mode when available:
 
-     recurring   → "monthly income", "while you sleep", "stack up"
-     one-time    → "warning", "don’t miss this drop"
-     high-ticket → "one client changed everything", "4-figure commissions"
-     lead-magnet → "I'll give you this for free"
+     recurring    → "monthly income", "while you sleep", "stack up"
+     one-time     → "warning", "don’t miss this drop"
+     high-ticket  → "one client changed everything", "4-figure commissions"
+     lead-magnet  → "I'll give you this for free"
 
    - If no offerMeta.mode → create a brutal, genre-based hook.
+
+   - hookIntelligence must:
+     - angle: short description of angle (e.g. "time freedom for busy parents")
+     - promise: clear outcome in normal language
+     - patternBreak: what visually or verbally breaks the scroll
+     - tension: what is at stake if viewer ignores this
+     - curiosity: what question / conflict keeps them watching
 
 2) SCRIPT
    - Short, punchy, 100% social-first.
@@ -294,20 +334,34 @@ RULES FOR VX 4.1 ENGINE
 3) STORYBOARD
    - MUST cover 0 → videoLength (± 2 seconds).
    - Adapt to mediaType:
-       mediaType="video"  → dynamic b-roll usage.
-       mediaType="stills" → strong overlays & clear still changes.
-       mediaType="mixed"  → a combination.
+       mediaType="video"   → dynamic b-roll usage.
+       mediaType="stills"  → strong overlays & clear still changes.
+       mediaType="mixed"   → a combination.
+
+   - Each frame:
+       time: in seconds, ascending
+       description: what happens
+       visualCue: how editor should think about visuals
 
 4) SUBTITLES
    - Max 10–12 words per line.
    - Follows the script exactly.
+   - Should feel natural when spoken.
 
-5) CTA (conversion-optimized)
+5) CTA (conversion-optimized) + CTA INTELLIGENCE v3
    - Must match offerMeta.mode when available.
    - Examples:
-       recurring   → "Hit the link & start building your monthly income."
-       one-time    → "Tap the link before it’s gone."
-       lead-magnet → "Comment 'guide' & I’ll DM it to you."
+       recurring    → "Hit the link & start building your monthly income."
+       one-time     → "Tap the link before it’s gone."
+       lead-magnet  → "Comment 'guide' & I’ll DM it to you."
+
+   - ctaIntelligence:
+       - hookType: e.g. "direct", "pattern interrupt", "proof", "secret"
+       - urgencyLevel: "low" | "medium" | "high"
+       - clarityScore: integer 1–10 (NOT 100-scale)
+       - powerWords: list of high-impact words actually used or suggested
+       - frictionPhrases: phrases that remove doubt ("no experience needed", "works worldwide")
+       - finalCtaLine: the exact line that should appear as last CTA.
 
 6) SOCIAL HINTS V3 – SEO ENGINE
    MUST include:
@@ -410,7 +464,9 @@ NO markdown.
       }
     }
 
-    // Säkerställ defaults – så frontenden aldrig kraschar
+    // --------------------------------------
+    // SAFETY DEFAULTS – SÅ FRONTEN INTE KRASHAR
+    // --------------------------------------
 
     // subtitles
     parsed.subtitles = Array.isArray(parsed.subtitles)
@@ -433,9 +489,43 @@ NO markdown.
       colorPalette: [],
     };
 
-    // ctaIntelligence optional – ingen default behövs, men se till att det är objekt eller undefined
+    // ctaIntelligence optional – se till att det är objekt eller undefined
     if (parsed.ctaIntelligence && typeof parsed.ctaIntelligence !== "object") {
       parsed.ctaIntelligence = undefined;
+    }
+
+    // ✅ CTA clarityScore – normalisera till 1–10 om modellen råkar köra 0–100
+    if (parsed.ctaIntelligence) {
+      const clarity = parsed.ctaIntelligence.clarityScore;
+      if (typeof clarity === "number") {
+        // om modellen råkar göra t.ex. 90 → gör om till 9
+        if (clarity > 10) {
+          parsed.ctaIntelligence.clarityScore = Math.round(clarity / 10);
+        }
+        if (parsed.ctaIntelligence.clarityScore > 10) {
+          parsed.ctaIntelligence.clarityScore = 10;
+        }
+        if (parsed.ctaIntelligence.clarityScore < 1) {
+          parsed.ctaIntelligence.clarityScore = 1;
+        }
+      } else {
+        // default om den missar helt
+        parsed.ctaIntelligence.clarityScore = 9;
+      }
+    }
+
+    // hookIntelligence – om modellen missar, skapa enkel default
+    if (parsed.hookIntelligence && typeof parsed.hookIntelligence !== "object") {
+      parsed.hookIntelligence = undefined;
+    }
+    if (!parsed.hookIntelligence) {
+      parsed.hookIntelligence = {
+        angle: "direct benefit",
+        promise: "clear income or time freedom benefit",
+        patternBreak: "unexpected opening line in first 2 seconds",
+        tension: "what the viewer loses if they ignore this",
+        curiosity: "reason to keep watching past 3 seconds",
+      };
     }
 
     // offerMeta
@@ -444,8 +534,7 @@ NO markdown.
       mode: offerMetaInput.mode || "recurring",
       commissionRate: offerMetaInput.commissionRate || "30% recurring",
       category: offerMetaInput.category || "Affiliate marketing",
-      affiliateUrl:
-        offerMetaInput.affiliateUrl || "https://your-link.com",
+      affiliateUrl: offerMetaInput.affiliateUrl || "https://your-link.com",
       rating: 4.7,
       epc: offerMetaInput.epc ?? 1.5,
     };
@@ -462,6 +551,14 @@ NO markdown.
         totalDuration: videoLength,
         scenes: [],
       };
+    } else {
+      // säkerställ duration finns
+      if (typeof parsed.exportTimeline.totalDuration !== "number") {
+        parsed.exportTimeline.totalDuration = videoLength;
+      }
+      if (!Array.isArray(parsed.exportTimeline.scenes)) {
+        parsed.exportTimeline.scenes = [];
+      }
     }
 
     return NextResponse.json(parsed as GenerateReelResponse, {

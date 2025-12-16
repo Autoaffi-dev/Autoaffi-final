@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { toast } from "react-hot-toast";
+import { MegaEngine1 } from "@/lib/engines/mega-engine-1";
 
 // -----------------------------
 // TYPES
@@ -62,6 +64,15 @@ interface GeneratedReel {
     exportTimeline?: any[];
 }
 
+interface RecurringPlatformRow {
+  id: string;
+  user_id: string;
+  platform: string;
+  autoaffi_user_code: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export default function ReelsPage() {
   // -----------------------------
   // CORE INPUT STATES
@@ -79,6 +90,13 @@ export default function ReelsPage() {
   // OFFER-STATE
   const [selectedOffer, setSelectedOffer] = useState<any | null>(null);
   const [offerMeta, setOfferMeta] = useState<any | null>(null);
+const [loadingGenerate, setLoadingGenerate] = useState(false);
+
+// --- ADD THESE NEW STATES RIGHT HERE ---
+const [activeRecurring, setActiveRecurring] = useState<RecurringPlatformRow[]>([]);
+const [loadingRecurring, setLoadingRecurring] = useState(true);
+
+const [affiliateIds, setAffiliateIds] = useState<any>(null);
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -95,8 +113,37 @@ export default function ReelsPage() {
     getUser();
   }, [supabase]);
 
-  const [offerType, setOfferType] =
-    useState<"recurring" | "product">("recurring");
+// Load funnel settings when user is ready
+useEffect(() => {
+  if (user) {
+    loadFunnelSettings();
+  }
+}, [user]);
+
+// 🔹 DEL 2: Ladda recurring-plattformar för denna user
+  useEffect(() => {
+    async function loadRecurringPlatforms() {
+      setLoadingRecurring(true);
+
+      const { data, error } = await supabase
+        .from("user_recurring_platforms")
+        .select("*")
+        .eq("user_id", user?.id);
+
+      if (!error && data) {
+        setActiveRecurring(data);
+      }
+
+      setLoadingRecurring(false);
+    }
+
+    if (user?.id) {
+      loadRecurringPlatforms();
+    }
+  }, [user?.id, supabase]);
+
+const [offerType, setOfferType] =
+  useState<"recurring" | "product" | "funnel">("recurring");
   const [productPlatform, setProductPlatform] = useState<string>("");
   const [productSearch, setProductSearch] = useState<string>("");
   const [offerWarning, setOfferWarning] = useState<string | null>(null);
@@ -204,6 +251,7 @@ export default function ReelsPage() {
     "MyLead (product mode)",
   ];
 
+  
   // -----------------------------
   // FILES (IMAGES / VIDEO)
   // -----------------------------
@@ -283,6 +331,42 @@ export default function ReelsPage() {
     mylead: true,
     impact: true,
   };
+
+  // 🔥 Funnel states go HERE
+// Funnel toggle (UI)
+const [useFunnel, setUseFunnel] = useState(false);
+
+// Funnel state from Supabase
+const [funnelSettings, setFunnelSettings] = useState<{
+  url: string | null;
+  platform: string | null;
+} | null>(null);
+
+const [isLoadingFunnel, setIsLoadingFunnel] = useState(true);
+
+// ------------------------------------------------------
+// LOAD FUNNEL SETTINGS FROM SUPABASE
+// ------------------------------------------------------
+async function loadFunnelSettings() {
+  if (!user?.id) return;
+
+  setIsLoadingFunnel(true);
+
+  const { data, error } = await supabase
+    .from("funnels")
+    .select("url, platform")
+    .eq("user_id", user.id)
+    .single();
+
+  if (!error && data) {
+    setFunnelSettings({
+      url: data.url,
+      platform: data.platform
+    });
+  }
+
+  setIsLoadingFunnel(false);
+}
 
   // Produktdatabas (du byter ut mot riktiga API-kopplingar)
   const allProducts = [
@@ -378,7 +462,16 @@ export default function ReelsPage() {
     )}?aff=${affiliateId}`;
   };
 
+  const allowedPlatforms = activeRecurring.map((r) => r.platform);
+
+const recurringCodeMap = Object.fromEntries(
+  activeRecurring.map((r) => [r.platform, r.autoaffi_user_code])
+);
+
   const selectProduct = (product: any) => {
+
+  
+
     // skapa affiliate-länk
     const url = generateAffiliateLinkForProduct(product);
 
@@ -400,31 +493,38 @@ export default function ReelsPage() {
     });
   };
 
-  // --------------------------------------
-  // HANDLER: select recurring offer
-  // --------------------------------------
-  const selectRecurring = (item: any) => {
-    const affiliateId = user?.id ?? "missing";
+  
+// --------------------------------------
+// HANDLER: select recurring offer
+// --------------------------------------
+const handleSelectRecurringOffer = (offer: any) => {
+  const platformKey = offer.name.toLowerCase().replace(/\s+/g, "");
 
-    const payout = item.id === "autoaffi" ? "50/50" : "80/20";
+  const affiliateCode = recurringCodeMap[platformKey];
 
-    const finalOffer = {
-      ...item,
-      mode: "recurring",
-      payout,
-      affiliateUrl: `https://autoaffi.com/recurring/${item.id}?u=${affiliateId}`,
-    };
+  if (!affiliateCode) {
+    toast.error("Missing Autoaffi affiliate code for this platform.");
+    return;
+  }
 
-    setSelectedOffer(finalOffer);
+  const affiliateUrl = `https://autoaffi.com/r/${platformKey}?u=${affiliateCode}`;
 
-    setOfferMeta({
-      type: "recurring",
-      platform: item.id,
-      name: item.name,
-      commissionRate: payout,
-      affiliateUrl: finalOffer.affiliateUrl,
-    });
-  };
+  setSelectedOffer({
+    ...offer,
+    type: "recurring",
+    platform: platformKey,
+    affiliateUrl,
+  });
+
+  setOfferMeta({
+    type: "recurring",
+    platform: platformKey,
+    affiliateId: affiliateCode,
+    name: offer.name,
+    epc: offer.epc,
+    affiliateUrl,
+  });
+};
 
   // -----------------------------
   // VIDEO UPLOAD READER
@@ -843,6 +943,82 @@ setRenderStatus("done");
 
         {/* UPLOADS BLOCK — LOCKED BY MEDIA TYPE */}
         <div className="space-y-4">
+
+{/* PREMIUM INSTRUCTIONS – MANUAL IMAGE UPLOAD */}
+  <div className="mt-2 rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 via-white/0 to-emerald-500/10 p-4 text-xs text-white/80 shadow-[0_0_40px_rgba(0,0,0,0.45)]">
+    {/* Header row */}
+    <div className="flex items-center justify-between gap-3 mb-2">
+      <div className="flex items-center gap-2">
+        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-sm">
+          📸
+        </span>
+        <div>
+          <p className="font-semibold text-white">
+            Manual Image Upload — Premium Flow
+          </p>
+          <p className="text-[11px] text-emerald-200/80">
+            Autoaffi prepares everything for a cinematic, 9:16 ready Reel.
+          </p>
+        </div>
+      </div>
+
+      <span className="inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-100">
+        Auto-optimized
+      </span>
+    </div>
+
+    {/* Key facts row */}
+    <div className="mb-3 grid grid-cols-2 gap-2 text-[11px] text-slate-200/90">
+      <div className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5">
+        <p className="text-[10px] uppercase tracking-wide text-slate-400">
+          Images
+        </p>
+        <p className="font-semibold">
+          3–6 portrait photos
+        </p>
+      </div>
+      <div className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5">
+        <p className="text-[10px] uppercase tracking-wide text-slate-400">
+          Max size
+        </p>
+        <p className="font-semibold">
+          8 MB per image
+        </p>
+      </div>
+    </div>
+
+    {/* Steps */}
+    <ul className="space-y-1.5 leading-relaxed text-[11px]">
+      <li>
+        • Select <strong>3–6 vertical images</strong> in your folder{' '}
+        <span className="text-slate-300">before</span> you press <em>Open</em>.
+      </li>
+      <li>
+        • Autoaffi automatically adds <strong>two matching video clips</strong>{' '}
+        to boost engagement, pacing and retention.
+      </li>
+      <li>
+        • All media (your images + added clips) are{' '}
+        <strong>cropped, resized and optimized</strong> inside the Render Engine.
+      </li>
+      <li>
+        • You <strong>don’t need to crop</strong> anything — output is always{' '}
+        <span className="font-semibold text-emerald-200">9:16, Reel-ready.</span>
+      </li>
+      <li>
+        • Final video includes <strong>pacing, overlays, transitions, music & voice</strong>{' '}
+        fully handled by Autoaffi.
+      </li>
+    </ul>
+
+    {/* Tip */}
+    <p className="mt-3 text-[11px] text-slate-300/80">
+      👉 <span className="font-semibold text-emerald-100">Pro tip:</span>{' '}
+      Select all your images first, then click <strong>Open</strong> once —
+      that gives Autoaffi the best flow to work with.
+    </p>
+  </div>
+
           {/* IMAGE UPLOAD */}
           <div>
             <label className="block text-xs text-slate-400 mb-1">
@@ -1106,6 +1282,45 @@ setRenderStatus("done");
                     ⚠️ Connect your Product & Recurring platforms first so affiliate IDs sync automatically into every video.
                   </div>
 
+{/* FUNNEL OPTION */}
+<div className="mt-3 rounded-xl border border-purple-500/30 bg-purple-500/5 p-4">
+  <label className="flex items-start gap-3 cursor-pointer">
+
+    <input
+      type="checkbox"
+      checked={offerType === "funnel"}
+      onChange={(e) => {
+        if (e.target.checked) {
+          setOfferType("funnel");
+          setSelectedOffer({
+            name: "My Funnel Setup",
+            mode: "funnel",
+            affiliateUrl: "", // funnel link from Supabase later
+          });
+        } else {
+          setOfferType("recurring");
+          setSelectedOffer(null);
+        }
+      }}
+      className="mt-1 h-4 w-4 rounded border-purple-400/50 bg-purple-700/20"
+    />
+
+    <div>
+      <p className="font-semibold text-purple-200 text-sm">
+        🔮 Use my Funnel setup
+      </p>
+
+      <p className="text-xs text-purple-300/80 leading-relaxed mt-1">
+        Autoaffi automatically injects your Funnel ID from your Funnels Card.
+        <br />
+        Your Reels will seamlessly drive traffic into your funnel — no setup needed.
+      </p>
+    </div>
+
+  </label>
+</div>
+                  
+
                   {/* TOGGLE RECURRING / PRODUCT */}
                   <div className="flex justify-center gap-3 text-[11px] mt-4">
                     <button
@@ -1155,27 +1370,35 @@ setRenderStatus("done");
                         Recurring Platforms (Auto-sync via Recurring AI Stack)
                       </h4>
 
-                      <div className="flex gap-3 overflow-x-auto py-2">
-                        {[
-                          { name: "Autoaffi Recurring", split: "50% / 50%", id: "autoaffi", mode: "recurring" },
-                          { name: "TubeMagic", split: "80 / 20", id: "tubemagic", mode: "recurring" },
-                          { name: "Jasper AI", split: "80 / 20", id: "jasper", mode: "recurring" },
-                          { name: "Copy.ai", split: "80 / 20", id: "copyai", mode: "recurring" },
-                          { name: "Grammarly", split: "80 / 20", id: "grammarly", mode: "recurring" },
-                          { name: "Surfer SEO", split: "80 / 20", id: "surfer", mode: "recurring" },
-                          { name: "Notion AI", split: "80 / 20", id: "notion", mode: "recurring" },
-                          { name: "Writesonic", split: "80 / 20", id: "writesonic", mode: "recurring" }
-                        ].map((item) => (
-                          <button
-                            key={item.id}
-                            onClick={() => selectRecurring(item)}
-                            className="min-w-[150px] rounded-xl border border-slate-700 bg-slate-900 p-3text-left hover:border-emerald-400 transition"
-                          >
-                            <p className="text-sm text-slate-100 font-semibold">{item.name}</p>
-                            <p className="text-[10px] text-emerald-300 mt-1">Split: {item.split}</p>
-                          </button>
-                        ))}
-                      </div>
+<div className="space-y-3 py-2">
+      {offerList.map((offer) => {
+        const platformKey = offer.name.toLowerCase().replace(/\s+/g, "");
+        const isActive = allowedPlatforms.includes(platformKey);
+
+        return (
+          <button
+            key={offer.name}
+            disabled={!isActive}
+            onClick={() => {
+              if (!isActive) {
+                toast.error("Activate this platform in Recurring Income first!");
+                return;
+              }
+              handleSelectRecurringOffer(offer);
+            }}
+            className={`
+              w-full text-left px-4 py-3 rounded-xl transition
+              ${isActive
+                ? "bg-emerald-600 hover:bg-emerald-500 cursor-pointer"
+                : "bg-gray-700/40 opacity-40 cursor-not-allowed"
+              }
+            `}
+          >
+            <span className="text-lg">{offer.icon}</span> {offer.name}
+          </button>
+        );
+      })}
+    </div>
                     </>
                   )}
 
@@ -1741,7 +1964,7 @@ setRenderStatus("done");
                             <span className="inline-flex items-center gap-1 rounded-full bg-slate-950/80 border border-emerald-400/60 px-2.5 py-0.5 text-[10px] text-emerald-200">
                               Clarity:{" "}
                               {result.ctaIntelligence.clarityScore.toFixed(0)}
-                              /100
+                              /10
                             </span>
                           )}
                         </div>
