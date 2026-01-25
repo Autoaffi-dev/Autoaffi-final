@@ -74,3 +74,14 @@ export async function POST(req: Request) {
     );
   }
 }
+
+// ✅ cron-job.org “test run” kör ofta GET/HEAD → annars blir det 405.
+// Vi mappar GET/HEAD till samma logik som POST.
+export async function GET(req: Request) {
+  return POST(req);
+}
+
+export async function HEAD(req: Request) {
+  const res = await POST(req);
+  return new Response(null, { status: res.status, headers: res.headers });
+}
