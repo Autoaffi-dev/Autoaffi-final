@@ -75,10 +75,7 @@ function toIsoNow() {
  * - Must always have (source + external_id)
  * - We normalize common field variants from fetchers.
  */
-function normalizeRow(
-  input: any,
-  source: ProductIndexerSource
-): ProductIndexRow | null {
+function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow | null {
   const externalIdRaw =
     input?.external_id ??
     input?.externalId ??
@@ -98,10 +95,8 @@ function normalizeRow(
 
   const now = toIsoNow();
 
-  const product_url =
-    input?.product_url ?? input?.productUrl ?? input?.url ?? null;
-  const landing_url =
-    input?.landing_url ?? input?.landingUrl ?? input?.landing ?? null;
+  const product_url = input?.product_url ?? input?.productUrl ?? input?.url ?? null;
+  const landing_url = input?.landing_url ?? input?.landingUrl ?? input?.landing ?? null;
 
   const row: ProductIndexRow = {
     ...(id ? { id } : {}),
@@ -117,22 +112,16 @@ function normalizeRow(
     landing_url: landing_url ? String(landing_url) : null,
     image_url: input?.image_url ?? input?.imageUrl ?? input?.image ?? null,
 
-    epc:
-      input?.epc === undefined || input?.epc === null ? null : Number(input.epc),
+    epc: input?.epc === undefined || input?.epc === null ? null : Number(input.epc),
     commission:
       input?.commission === undefined || input?.commission === null
         ? null
         : Number(input.commission),
     currency: input?.currency ?? null,
-    price:
-      input?.price === undefined || input?.price === null
-        ? null
-        : Number(input.price),
+    price: input?.price === undefined || input?.price === null ? null : Number(input.price),
 
-    score:
-      input?.score === undefined || input?.score === null ? null : Number(input.score),
-    quality_score:
-      input?.quality_score ?? input?.qualityScore ?? null,
+    score: input?.score === undefined || input?.score === null ? null : Number(input.score),
+    quality_score: input?.quality_score ?? input?.qualityScore ?? null,
 
     geo_scope: input?.geo_scope ?? input?.geoScope ?? "worldwide",
 
@@ -278,6 +267,70 @@ export async function runProductIndexer(args?: {
 
   report.tookMs = Date.now() - started;
   return report;
+}
+
+/* ==========================================================
+   ✅ MINIMAL PATCH: add searchProductIndex + RawProductRecord
+   (so product-discovery-engine can build)
+   ========================================================== */
+
+export type RawProductRecord = {
+  id: string; // stable id for UI (not uuid requirement)
+  title: string;
+  description: string | null;
+  epc: number | null;
+  category: string | null;
+  url: string; // what discovery-engine expects as item.url
+};
+
+export async function searchProductIndex(args: {
+  query: string;
+  limit: number;
+}): Promise<RawProductRecord[]> {
+  const supabase = getSupabaseAdmin();
+
+  const q = (args?.query || "").trim();
+  const limit = Math.max(1, Math.min(args?.limit ?? 30, 200));
+
+  let queryBuilder = supabase
+    .from("product_index")
+    .select("source,external_id,title,description,category,epc,product_url,landing_url,score,is_active")
+    .eq("is_active", true)
+    .limit(limit);
+
+  if (q) {
+    const like = `%${q}%`;
+    queryBuilder = queryBuilder.or(
+      `title.ilike.${like},description.ilike.${like},category.ilike.${like}`
+    );
+  }
+
+  // best-effort sort (if score exists)
+  queryBuilder = queryBuilder.order("score", { ascending: false, nullsFirst: false });
+
+  const { data, error } = await queryBuilder;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const rows = (data || []) as any[];
+
+  return rows
+    .map((r) => {
+      const url = String((r.product_url || r.landing_url || "")).trim();
+      if (!url) return null;
+
+      return {
+        id: `${r.source}:${r.external_id}`,
+        title: r.title ?? "",
+        description: r.description ?? null,
+        epc: r.epc === undefined || r.epc === null ? null : Number(r.epc),
+        category: r.category ?? null,
+        url,
+      } satisfies RawProductRecord;
+    })
+    .filter(Boolean) as RawProductRecord[];
 }
 
 export default runProductIndexer;

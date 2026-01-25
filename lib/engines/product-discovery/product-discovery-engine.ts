@@ -1,7 +1,7 @@
 import { MegaEngine1 } from "@/lib/engines/mega-engine-1";
 import {
   searchProductIndex,
-  RawProductRecord,
+  type RawProductRecord,
 } from "../product-indexer/indexer";
 import {
   buildAffiliateLink,
@@ -77,7 +77,7 @@ export async function discoverProductsForUser(
           ? buildAffiliateLink({
               platform: product.platform,
               affiliateId,
-              productUrl: product.productUrl, // ✅ FIX: lägg till productUrl så BuildLinkInput matchar
+              productUrl: product.productUrl,
             })
           : null,
     };
