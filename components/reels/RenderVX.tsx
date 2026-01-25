@@ -3,7 +3,12 @@
 import React, { useState } from "react";
 
 interface RenderVXProps {
-  startRenderVX: (fd: FormData) => Promise<void>;
+  // ⬇️ UPPDATERAD: startRenderVX ska returnera ok + videoUrl
+  startRenderVX: (fd: FormData) => Promise<{
+    ok: boolean;
+    videoUrl?: string | null;
+    error?: string;
+  }>;
   mode: "auto" | "guided" | "manual";
   videoLength: number;
   affiliateLink?: string | null;
@@ -15,7 +20,6 @@ export default function RenderVX({
   videoLength,
   affiliateLink,
 }: RenderVXProps) {
-
   const [isRendering, setIsRendering] = useState(false);
   const [progress, setProgress] = useState(0);
   const [step, setStep] = useState(0);
@@ -47,12 +51,13 @@ export default function RenderVX({
 
     setIsRendering(true);
     setVideoReady(false);
+    setDownloadUrl(null);
     setProgress(0);
     setStep(0);
 
-    // Progress simulation
+    // Progress simulation (visuellt godis)
     const interval = setInterval(() => {
-      setProgress((p) => (p >= 100 ? 100 : p + 2));
+      setProgress((p) => (p >= 98 ? 98 : p + 2));
     }, 180);
 
     const stepInterval = setInterval(() => {
@@ -83,21 +88,21 @@ export default function RenderVX({
       // mediaType
       // (du är redan helt synkad)
 
-      // 🔥 CALL THE WORKER
-      await startRenderVX(fd);
+      // 🔥 CALL THE WORKER VIA startRenderVX
+      const result = await startRenderVX(fd);
 
-      // Finalize
-      setTimeout(() => {
-        clearInterval(interval);
-        clearInterval(stepInterval);
+      if (!result?.ok || !result.videoUrl) {
+        console.error("[RenderVX] startRenderVX failed:", result?.error);
+        throw new Error(result?.error || "Render worker did not return videoUrl");
+      }
 
-        setProgress(100);
-        setVideoReady(true);
-
-        setDownloadUrl("/sample-output/video.mp4");
-      }, 6000);
+      // ✅ Worker returnerade en giltig videoUrl
+      setProgress(100);
+      setVideoReady(true);
+      setDownloadUrl(result.videoUrl);
     } catch (err) {
-      console.error(err);
+      console.error("[RenderVX] handleRender error:", err);
+    } finally {
       clearInterval(interval);
       clearInterval(stepInterval);
       setIsRendering(false);
@@ -130,17 +135,22 @@ export default function RenderVX({
       <div>
         <p className="text-gray-300 mb-2">Voice Style</p>
         <div className="flex flex-wrap gap-3">
-          {["Natural", "Deep", "Energetic", "Calm", "Female Clean", "Male Cinematic"].map(
-            (v) => (
-              <button
-                key={v}
-                onClick={() => setVoiceStyle(v)}
-                className={pill(voiceStyle === v)}
-              >
-                {v}
-              </button>
-            )
-          )}
+          {[
+            "Natural",
+            "Deep",
+            "Energetic",
+            "Calm",
+            "Female Clean",
+            "Male Cinematic",
+          ].map((v) => (
+            <button
+              key={v}
+              onClick={() => setVoiceStyle(v)}
+              className={pill(voiceStyle === v)}
+            >
+              {v}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -164,7 +174,8 @@ export default function RenderVX({
         </p>
 
         <p className="text-gray-500 text-xs mt-1">
-          Higher realism increases cinematic depth, shadows, lighting precision and overall clarity.
+          Higher realism increases cinematic depth, shadows, lighting precision
+          and overall clarity.
         </p>
       </div>
 
@@ -175,15 +186,17 @@ export default function RenderVX({
         <p className="text-gray-300 mb-2">Music Mode</p>
 
         <div className="flex flex-wrap gap-3">
-          {["Auto", "Cinematic", "Fast", "Emotional", "Minimal", "Silent"].map((m) => (
-            <button
-              key={m}
-              onClick={() => setMusicMode(m)}
-              className={pill(musicMode === m)}
-            >
-              {m}
-            </button>
-          ))}
+          {["Auto", "Cinematic", "Fast", "Emotional", "Minimal", "Silent"].map(
+            (m) => (
+              <button
+                key={m}
+                onClick={() => setMusicMode(m)}
+                className={pill(musicMode === m)}
+              >
+                {m}
+              </button>
+            )
+          )}
         </div>
 
         {/* CHECKBOX EFFECTS */}

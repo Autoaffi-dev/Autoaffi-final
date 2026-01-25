@@ -63,7 +63,7 @@ export default function GeneratePanel({
         </label>
 
         <div className="flex gap-2">
-          {[30, 45, 60].map((len) => (
+          {[15, 20, 25].map((len) => (
             <button
               key={len}
               onClick={() => setVideoLength(len)}

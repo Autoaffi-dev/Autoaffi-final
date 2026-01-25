@@ -48,8 +48,20 @@ const SPOTLIGHT_TARGETS: string[] = [
 ];
 
 export default function DashboardPage({ searchParams }: any) {
+
+  // Next.js fix: ensure searchParams is NOT a Promise
+  const resolvedParams =
+    searchParams && typeof searchParams === "object" && !("then" in searchParams)
+      ? searchParams
+      : {};
+
+  // Extract plan safely
+  const planFromUrl = resolvedParams.plan;
+
   const activePlan: Plan =
-    (searchParams?.plan as Plan | undefined) ?? ("basic" as Plan);
+    planFromUrl === "pro" || planFromUrl === "elite" || planFromUrl === "basic"
+      ? (planFromUrl as Plan)
+      : "basic";
 
   // STATE
   const [creatorMode, setCreatorMode] = useState<CreatorMode>(null);

@@ -2,166 +2,224 @@
 
 import React from "react";
 
-interface Props {
-  hashtags: string[];
+interface SocialHintsPanelProps {
   titleIdeas: string[];
   captionIdeas: string[];
+  hashtags: string[];
   bestPostingTimes: string[];
 
   recommendedTitle: string | null;
-  recommendedCaption: string | null;
-  recommendedHashtags: string[];
-
   setRecommendedTitle: (v: string | null) => void;
+
+  recommendedCaption: string | null;
   setRecommendedCaption: (v: string | null) => void;
+
+  recommendedHashtags: string[];
   setRecommendedHashtags: (v: string[]) => void;
 
-  thumbnailIntelligence: any;
-  socialHints: any;
+  recommendedCTA: string | null;
+  setRecommendedCTA: (v: string | null) => void;
+
+  ctaIdeas: string[];
+
+  // sparas för framtiden / ev. intern logik
+  thumbnailIntelligence?: any;
+  socialHints?: any;
 }
 
+const FALLBACK_CTA = [
+  "Tap the link to unlock it now ✅",
+  "Start today — your future self will thank you 🚀",
+  "Want results fast? Click and try it now 👇",
+];
+
 export default function SocialHintsPanel({
-  hashtags,
   titleIdeas,
   captionIdeas,
+  hashtags,
   bestPostingTimes,
   recommendedTitle,
-  recommendedCaption,
-  recommendedHashtags,
   setRecommendedTitle,
+  recommendedCaption,
   setRecommendedCaption,
+  recommendedHashtags,
   setRecommendedHashtags,
-  thumbnailIntelligence,
-  socialHints,
-}: Props) {
-  const hasAny =
-    hashtags.length > 0 ||
-    titleIdeas.length > 0 ||
-    captionIdeas.length > 0 ||
-    bestPostingTimes.length > 0 ||
-    thumbnailIntelligence;
+  recommendedCTA,
+  setRecommendedCTA,
+  ctaIdeas,
+}: SocialHintsPanelProps) {
+  const ctas =
+    (ctaIdeas && ctaIdeas.length > 0 ? ctaIdeas : FALLBACK_CTA).slice(0, 3);
 
-  if (!hasAny) return null;
+  const handleApplyAll = () => {
+    const title = titleIdeas?.[0] ?? null;
+    const caption = captionIdeas?.[0] ?? null;
+    const cta = ctas?.[0] ?? null;
+
+    setRecommendedTitle(title);
+    setRecommendedCaption(caption);
+    setRecommendedCTA(cta);
+    setRecommendedHashtags(hashtags ?? []);
+  };
+
+  const handleSelectTitle = (t: string) => {
+    setRecommendedTitle(t);
+  };
+
+  const handleSelectCaption = (c: string) => {
+    setRecommendedCaption(c);
+  };
+
+  const toggleHashtag = (tag: string) => {
+    if (!tag) return;
+    if (recommendedHashtags.includes(tag)) {
+      setRecommendedHashtags(
+        recommendedHashtags.filter((h) => h !== tag)
+      );
+    } else {
+      setRecommendedHashtags([...recommendedHashtags, tag]);
+    }
+  };
 
   return (
-    <div className="rounded-2xl border border-emerald-400/40 bg-emerald-500/5 p-3 space-y-4">
-      <h3 className="text-xs font-semibold text-emerald-200 mb-2">
-        Smart social hints
-      </h3>
-
-      {/* ⭐ Autoaffi Recommended Social Setup */}
-      <div className="rounded-xl bg-slate-900/70 border border-emerald-400/40 px-4 py-3">
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] font-semibold text-emerald-300">
-            ⭐ Autoaffi Recommended Social Setup
-          </p>
-
-          <button
-            type="button"
-            onClick={() => {
-              const t = socialHints?.titleIdeas?.[0] ?? null;
-              const c = socialHints?.captionIdeas?.[0] ?? null;
-              const h = socialHints?.hashtags?.slice(0, 5) ?? [];
-
-              setRecommendedTitle(t);
-              setRecommendedCaption(c);
-              setRecommendedHashtags(h);
-            }}
-            className="rounded-full bg-emerald-600/20 px-3 py-1 text-[10px] text-emerald-200 hover:bg-emerald-600/30 transition"
-          >
-            Apply All
-          </button>
-        </div>
-
-        <p className="text-[10px] text-emerald-200/80 mt-1">
-          Autoaffi picks the strongest title, caption and hashtags based on
-          retention & reach.
-        </p>
+    <section className="rounded-2xl border border-emerald-400/30 bg-black/40 p-6 space-y-5">
+      {/* HEADER + APPLY ALL */}
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-sm font-semibold text-emerald-300">
+          Smart social hints + CTA
+        </h2>
+        <button
+          onClick={handleApplyAll}
+          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold"
+        >
+          Apply All
+        </button>
       </div>
 
-      {/* 📌 Hashtags */}
-      {hashtags.length > 0 && (
-        <div>
-          <p className="text-[11px] font-semibold text-emerald-200 mb-1">
-            Hashtags
-          </p>
-
-          <div className="flex flex-wrap gap-1.5 text-[11px]">
-            {hashtags.map((tag, idx) => (
-              <span
-                key={idx}
-                className={`rounded-full px-2 py-0.5 border ${
-                  recommendedHashtags.includes(tag)
-                    ? "bg-emerald-500/20 border-emerald-400 text-emerald-200"
-                    : "bg-slate-950/80 border-emerald-400/40 text-emerald-100"
+      {/* TITLES */}
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide">
+          Title ideas
+        </p>
+        <div className="space-y-2">
+          {titleIdeas?.map((t, idx) => {
+            const active = recommendedTitle === t;
+            return (
+              <button
+                key={`${t}-${idx}`}
+                type="button"
+                onClick={() => handleSelectTitle(t)}
+                className={`w-full text-left text-xs px-3 py-2 rounded-lg border transition ${
+                  active
+                    ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100"
+                    : "border-white/10 bg-black/30 text-slate-200 hover:border-emerald-400/40"
                 }`}
               >
-                #{tag}
-              </span>
-            ))}
-          </div>
+                {t}
+              </button>
+            );
+          })}
         </div>
-      )}
+      </div>
 
-      {/* 📌 Title Ideas */}
-      {titleIdeas.length > 0 && (
-        <div>
-          <p className="text-[11px] font-semibold text-emerald-200 mb-1">
-            Title Ideas
-          </p>
-
-          <div className="flex flex-col gap-1.5 text-[11px]">
-            {titleIdeas.map((title, idx) => (
-              <div
-                key={idx}
-                className={`rounded-lg px-2 py-1 border transition ${
-                  recommendedTitle === title
-                    ? "bg-emerald-500/20 border-emerald-400 text-emerald-200 shadow-[0_0_6px_rgba(16,185,129,0.5)]"
-                    : "bg-slate-950/70 border-emerald-400/40 text-slate-200"
+      {/* CAPTIONS */}
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide">
+          Captions
+        </p>
+        <div className="space-y-2">
+          {captionIdeas?.map((c, idx) => {
+            const active = recommendedCaption === c;
+            return (
+              <button
+                key={`${c}-${idx}`}
+                type="button"
+                onClick={() => handleSelectCaption(c)}
+                className={`w-full text-left text-xs px-3 py-2 rounded-lg border transition ${
+                  active
+                    ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100"
+                    : "border-white/10 bg-black/30 text-slate-200 hover:border-emerald-400/40"
                 }`}
               >
-                {title}
-              </div>
-            ))}
-          </div>
+                {c}
+              </button>
+            );
+          })}
         </div>
-      )}
+      </div>
 
-      {/* 📌 Captions */}
-      {captionIdeas.length > 0 && (
-        <div>
-          <p className="text-[11px] font-semibold text-emerald-200 mb-1">
-            Captions
-          </p>
-
-          <div className="flex flex-col gap-1.5 text-[11px]">
-            {captionIdeas.map((caption, idx) => (
-              <div
-                key={idx}
-                className={`rounded-lg px-2 py-1 border transition ${
-                  recommendedCaption === caption
-                    ? "bg-emerald-500/20 border-emerald-400 text-emerald-200 shadow-[0_0_6px_rgba(16,185,129,0.5)]"
-                    : "bg-slate-950/70 border-emerald-400/40 text-slate-200"
+      {/* CTA RAD – 3 ALTERNATIV UNDER CAPTIONS */}
+      <div className="space-y-3">
+        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide">
+          Call To Action (CTA)
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {ctas.map((cta, idx) => {
+            const active = recommendedCTA === cta;
+            return (
+              <button
+                key={`${cta}-${idx}`}
+                type="button"
+                onClick={() => setRecommendedCTA(cta)}
+                className={`text-left text-xs px-3 py-3 rounded-lg border transition ${
+                  active
+                    ? "border-emerald-400/60 bg-emerald-500/15 text-emerald-100"
+                    : "border-white/10 bg-black/30 text-slate-200 hover:border-emerald-400/40"
                 }`}
               >
-                {caption}
-              </div>
-            ))}
-          </div>
+                {cta}
+              </button>
+            );
+          })}
         </div>
-      )}
 
-      {/* 📌 Posting Times */}
-      {bestPostingTimes.length > 0 && (
-        <div>
-          <p className="text-[11px] font-semibold text-emerald-200 mb-1">
-            Suggested posting times
+        {recommendedCTA && (
+          <p className="text-[11px] text-emerald-200">
+            <span className="font-semibold">Selected CTA:</span>{" "}
+            {recommendedCTA}
           </p>
-          <p className="text-[11px] text-emerald-50">
-            {bestPostingTimes.join(" · ")}
+        )}
+      </div>
+
+      {/* HASHTAGS */}
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide">
+          Hashtags
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {hashtags?.map((tag) => {
+            const active = recommendedHashtags.includes(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleHashtag(tag)}
+                className={`px-3 py-1 rounded-full text-[11px] border transition ${
+                  active
+                    ? "bg-emerald-500/20 border-emerald-400/60 text-emerald-100"
+                    : "bg-black/30 border-white/10 text-slate-200 hover:border-emerald-400/40"
+                }`}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* BEST POSTING TIMES */}
+      {bestPostingTimes && bestPostingTimes.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide">
+            Best posting times
           </p>
+          <ul className="list-disc list-inside text-[11px] text-slate-300 space-y-0.5">
+            {bestPostingTimes.map((t, idx) => (
+              <li key={idx}>{t}</li>
+            ))}
+          </ul>
         </div>
       )}
-    </div>
+    </section>
   );
 }

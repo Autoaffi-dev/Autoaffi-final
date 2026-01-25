@@ -18,14 +18,14 @@ interface RecurringPlatform {
   commission: number;
   highlight: boolean;
   note: string;
+  subId?: string | null;        // ⬅ från /api/recurring/platforms
+  affiliateUrl?: string | null; // ⬅ färdig affiliate-länk om den finns
 }
 
 interface OfferPanelsProps {
-  // OFFER MODE
   offerMode: "product" | "recurring" | "funnel";
   setOfferMode: (v: "product" | "recurring" | "funnel") => void;
 
-  // PRODUCT STATE
   productCategory: string;
   setProductCategory: (v: string) => void;
 
@@ -40,7 +40,6 @@ interface OfferPanelsProps {
   affiliateLink: string | null;
   missingAffiliateWarning: boolean;
 
-  // RECURRING STATE
   recurringPlatform: string;
   setRecurringPlatform: (v: string) => void;
 
@@ -50,7 +49,6 @@ interface OfferPanelsProps {
   recurringPlatforms: RecurringPlatform[];
   generateAffiliateLinkForRecurring: (id: string) => void;
 
-  // FUNNEL STATE
   funnelUrl: string;
   setFunnelUrl: (v: string) => void;
 }
@@ -73,6 +71,7 @@ export default function OfferPanels({
   recurringPlatform,
   setRecurringPlatform,
   recurringSubID,
+  setRecurringSubID,
   recurringPlatforms,
   generateAffiliateLinkForRecurring,
 
@@ -80,8 +79,7 @@ export default function OfferPanels({
   setFunnelUrl,
 }: OfferPanelsProps) {
   return (
-    <section className="mb-8 rounded-2xl border border-emerald-400/40 bg-emerald-500/5 p-5 text-sm">
-
+    <section className="mb-8 rounded-2xl border border-emerald-400/40 bg-slate-900 p-5 text-sm">
       {/* TITLE */}
       <h2 className="text-sm font-semibold text-emerald-200 mb-3">
         Choose your monetization path
@@ -89,7 +87,6 @@ export default function OfferPanels({
 
       {/* OFFER MODE TOGGLE */}
       <div className="flex gap-2 mb-5">
-
         {["product", "recurring", "funnel"].map((opt) => (
           <button
             key={opt}
@@ -97,7 +94,7 @@ export default function OfferPanels({
             className={`px-4 py-1.5 rounded-lg text-xs border transition ${
               offerMode === opt
                 ? "bg-purple-600 border-purple-300 text-white shadow-[0_0_10px_rgba(192,132,252,0.4)]"
-                : "bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-900"
+                : "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
             }`}
           >
             {opt.charAt(0).toUpperCase() + opt.slice(1)}
@@ -105,17 +102,18 @@ export default function OfferPanels({
         ))}
       </div>
 
-      {/* PRODUCT MODE PANEL */}
+      {/* -------------------------------------------------- */}
+      {/* PRODUCT MODE */}
+      {/* -------------------------------------------------- */}
       {offerMode === "product" && (
         <div className="space-y-4">
-
-          {/* CATEGORY SELECT */}
+          {/* CATEGORY SELECT — DARK UI FIXED */}
           <div>
             <label className="text-xs font-semibold">Product Category</label>
             <select
               value={productCategory}
               onChange={(e) => setProductCategory(e.target.value)}
-              className="w-full mt-1 rounded-lg bg-black/20 border border-white/10 text-xs px-3 py-2"
+              className="w-full mt-1 rounded-lg bg-slate-800 border border-slate-600 text-xs px-3 py-2 text-slate-200"
             >
               <option value="ai">AI</option>
               <option value="business">Business</option>
@@ -132,7 +130,7 @@ export default function OfferPanels({
               type="text"
               value={manualProductSearch}
               onChange={(e) => setManualProductSearch(e.target.value)}
-              className="w-full mt-1 rounded-lg bg-black/20 border border-white/10 text-xs px-3 py-2"
+              className="w-full mt-1 rounded-lg bg-slate-800 border border-slate-600 text-xs px-3 py-2 text-slate-200"
               placeholder="Search manually..."
             />
           </div>
@@ -144,7 +142,7 @@ export default function OfferPanels({
                 key={p.id}
                 onClick={() => {
                   setSelectedProduct(p);
-                  generateAffiliateLinkForProduct(p.id);
+                  generateAffiliateLinkForProduct(p.id); // RAWID → affiliate-länk
                 }}
                 className={`p-3 rounded-xl border cursor-pointer transition ${
                   selectedProduct?.id === p.id
@@ -152,7 +150,9 @@ export default function OfferPanels({
                     : "border-slate-700 bg-slate-900 hover:bg-slate-800"
                 }`}
               >
-                <p className="text-sm font-semibold text-slate-100">{p.name}</p>
+                <p className="text-sm font-semibold text-slate-100">
+                  {p.name}
+                </p>
                 <p className="text-xs text-slate-400">{p.description}</p>
 
                 <div className="flex gap-3 text-[11px] mt-2 text-slate-300">
@@ -169,16 +169,19 @@ export default function OfferPanels({
             <div className="mt-4">
               {missingAffiliateWarning ? (
                 <p className="text-xs text-red-400">
-                  You must add your affiliate ID for this network in your dashboard.
+                  You must add your affiliate ID for this network in your
+                  dashboard.
                 </p>
               ) : (
                 affiliateLink && (
                   <div className="flex items-center gap-2">
-                    <p className="flex-1 text-xs break-all bg-slate-950/80 border border-slate-700 px-3 py-2 rounded-lg">
+                    <p className="flex-1 text-xs break-all bg-slate-950/80 border border-slate-700 px-3 py-2 rounded-lg text-slate-200">
                       {affiliateLink}
                     </p>
                     <button
-                      onClick={() => navigator.clipboard.writeText(affiliateLink)}
+                      onClick={() =>
+                        navigator.clipboard.writeText(affiliateLink)
+                      }
                       className="px-3 py-1 rounded-lg text-xs bg-purple-600 text-white"
                     >
                       Copy
@@ -191,10 +194,11 @@ export default function OfferPanels({
         </div>
       )}
 
-      {/* RECURRING MODE PANEL */}
+      {/* -------------------------------------------------- */}
+      {/* RECURRING MODE */}
+      {/* -------------------------------------------------- */}
       {offerMode === "recurring" && (
         <div className="space-y-4">
-
           <label className="text-xs font-semibold">Recurring Platform</label>
 
           <div className="space-y-2">
@@ -202,7 +206,13 @@ export default function OfferPanels({
               <div
                 key={p.id}
                 onClick={() => {
+                  // Markera vald plattform
                   setRecurringPlatform(p.id);
+
+                  // Sätt aktivt tracking-ID i state (kommer från user_recurring_platforms)
+                  setRecurringSubID(p.subId ?? "");
+
+                  // Låt page.tsx hantera affiliateLink via denna callback
                   generateAffiliateLinkForRecurring(p.id);
                 }}
                 className={`p-3 rounded-xl border cursor-pointer transition ${
@@ -215,36 +225,56 @@ export default function OfferPanels({
                   {p.name}
                 </p>
                 <p className="text-xs text-slate-400">{p.note}</p>
+
                 <p className="text-[11px] text-emerald-300 mt-1">
                   {p.commission}% recurring commission
                 </p>
+
+                {p.highlight && (
+                  <p className="text-[10px] text-amber-300 mt-1">
+                    Autoaffi recommended
+                  </p>
+                )}
+
+                {p.subId && (
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Your tracking ID:{" "}
+                    <span className="text-emerald-300">{p.subId}</span>
+                  </p>
+                )}
               </div>
             ))}
           </div>
 
-          {/* SUBID DISPLAY IF EXISTS */}
+          {/* Aktivt tracking-ID (visas under listan) */}
           {recurringSubID && (
-            <p className="text-[11px] text-slate-500">
-              Sub ID: <span className="text-emerald-300">{recurringSubID}</span>
-            </p>
+            <div className="mt-2 text-[11px] text-slate-500">
+              <p>
+                Active tracking ID:&nbsp;
+                <span className="text-emerald-300">{recurringSubID}</span>
+              </p>
+            </div>
           )}
         </div>
       )}
 
-      {/* FUNNEL MODE PANEL */}
+      {/* -------------------------------------------------- */}
+      {/* FUNNEL MODE */}
+      {/* -------------------------------------------------- */}
       {offerMode === "funnel" && (
         <div className="space-y-3">
-          <label className="text-xs font-semibold">Funnel URL</label>
+          <label className="text-xs font-semibold">Funnel URL (rawid)</label>
           <input
             type="text"
             value={funnelUrl}
             onChange={(e) => setFunnelUrl(e.target.value)}
             placeholder="https://your-funnel.com"
-            className="w-full rounded-lg bg-black/20 border border-white/10 text-xs px-3 py-2"
+            className="w-full rounded-lg bg-slate-800 border border-slate-600 text-xs px-3 py-2 text-slate-200"
           />
 
           <p className="text-[10px] text-slate-400">
-            Autoaffi will use this funnel in the CTA, hook angle & timeline.
+            Autoaffi will sync this funnel ID to hooks, CTA, timeline & affiliate
+            tracking.
           </p>
         </div>
       )}

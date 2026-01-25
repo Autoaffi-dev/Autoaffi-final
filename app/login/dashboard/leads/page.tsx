@@ -1,44 +1,24 @@
 "use client";
-import { motion } from "framer-motion";
+
+import React from "react";
+import QrLeadsWidget from "../contact/_components/QrLeadsWidget";
 
 export default function LeadsPage() {
   return (
-    <main className="min-h-screen bg-gradient-to-b from-white via-gray-50 to-gray-100 px-6 md:px-12 pt-28 pb-16">
-      <motion.h1
-        initial={{ opacity: 0, y: 25 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.8, ease: "easeInOut" }}
-        className="text-4xl md:text-5xl font-extrabold text-center mb-10"
-      >
-        Lead <span className="text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-yellow-600">Manager</span>
-      </motion.h1>
+    <main className="min-h-screen bg-[#07070a] text-white px-6 md:px-12 pt-24 pb-20">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-center text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-yellow-400 to-yellow-600">
+          Contact Manager
+        </h1>
 
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.8, ease: "easeInOut" }}
-        className="max-w-5xl mx-auto bg-white p-10 rounded-3xl shadow-xl border border-gray-100"
-      >
-        <p className="text-gray-600 mb-6">
-          Monitor your leads, conversions, and referral performance.
+        <p className="mt-4 text-center text-white/65">
+          Monitor your leads, follow-ups and conversions. QR leads are collected here automatically.
         </p>
-        <table className="w-full border-collapse text-left text-gray-700">
-          <thead>
-            <tr className="border-b">
-              <th className="py-2">Lead</th>
-              <th className="py-2">Source</th>
-              <th className="py-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td className="py-3">—</td>
-              <td className="py-3">—</td>
-              <td className="py-3 text-gray-400">No data yet</td>
-            </tr>
-          </tbody>
-        </table>
-      </motion.div>
+
+        <div className="mt-10">
+          <QrLeadsWidget />
+        </div>
+      </div>
     </main>
   );
 }

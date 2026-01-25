@@ -1,79 +1,138 @@
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs"; // ensures FormData + streams work
+export const runtime = "nodejs";
+// Säkerhetsmarginal för Vercel/Node – 300s = 5 min
+export const maxDuration = 300;
+
+type MediaType = "mixed" | "video" | "stills";
+
+type MediaItem = {
+  source?: string;
+  url?: string;
+  thumb?: string;
+  duration?: number;
+  [key: string]: any;
+};
 
 export async function POST(req: Request) {
   try {
-    // Read multipart FormData
-    const formData = await req.formData();
+    const body = await req.json();
 
-    console.log("🔥 [RENDER-VX] Incoming payload keys:", Array.from(formData.keys()));
+    const workerUrl = process.env.RENDER_WORKER_URL;
+    if (!workerUrl) {
+      console.error("[RENDER-VX ROUTE] Missing RENDER_WORKER_URL");
+      return NextResponse.json(
+        { ok: false, error: "Missing RENDER_WORKER_URL" },
+        { status: 500 }
+      );
+    }
 
-    // -------------------------------------------------
-    // REQUIRED FIELDS (FIXED)
-    // -------------------------------------------------
-    const required = ["script", "duration", "mediaType", "realism", "voiceStyle"];
-    for (const r of required) {
-      if (!formData.get(r)) {
-        return NextResponse.json(
-          { error: `Missing required field: ${r}` },
-          { status: 400 }
-        );
+    const genre: string = body.genre || "motivation";
+    const mediaType: MediaType = body.mediaType || "mixed";
+
+    // 1) Försök använda mediaFiles från frontend (/api/reels/generate-result)
+    let mediaFiles: MediaItem[] = Array.isArray(body.mediaFiles)
+      ? body.mediaFiles
+      : [];
+
+    // 2) Om tomt → hämta direkt från /api/media/fetch (samma som generate)
+    if (!mediaFiles.length) {
+      const baseUrl =
+        req.headers.get("origin") ||
+        process.env.NEXT_PUBLIC_BASE_URL ||
+        "http://localhost:3000";
+
+      try {
+        const mediaRes = await fetch(`${baseUrl}/api/media/fetch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: genre,
+            type: mediaType,
+          }),
+        });
+
+        if (mediaRes.ok) {
+          const mediaJson = await mediaRes.json();
+          mediaFiles =
+            (mediaJson?.results?.slice?.(0, 12)) ||
+            (mediaJson?.combined?.slice?.(0, 12)) ||
+            [];
+        } else {
+          const txt = await mediaRes.text().catch(() => "");
+          console.error(
+            "[RENDER-VX ROUTE] media/fetch error",
+            mediaRes.status,
+            txt
+          );
+        }
+      } catch (e) {
+        console.error("[RENDER-VX ROUTE] media/fetch crash", e);
       }
     }
 
-    // -------------------------------------------------
-    // FORWARD TO WORKER
-    // -------------------------------------------------
-    const WORKER_URL = process.env.RENDER_WORKER_URL;
-    if (!WORKER_URL) {
-      return NextResponse.json(
-        { error: "Missing env RENDER_WORKER_URL" },
-        { status: 500 }
-      );
+    // 3) Sista steg – hård fallback om allt annat brunnit upp
+    if (!mediaFiles.length) {
+      mediaFiles = [
+        {
+          source: "fallback",
+          url: "https://public.autoaffi.com/fallback/fallback1.mp4",
+          thumb: "https://public.autoaffi.com/fallback/thumb1.jpg",
+          duration: body.duration || 8,
+        },
+      ];
     }
 
-    const workerResponse = await fetch(`${WORKER_URL}/render`, {
+    // Payload → worker
+    const payload = {
+      ...body,
+      mediaFiles,
+    };
+
+    // Se till att vi inte får dubbla "//"
+    const workerEndpoint = `${workerUrl.replace(/\/+$/, "")}/render`;
+
+    // Längre timeout mot workern (undici har annars headers-timeout)
+    const signal =
+      // Node 18+ har AbortSignal.timeout, men TS kan gnälla → any-cast
+      (AbortSignal as any).timeout?.(280_000) ?? undefined;
+
+    const res = await fetch(workerEndpoint, {
       method: "POST",
-      body: formData,
+      headers: {
+        "Content-Type": "application/json",
+      },
+      // @ts-ignore – vi vet att runtime är Node
+      signal,
+      body: JSON.stringify(payload),
+    }).catch((err) => {
+      console.error("[RENDER-VX ROUTE] fetch to worker crashed", err);
+      throw err;
     });
 
-    console.log("📩 [RENDER-VX] Worker response status:", workerResponse.status);
-
-    // Parse worker JSON
-    let data: any = null;
-    try {
-      data = await workerResponse.json();
-    } catch (err) {
-      console.error("❌ Worker returned invalid JSON");
+    if (!res || !res.ok) {
+      const status = res?.status ?? 500;
+      const text = (await res?.text?.().catch(() => "")) ?? "";
+      console.error("[RENDER-VX ROUTE] Worker error:", status, text);
       return NextResponse.json(
-        { error: "Worker returned invalid JSON." },
+        {
+          ok: false,
+          error: "WORKER_ERROR",
+          status,
+        },
         { status: 500 }
       );
     }
 
-    if (!workerResponse.ok) {
-      console.error("❌ Worker Error:", data);
-      return NextResponse.json(
-        { error: data.error || "Render worker failed." },
-        { status: 500 }
-      );
-    }
-
-    console.log("✅ [RENDER-VX] Render success:", data);
-
+    const json = await res.json();
+    return NextResponse.json(json, { status: 200 });
+  } catch (err: any) {
+    console.error("[RENDER-VX ROUTE] Crash:", err);
     return NextResponse.json(
       {
-        videoUrl: data.videoUrl,
-        debug: data.debug || null,
+        ok: false,
+        error: err?.message || "Render-VX route failed",
       },
-      { status: 200 }
-    );
-
-  } catch (err: any) {
-    console.error("🔥 [RENDER-VX] Fatal Error", err);
-    return NextResponse.json(
-      { error: err.message || "Unexpected error in render-vx route." },
       { status: 500 }
     );
   }

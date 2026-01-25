@@ -1,10 +1,17 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
-// TODO: koppla Supabase här i v5; nu loggar vi bara
 export async function POST(req: Request) {
-  const body = await req.json();
-  console.log('Saving affiliate link:', body);
-  // Exempel-payload som förväntas:
-  // { provider, product_id, product_title, affiliate_url, caption }
-  return NextResponse.json({ ok: true, saved: true });
+  const session = await getServerSession(authOptions);
+  const userId = (session?.user as { id?: string } | undefined)?.id;
+
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+
+  // TODO: Spara i DB senare – men userId ska ALLTID komma från session
+  return NextResponse.json({ ok: true, saved: true, userId, body });
 }
