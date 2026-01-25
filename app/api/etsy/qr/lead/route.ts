@@ -70,7 +70,9 @@ async function requireUserId(req: Request): Promise<string | null> {
   return null;
 }
 
-type LeadRow = {
+type ProductType = "hoodie" | "sticker" | "phonecase";
+
+type LeadRowJoined = {
   id: number;
   asset_id: string;
   user_id: string;
@@ -78,13 +80,17 @@ type LeadRow = {
   email: string | null;
   phone: string | null;
   message: string | null;
-  ts?: string;
+  ts?: string | null;
+
+  // join: user_qr_assets(product_type, token)
+  user_qr_assets?: { product_type?: ProductType | null; token?: string | null } | null;
 };
 
 /**
  * ✅ GET /api/etsy/qr/lead?days=30&limit=50&cursor=<ISO>
  * - Kräver inloggning (session) i prod
  * - DEV header tillåts bara lokalt (localhost) i dev
+ * - Returnerar items + top_sources (30d, baserat på det du frågar efter i qs)
  */
 export async function GET(req: Request) {
   const supabase = getAdminSupabase();
@@ -106,7 +112,8 @@ export async function GET(req: Request) {
 
   let q = supabase
     .from("qr_leads")
-    .select("id,asset_id,user_id,name,email,phone,message,ts")
+    // ✅ join for source insight
+    .select("id,asset_id,user_id,name,email,phone,message,ts,user_qr_assets(product_type,token)")
     .eq("user_id", userId)
     .gte("ts", fromDate)
     .order("ts", { ascending: false })
@@ -119,10 +126,40 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "LEADS_FETCH_FAILED", details: error.message }, { status: 500 });
   }
 
-  const rows = (data || []) as LeadRow[];
+  const rows = (data || []) as LeadRowJoined[];
   const hasMore = rows.length > limit;
-  const items = rows.slice(0, limit);
-  const next_cursor = hasMore && items.length ? (items[items.length - 1].ts || null) : null;
+  const sliced = rows.slice(0, limit);
+
+  const next_cursor = hasMore && sliced.length ? (sliced[sliced.length - 1].ts || null) : null;
+
+  // ✅ enrich items so UI gets source/token without caring about join shape
+  const items = sliced.map((r) => ({
+    id: r.id,
+    asset_id: r.asset_id,
+    user_id: r.user_id,
+    name: r.name ?? null,
+    email: r.email ?? null,
+    phone: r.phone ?? null,
+    message: r.message ?? null,
+    ts: r.ts ?? null,
+
+    // NEW insight fields
+    source: (r.user_qr_assets?.product_type ?? null) as ProductType | null,
+
+    // optional debug (keep it; UI can ignore)
+    token: (r.user_qr_assets?.token ?? null) as string | null,
+  }));
+
+  // ✅ Top sources (counts within current response window: last X days)
+  const counts: Record<ProductType, number> = { hoodie: 0, sticker: 0, phonecase: 0 };
+  for (const it of items) {
+    const s = it.source as ProductType | null;
+    if (s && counts[s] != null) counts[s] += 1;
+  }
+
+  const top_sources = (Object.entries(counts) as Array<[ProductType, number]>)
+    .map(([source, count]) => ({ source, count }))
+    .sort((a, b) => b.count - a.count);
 
   return NextResponse.json({
     ok: true,
@@ -130,13 +167,15 @@ export async function GET(req: Request) {
     from: fromDate,
     next_cursor,
     items,
+    top_sources,
+    total_in_window: items.length,
   });
 }
 
 /**
  * ✅ POST /api/etsy/qr/lead  (public capture)
  * - Kräver INTE session (QR-scan från vem som helst)
- * - user_id sätts från asset.user_id (ägaren av token) => det är exakt det Leads Hub ska lista på
+ * - user_id sätts från asset.user_id (ägaren av token) => Leads Hub ska filtrera på user_id
  */
 export async function POST(req: Request) {
   const supabase = getAdminSupabase();
@@ -189,7 +228,7 @@ export async function POST(req: Request) {
   // 2) Try insert lead first (fast path)
   const leadPayload = {
     asset_id: asset.id,
-    user_id: asset.user_id, // ✅ this is what Leads Hub should filter by
+    user_id: asset.user_id, // ✅ what Leads Hub should filter by
     name,
     email,
     phone,
@@ -210,10 +249,7 @@ export async function POST(req: Request) {
   // 3) If duplicate (unique violation), smart merge
   const pgCode = (leadErr as any)?.code;
   if (pgCode !== "23505") {
-    return NextResponse.json(
-      { ok: false, error: "LEAD_INSERT_FAILED", details: leadErr.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "LEAD_INSERT_FAILED", details: leadErr.message }, { status: 500 });
   }
 
   const { data: rows, error: rowsErr } = await supabase
@@ -230,7 +266,17 @@ export async function POST(req: Request) {
     );
   }
 
-  const list = (rows || []) as LeadRow[];
+  const list = (rows || []) as Array<{
+    id: number;
+    asset_id: string;
+    user_id: string;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    message: string | null;
+    ts?: string | null;
+  }>;
+
   const emailNorm = email ? email.toLowerCase() : null;
   const phoneNorm = phone ? phone : null;
 

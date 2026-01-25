@@ -6,7 +6,20 @@ export type QrLead = {
   email: string | null;
   phone: string | null;
   message: string | null;
-  ts?: string;
+
+  // timestamps
+  ts?: string | null;
+
+  // ✅ NEW insight
+  source?: "hoodie" | "sticker" | "phonecase" | null;
+
+  // optional debug (API can send it; UI may ignore)
+  token?: string | null;
+};
+
+export type TopSourceRow = {
+  source: "hoodie" | "sticker" | "phonecase";
+  count: number;
 };
 
 export async function fetchQrLeads(params: {
@@ -29,7 +42,7 @@ export async function fetchQrLeads(params: {
   });
 
   const json = await res.json();
-  if (!res.ok) throw new Error(json?.error || "Failed to fetch QR leads");
+  if (!res.ok || json?.ok !== true) throw new Error(json?.error || "Failed to fetch QR leads");
 
   return json as {
     ok: true;
@@ -37,5 +50,7 @@ export async function fetchQrLeads(params: {
     from: string;
     next_cursor: string | null;
     items: QrLead[];
+    top_sources: TopSourceRow[];
+    total_in_window: number;
   };
 }
