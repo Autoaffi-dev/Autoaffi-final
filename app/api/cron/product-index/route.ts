@@ -38,10 +38,22 @@ async function loadIndexerModule() {
   return (await import("@/lib/engines/product-indexer/indexer")) as any;
 }
 
+function collectErrorsFromReport(report: any): string[] {
+  const out: string[] = [];
+  const sources = report?.sources ?? {};
+  for (const key of Object.keys(sources)) {
+    const errs = sources?.[key]?.errors;
+    if (Array.isArray(errs) && errs.length) {
+      out.push(...errs.map((e: any) => `${key}: ${String(e)}`));
+    }
+  }
+  return out;
+}
+
 async function handle(req: Request) {
   try {
     if (!isAuthorized(req)) {
-      return jsonNoStore({ error: "Unauthorized" }, { status: 401 });
+      return jsonNoStore({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
     const mod = await loadIndexerModule();
@@ -57,6 +69,7 @@ async function handle(req: Request) {
     if (!runner) {
       return jsonNoStore(
         {
+          ok: false,
           error: "Indexer runner not found in indexer module.",
           hint: "Export runProductIndexer() or default from indexer.ts",
           exports: Object.keys(mod ?? {}),
@@ -67,21 +80,29 @@ async function handle(req: Request) {
 
     const startedAt = Date.now();
 
-    const result = await runner({
+    const report = await runner({
       limit: 200,
       sources: ["digistore", "mylead", "warriorplus"],
     });
 
-    const ms = Date.now() - startedAt;
+    const tookMs = Date.now() - startedAt;
+
+    // BEAST: om indexern rapporterar fel -> gör HTTP 500 så cron blir röd
+    const errors = collectErrorsFromReport(report);
+    const okFromRunner = typeof report?.ok === "boolean" ? report.ok : errors.length === 0;
 
     // undvik dubbla keys om runner returnerar ok/tookMs
-    const { ok: _ok, tookMs: _tookMs, ...safe } = (result ?? {}) as any;
+    const { ok: _ok, tookMs: _tookMs, ...safe } = (report ?? {}) as any;
 
-    return jsonNoStore({
-      ok: true,
-      tookMs: ms,
-      ...safe,
-    });
+    return jsonNoStore(
+      {
+        ok: okFromRunner,
+        tookMs,
+        ...safe,
+        errors, // alltid synligt om något strular
+      },
+      { status: okFromRunner ? 200 : 500 }
+    );
   } catch (err: any) {
     console.error("[cron/product-index] error:", err);
     return jsonNoStore(

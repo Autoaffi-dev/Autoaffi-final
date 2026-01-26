@@ -1,11 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 
 /**
- * BEAST v1.3
+ * BEAST v1.4
  * - Sources: digistore + mylead + warriorplus
  * - Upsert into public.product_index using (source, external_id)
  * - Never send "id" unless it is a uuid
- * - Keep tolerant fetcher loader
+ * - IMPORTANT: quality_score MUST NEVER be null (db NOT NULL)
  */
 
 export type ProductIndexerSource = "digistore" | "mylead" | "warriorplus";
@@ -29,13 +29,15 @@ export type ProductIndexRow = {
   price?: number | null;
 
   score?: number | null;
-  quality_score?: number | null;
+
+  // DB kräver NOT NULL -> vi skickar alltid number (default 0)
+  quality_score: number;
 
   is_active?: boolean;
   winner_tier?: string | null;
   dead_reason?: string | null;
 
-  geo_scope?: string | null; // optional (worldwide/tier1/eu/us/nordics etc)
+  geo_scope?: string | null;
 
   last_seen_at?: string;
   created_at?: string;
@@ -60,13 +62,23 @@ export type ProductIndexerReport = {
 
 function isUuid(v: unknown): v is string {
   if (typeof v !== "string") return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v
-  );
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
 function toIsoNow() {
   return new Date().toISOString();
+}
+
+function toFiniteNumberOrNull(v: any): number | null {
+  if (v === undefined || v === null) return null;
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+// BEAST: quality_score får aldrig bli null
+function toFiniteNumberOrDefault(v: any, fallback: number): number {
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
+  return Number.isFinite(n) ? n : fallback;
 }
 
 /**
@@ -74,6 +86,7 @@ function toIsoNow() {
  * - Do NOT send id unless uuid.
  * - Must always have (source + external_id)
  * - We normalize common field variants from fetchers.
+ * - quality_score MUST ALWAYS be a number (default 0)
  */
 function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow | null {
   const externalIdRaw =
@@ -98,6 +111,14 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
   const product_url = input?.product_url ?? input?.productUrl ?? input?.url ?? null;
   const landing_url = input?.landing_url ?? input?.landingUrl ?? input?.landing ?? null;
 
+  // BEST: plocka kvalitet/score från flera möjliga fält + default 0
+  const qualityRaw = input?.quality_score ?? input?.qualityScore ?? input?.score ?? input?.rating ?? 0;
+  const quality_score = toFiniteNumberOrDefault(qualityRaw, 0);
+
+  // score kan vara null i db (men vi försöker fylla)
+  const scoreRaw = input?.score ?? input?.quality_score ?? input?.qualityScore ?? null;
+  const score = toFiniteNumberOrNull(scoreRaw);
+
   const row: ProductIndexRow = {
     ...(id ? { id } : {}),
 
@@ -112,16 +133,13 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
     landing_url: landing_url ? String(landing_url) : null,
     image_url: input?.image_url ?? input?.imageUrl ?? input?.image ?? null,
 
-    epc: input?.epc === undefined || input?.epc === null ? null : Number(input.epc),
-    commission:
-      input?.commission === undefined || input?.commission === null
-        ? null
-        : Number(input.commission),
+    epc: toFiniteNumberOrNull(input?.epc),
+    commission: toFiniteNumberOrNull(input?.commission),
     currency: input?.currency ?? null,
-    price: input?.price === undefined || input?.price === null ? null : Number(input.price),
+    price: toFiniteNumberOrNull(input?.price),
 
-    score: input?.score === undefined || input?.score === null ? null : Number(input.score),
-    quality_score: input?.quality_score ?? input?.qualityScore ?? null,
+    score,
+    quality_score, // ✅ aldrig null
 
     geo_scope: input?.geo_scope ?? input?.geoScope ?? "worldwide",
 
@@ -133,25 +151,16 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
     updated_at: now,
   };
 
-  // backfill score from quality_score if needed
-  if ((row.score === null || row.score === undefined) && row.quality_score != null) {
-    const n = Number(row.quality_score);
-    row.score = Number.isFinite(n) ? n : null;
-  }
-
   return row;
 }
 
 function getSupabaseAdmin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
 
-  const serviceKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 
   if (!url || !serviceKey) {
-    throw new Error(
-      "Missing SUPABASE env vars (NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)."
-    );
+    throw new Error("Missing SUPABASE env vars (NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).");
   }
 
   return createClient(url, serviceKey, { auth: { persistSession: false } });
@@ -187,9 +196,7 @@ async function loadFetcher(source: ProductIndexerSource) {
   }
 
   if (typeof fn !== "function") {
-    throw new Error(
-      `Fetcher for "${source}" not found (no function export in ${map[source]}).`
-    );
+    throw new Error(`Fetcher for "${source}" not found (no function export in ${map[source]}).`);
   }
 
   return fn as (args: { limit: number }) => Promise<any[]>;
@@ -202,9 +209,7 @@ export async function runProductIndexer(args?: {
   const started = Date.now();
   const triggeredAt = toIsoNow();
 
-  const sources: ProductIndexerSource[] =
-    args?.sources ?? ["digistore", "mylead", "warriorplus"];
-
+  const sources: ProductIndexerSource[] = args?.sources ?? ["digistore", "mylead", "warriorplus"];
   const limit = Math.max(1, Math.min(args?.limit ?? 200, 500));
 
   const supabase = getSupabaseAdmin();
@@ -271,11 +276,10 @@ export async function runProductIndexer(args?: {
 
 /* ==========================================================
    ✅ MINIMAL PATCH: add searchProductIndex + RawProductRecord
-   (so product-discovery-engine can build)
    ========================================================== */
 
 export type RawProductRecord = {
-  id: string; // stable id for UI (not uuid requirement)
+  id: string; // stable id for UI
   title: string;
   description: string | null;
   epc: number | null;
@@ -300,25 +304,19 @@ export async function searchProductIndex(args: {
 
   if (q) {
     const like = `%${q}%`;
-    queryBuilder = queryBuilder.or(
-      `title.ilike.${like},description.ilike.${like},category.ilike.${like}`
-    );
+    queryBuilder = queryBuilder.or(`title.ilike.${like},description.ilike.${like},category.ilike.${like}`);
   }
 
-  // best-effort sort (if score exists)
   queryBuilder = queryBuilder.order("score", { ascending: false, nullsFirst: false });
 
   const { data, error } = await queryBuilder;
-
-  if (error) {
-    throw new Error(error.message);
-  }
+  if (error) throw new Error(error.message);
 
   const rows = (data || []) as any[];
 
   return rows
     .map((r) => {
-      const url = String((r.product_url || r.landing_url || "")).trim();
+      const url = String(r.product_url || r.landing_url || "").trim();
       if (!url) return null;
 
       return {
