@@ -2,9 +2,15 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+// Beast++: undvik att Vercel/Next försöker cache:a GET-responsen
+export const dynamic = "force-dynamic";
+
 /**
+ * PRODUCT INDEX (BEAST++)
  * POST /api/cron/product-index?key=CRON_SECRET
  * header: x-autoaffi-cron: CRON_SECRET
+ *
+ * cron-job.org kan köra GET/HEAD vid test run → vi mappar GET/HEAD till samma logik.
  */
 
 function isAuthorized(req: Request) {
@@ -17,15 +23,25 @@ function isAuthorized(req: Request) {
   return headerSecret === secret || querySecret === secret;
 }
 
+function jsonNoStore(body: any, init?: ResponseInit) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: {
+      "cache-control": "no-store",
+      ...(init?.headers ?? {}),
+    },
+  });
+}
+
 async function loadIndexerModule() {
-  // Keep robust import (same path, but ready if you refactor later)
+  // Robust import (tål refactors)
   return (await import("@/lib/engines/product-indexer/indexer")) as any;
 }
 
-export async function POST(req: Request) {
+async function handle(req: Request) {
   try {
     if (!isAuthorized(req)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return jsonNoStore({ error: "Unauthorized" }, { status: 401 });
     }
 
     const mod = await loadIndexerModule();
@@ -39,7 +55,7 @@ export async function POST(req: Request) {
       mod.default;
 
     if (!runner) {
-      return NextResponse.json(
+      return jsonNoStore(
         {
           error: "Indexer runner not found in indexer module.",
           hint: "Export runProductIndexer() or default from indexer.ts",
@@ -58,30 +74,33 @@ export async function POST(req: Request) {
 
     const ms = Date.now() - startedAt;
 
-    // Avoid duplicate keys if runner returns ok/tookMs
+    // undvik dubbla keys om runner returnerar ok/tookMs
     const { ok: _ok, tookMs: _tookMs, ...safe } = (result ?? {}) as any;
 
-    return NextResponse.json({
+    return jsonNoStore({
       ok: true,
       tookMs: ms,
       ...safe,
     });
   } catch (err: any) {
     console.error("[cron/product-index] error:", err);
-    return NextResponse.json(
+    return jsonNoStore(
       { ok: false, error: err?.message ?? "Cron product-index failed" },
       { status: 500 }
     );
   }
 }
 
-// ✅ cron-job.org “test run” kör ofta GET/HEAD → annars blir det 405.
-// Vi mappar GET/HEAD till samma logik som POST.
+export async function POST(req: Request) {
+  return handle(req);
+}
+
+// cron-job.org “test run” kan köra GET/HEAD → undvik 405
 export async function GET(req: Request) {
-  return POST(req);
+  return handle(req);
 }
 
 export async function HEAD(req: Request) {
-  const res = await POST(req);
+  const res = await handle(req);
   return new Response(null, { status: res.status, headers: res.headers });
 }
