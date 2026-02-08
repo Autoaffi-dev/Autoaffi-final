@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { upsertSocialAccount } from "@/lib/socialStore";
 
+export const runtime = "nodejs";
+
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
@@ -17,14 +19,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login?error=bad_state", req.url));
   }
 
+  const origin = req.nextUrl.origin;
+  const redirectUri = new URL("/api/oauth/google/callback", origin).toString();
+
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: process.env.GOOGLE_CLIENT_ID!,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-      redirect_uri: process.env.NEXT_PUBLIC_GOOGLE_REDIRECT!,
+      client_id: process.env.GOOGLE_CLIENT_ID ?? "",
+      client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+      redirect_uri: redirectUri, // ✅ måste matcha auth-steget
       grant_type: "authorization_code",
     }),
   });
@@ -33,7 +38,7 @@ export async function GET(req: NextRequest) {
 
   if (!token?.access_token) {
     return NextResponse.redirect(
-      new URL("/dashboard/social-accounts?error=token_failed&platform=youtube", req.url)
+      new URL("/login/dashboard/social-accounts?error=token_failed&platform=youtube", req.url)
     );
   }
 
@@ -47,5 +52,7 @@ export async function GET(req: NextRequest) {
     meta: { raw: { token_raw: token } },
   });
 
-  return NextResponse.redirect(new URL("/dashboard/social-accounts?connected=youtube", req.url));
+  return NextResponse.redirect(
+    new URL("/login/dashboard/social-accounts?connected=youtube", req.url)
+  );
 }
