@@ -8,13 +8,14 @@ import AboutAutoaffi from "@/components/AboutAutoaffi";
 import WhyChoose from "@/components/WhyChoose";
 import SuccessBarrier from "@/components/SuccessBarrier";
 import Pricing from "@/components/Pricing";
+import AffiliateExplained from "@/components/AffiliateExplained";
 import Testimonials from "@/components/Testimonials";
+import HowItWorks from "@/components/HowItWorks";
 import FAQ from "@/components/FAQ";
-import Footer from "@/components/Footer";
 
 /**
- * Vi håller transition enkel för att undvika typings-konflikter:
- * bara duration, ingen custom ease (som orsakat TS-felen tidigare).
+ * Enkel transition för att undvika typings-konflikter:
+ * bara duration.
  */
 const transition = { duration: 0.8 };
 
@@ -26,8 +27,8 @@ export default function HomePage() {
 
       {/* ✨ ABOUT */}
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
         viewport={{ once: true, amount: 0.2 }}
         transition={transition}
       >
@@ -36,18 +37,18 @@ export default function HomePage() {
 
       {/* ⚡ WHY CHOOSE */}
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
         viewport={{ once: true, amount: 0.2 }}
         transition={transition}
       >
         <WhyChoose />
       </motion.div>
 
-      {/* 🚀 SUCCESS BARRIER (v5-style, interaktiv slider + barometer) */}
+      {/* 🚀 SUCCESS */}
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
         viewport={{ once: true, amount: 0.2 }}
         transition={transition}
       >
@@ -56,34 +57,44 @@ export default function HomePage() {
 
       {/* 💰 PRICING */}
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
         viewport={{ once: true, amount: 0.2 }}
         transition={transition}
       >
         <Pricing />
       </motion.div>
 
-      {/* 💬 TESTIMONIALS */}
+      {/* 🧠 AFFILIATE EXPLAINED */}
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
         viewport={{ once: true, amount: 0.2 }}
         transition={transition}
       >
-        <Testimonials />
+        <AffiliateExplained />
+      </motion.div>
+
+
+      {/* 🧩 HOW IT WORKS */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
+        viewport={{ once: true, amount: 0.2 }}
+        transition={transition}
+      >
+        <HowItWorks />
       </motion.div>
 
       {/* ❓ FAQ */}
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        whileInView={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
         viewport={{ once: true, amount: 0.2 }}
         transition={transition}
       >
         <FAQ />
       </motion.div>
-
     </main>
   );
 }

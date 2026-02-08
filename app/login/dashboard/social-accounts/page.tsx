@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import AccountManageModal from "@/components/social-accounts/modals/AccountManageModal";
 
 // PLATFORM TYPES
@@ -49,58 +49,272 @@ const INITIAL_STATE: Record<PlatformKey, PlatformState> = {
   linkedin: { accounts: [] },
 };
 
+// ✅ Hämta accounts från DB
+async function fetchAccounts() {
+  const res = await fetch("/api/social/accounts", { cache: "no-store" });
+  if (!res.ok) return [];
+  const json = await res.json();
+  return (json.accounts || []) as Array<{
+    platform: PlatformKey;
+    status: "connected" | "disconnected";
+    username?: string | null;
+    account_id?: string | null;
+    updated_at?: string | null;
+  }>;
+}
+
+/** ---------------- UI: Toast + Banner ---------------- */
+function Toast({
+  open,
+  type,
+  title,
+  message,
+}: {
+  open: boolean;
+  type: "success" | "error";
+  title: string;
+  message: string;
+}) {
+  if (!open) return null;
+
+  const base =
+    "fixed right-4 top-4 z-[60] w-[min(420px,calc(100vw-2rem))] rounded-2xl border px-4 py-3 shadow-[0_18px_60px_rgba(0,0,0,0.65)] backdrop-blur";
+  const skin =
+    type === "success" ? "border-yellow-500/40 bg-slate-950/70" : "border-red-500/40 bg-slate-950/70";
+
+  return (
+    <div className={`${base} ${skin}`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">
+        {type === "success" ? "Connected" : "Error"}
+      </p>
+      <p className="mt-1 text-sm font-extrabold text-slate-50">{title}</p>
+      <p className="mt-1 text-[12px] text-slate-300">{message}</p>
+    </div>
+  );
+}
+
+function Banner({
+  open,
+  type,
+  title,
+  message,
+}: {
+  open: boolean;
+  type: "success" | "error";
+  title: string;
+  message: string;
+}) {
+  if (!open) return null;
+
+  const skin =
+    type === "success" ? "border-yellow-500/40 bg-yellow-500/10" : "border-red-500/40 bg-red-500/10";
+
+  return (
+    <div className={`mb-6 rounded-2xl border ${skin} px-4 py-3`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">{title}</p>
+      <p className="mt-1 text-[12px] text-slate-200">{message}</p>
+    </div>
+  );
+}
+
 export default function SocialAccountsPage() {
-  const [platforms, setPlatforms] =
-    useState<Record<PlatformKey, PlatformState>>(INITIAL_STATE);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+
+  // ✅ FIX: pathname kan vara string | null i vissa setups → gör alltid string
+  const safePath = pathname ?? "/login/dashboard/social-accounts";
+
+  const [platforms, setPlatforms] = useState<Record<PlatformKey, PlatformState>>(INITIAL_STATE);
 
   const [manageOpen, setManageOpen] = useState(false);
   const [managePlatform, setManagePlatform] = useState<PlatformKey | null>(null);
+
+  const [toastVisible, setToastVisible] = useState(false);
+  const [bannerVisible, setBannerVisible] = useState(false);
+
+  const connected = searchParams?.get("connected");
+  const error = searchParams?.get("error");
+  const platformParam = searchParams?.get("platform");
+
+  const banner = useMemo(() => {
+    if (error) {
+      return {
+        type: "error" as const,
+        title: "Connection failed",
+        message:
+          "Something went wrong during OAuth. Please try again. If it keeps failing, disconnect and reconnect.",
+      };
+    }
+
+    if (connected) {
+      const p = connected.toLowerCase() as PlatformKey;
+      const label = PLATFORM_LABELS[p] || connected;
+      return {
+        type: "success" as const,
+        title: "Connected!",
+        message: `${label} is now connected. Sync analytics to load your latest performance data.`,
+      };
+    }
+
+    if (platformParam) {
+      const p = platformParam.toLowerCase() as PlatformKey;
+      const label = PLATFORM_LABELS[p] || platformParam;
+      return {
+        type: "success" as const,
+        title: "Ready",
+        message: `${label} is ready. You can now sync analytics.`,
+      };
+    }
+
+    return null;
+  }, [connected, error, platformParam]);
 
   // ---------------- PLAN LOCKING ----------------
   function isLocked(platform: PlatformKey): boolean {
     const neededPlan = PLATFORM_PLAN[platform];
     if (ACTIVE_PLAN === "Elite") return false;
-    if (ACTIVE_PLAN === "Pro") {
-      return neededPlan === "Elite";
+    if (ACTIVE_PLAN === "Pro") return neededPlan === "Elite";
+    return neededPlan === "Pro" || neededPlan === "Elite"; // Basic
+  }
+
+  // ✅ Hydrate UI state från DB
+  async function hydrate() {
+    const rows = await fetchAccounts();
+
+    setPlatforms((prev) => {
+      const next = { ...prev };
+
+      // reset så disconnect syns direkt
+      (Object.keys(next) as PlatformKey[]).forEach((p) => {
+        next[p] = { accounts: [] };
+      });
+
+      for (const row of rows) {
+        const p = row.platform;
+        if (!next[p]) continue;
+
+        if (row.status === "connected") {
+          next[p] = {
+            accounts: [
+              {
+                id: row.account_id || `acc-${p}-1`,
+                username: row.username || `${PLATFORM_LABELS[p]} account`,
+                primary: true,
+              },
+            ],
+            lastSynced: row.updated_at ? new Date(row.updated_at).toLocaleString() : undefined,
+          };
+        }
+      }
+
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    hydrate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ✅ Toast/Banner lifecycle + rensa query params (TS-safe)
+  useEffect(() => {
+    if (!banner) return;
+
+    setToastVisible(true);
+    setBannerVisible(true);
+
+    const t1 = setTimeout(() => setToastVisible(false), 4500);
+    const t2 = setTimeout(() => setBannerVisible(false), 6500);
+
+    // rensa query params så den inte triggar igen vid refresh/back
+    if (searchParams) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("connected");
+      params.delete("error");
+      params.delete("platform");
+
+      const qs = params.toString(); // ✅ alltid string
+      const target = qs.length > 0 ? `${safePath}?${qs}` : safePath; // ✅ alltid string
+      router.replace(target);
     }
-    // Basic
-    return neededPlan === "Pro" || neededPlan === "Elite";
+
+    // om vi kom från OAuth och har "connected" => hydrate igen så UI uppdateras direkt
+    hydrate();
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [banner]);
+
+  // ✅ Riktiga connect redirects per plattform
+  function goConnect(platform: PlatformKey) {
+    if (isLocked(platform)) return;
+
+    if (platform === "instagram") {
+      window.location.href = `/api/oauth/facebook?platform=instagram`;
+      return;
+    }
+
+    if (platform === "facebook") {
+      window.location.href = `/api/oauth/facebook?platform=facebook`;
+      return;
+    }
+
+    if (platform === "tiktok") {
+      window.location.href = `/api/oauth/tiktok`;
+      return;
+    }
+
+    if (platform === "youtube") {
+      window.location.href = `/api/oauth/google?platform=youtube`;
+      return;
+    }
+
+    if (platform === "linkedin") {
+      window.location.href = `/api/oauth/linkedin`;
+      return;
+    }
+
+    // X placeholder tills API byggs
+  }
+
+  // ✅ Riktig sync (V1: Instagram via /api/social/sync)
+  async function runSync(platform: PlatformKey) {
+    if (platform !== "instagram") {
+      setPlatforms((prev) => ({
+        ...prev,
+        [platform]: { ...prev[platform], lastSynced: "Just now" },
+      }));
+      return;
+    }
+
+    await fetch("/api/social/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "instagram" }),
+    });
+
+    await hydrate();
   }
 
   // ---------------- CONNECT / SYNC ----------------
-  function handleConnect(platform: PlatformKey) {
+  async function handleConnect(platform: PlatformKey) {
     if (isLocked(platform)) return;
 
-    setPlatforms((prev) => {
-      const current = prev[platform];
-      const hasAccounts = current.accounts.length > 0;
+    const current = platforms[platform];
+    const hasAccounts = current.accounts.length > 0;
 
-      // Första gången → skapa ett fejk-konto
-      if (!hasAccounts) {
-        const firstAccount: Account = {
-          id: `acc-${platform}-1`,
-          username: `${PLATFORM_LABELS[platform]} account`,
-          primary: true,
-        };
+    // Första gången => redirect till OAuth
+    if (!hasAccounts) {
+      goConnect(platform);
+      return;
+    }
 
-        return {
-          ...prev,
-          [platform]: {
-            accounts: [firstAccount],
-            lastSynced: "Just now",
-          },
-        };
-      }
-
-      // Redan ansluten → bara uppdatera "senast synkad"
-      return {
-        ...prev,
-        [platform]: {
-          ...current,
-          lastSynced: "Just now",
-        },
-      };
-    });
+    // Redan ansluten => kör sync
+    await runSync(platform);
   }
 
   // ---------------- ADD ACCOUNT (+) ----------------
@@ -109,9 +323,7 @@ export default function SocialAccountsPage() {
 
     setPlatforms((prev) => {
       const current = prev[platform];
-      if (current.accounts.length === 0) {
-        return prev; // ska egentligen inte kunna hända, knappen är disabled i UI
-      }
+      if (current.accounts.length === 0) return prev;
 
       const index = current.accounts.length + 1;
       const newAccount: Account = {
@@ -148,24 +360,35 @@ export default function SocialAccountsPage() {
     handleAddAccount(managePlatform);
   }
 
-  function handleModalRemove(id: string) {
+  // ✅ Om sista kontot tas bort => disconnect i backend
+  async function handleModalRemove(id: string) {
     if (!managePlatform) return;
-    setPlatforms((prev) => {
-      const current = prev[managePlatform];
-      const filtered = current.accounts.filter((acc) => acc.id !== id);
 
-      if (filtered.length > 0 && !filtered.some((acc) => acc.primary)) {
-        filtered[0] = { ...filtered[0], primary: true };
-      }
+    const current = platforms[managePlatform];
+    const filtered = current.accounts.filter((acc) => acc.id !== id);
 
-      return {
-        ...prev,
-        [managePlatform]: {
-          ...current,
-          accounts: filtered,
-        },
-      };
-    });
+    if (filtered.length === 0) {
+      await fetch("/api/social/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: managePlatform }),
+      });
+      await hydrate();
+      return;
+    }
+
+    // annars: bara UI (multi-account DB kan komma senare)
+    if (filtered.length > 0 && !filtered.some((acc) => acc.primary)) {
+      filtered[0] = { ...filtered[0], primary: true };
+    }
+
+    setPlatforms((prev) => ({
+      ...prev,
+      [managePlatform]: {
+        ...prev[managePlatform],
+        accounts: filtered,
+      },
+    }));
   }
 
   function handleModalSetPrimary(id: string) {
@@ -189,7 +412,21 @@ export default function SocialAccountsPage() {
   // ---------------- RENDER ----------------
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-black text-slate-50 px-4 py-10">
+      <Toast
+        open={toastVisible && !!banner}
+        type={(banner?.type || "success") as "success" | "error"}
+        title={banner?.title || ""}
+        message={banner?.message || ""}
+      />
+
       <div className="mx-auto max-w-6xl">
+        <Banner
+          open={bannerVisible && !!banner}
+          type={(banner?.type || "success") as "success" | "error"}
+          title={banner?.title || ""}
+          message={banner?.message || ""}
+        />
+
         {/* HEADER */}
         <header className="mb-8 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -202,15 +439,13 @@ export default function SocialAccountsPage() {
               </span>
             </h1>
             <p className="mt-2 text-sm md:text-base text-slate-400 max-w-xl">
-              Autoaffi never auto-DMs, never auto-likes and never posts without
-              your consent. We only read safe analytics to help you grow smarter.
+              Autoaffi never auto-DMs, never auto-likes and never posts without your consent. We only read safe
+              analytics to help you grow smarter.
             </p>
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-xs text-slate-300 shadow-lg shadow-black/50 max-w-xs">
-            <p className="font-semibold text-yellow-300 mb-1">
-              What changes when you connect?
-            </p>
+            <p className="font-semibold text-yellow-300 mb-1">What changes when you connect?</p>
             <ul className="space-y-1">
               <li>• Better Smart Suggestions & Viral Heads-Up</li>
               <li>• Real performance data for My Progress</li>
@@ -227,39 +462,27 @@ export default function SocialAccountsPage() {
 
           <div className="grid gap-4 md:grid-cols-3 text-xs text-slate-200">
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="mb-1 text-[11px] font-semibold text-yellow-300">
-                Step 1 — Connect basics
-              </p>
+              <p className="mb-1 text-[11px] font-semibold text-yellow-300">Step 1 — Connect basics</p>
               <p>
-                Start with{" "}
-                <span className="font-semibold">
-                  TikTok, Instagram, Facebook &amp; YouTube
-                </span>
-                . These give the strongest analytics boost.
+                Start with <span className="font-semibold">TikTok, Instagram, Facebook &amp; YouTube</span>. These give
+                the strongest analytics boost.
               </p>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="mb-1 text-[11px] font-semibold text-yellow-300">
-                Step 2 — Add extra channels
-              </p>
+              <p className="mb-1 text-[11px] font-semibold text-yellow-300">Step 2 — Add extra channels</p>
               <p>
-                <span className="font-semibold">Pro</span> unlocks X and{" "}
-                <span className="font-semibold">Elite</span> unlocks LinkedIn for
-                advanced authority &amp; B2B growth.
+                <span className="font-semibold">Pro</span> unlocks X and <span className="font-semibold">Elite</span>{" "}
+                unlocks LinkedIn for advanced authority &amp; B2B growth.
               </p>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="mb-1 text-[11px] font-semibold text-yellow-300">
-                Step 3 — Let Autoaffi guide you
-              </p>
+              <p className="mb-1 text-[11px] font-semibold text-yellow-300">Step 3 — Let Autoaffi guide you</p>
               <p>
                 Connected accounts power{" "}
-                <span className="font-semibold">
-                  Content Optimizer, Smart Suggestions, Viral Heads-Up
-                </span>{" "}
-                and <span className="font-semibold">My Progress</span>.
+                <span className="font-semibold">Content Optimizer, Smart Suggestions, Viral Heads-Up</span> and{" "}
+                <span className="font-semibold">My Progress</span>.
               </p>
             </div>
           </div>
@@ -267,9 +490,7 @@ export default function SocialAccountsPage() {
 
         {/* PLATFORM CARDS */}
         <section className="mb-12">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-yellow-400 mb-2">
-            Platforms & plans
-          </h2>
+          <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-yellow-400 mb-2">Platforms & plans</h2>
           <p className="text-[11px] text-slate-500 mb-4">
             Basic users see everything — Pro &amp; Elite unlock more connections.
           </p>
@@ -282,11 +503,7 @@ export default function SocialAccountsPage() {
               const locked = isLocked(platform);
               const hasAccounts = state.accounts.length > 0;
 
-              const connectLabel = locked
-                ? "Upgrade to unlock"
-                : hasAccounts
-                ? "Sync analytics"
-                : "Connect";
+              const connectLabel = locked ? "Upgrade to unlock" : hasAccounts ? "Sync analytics" : "Connect";
 
               const statusLabel = hasAccounts
                 ? `${state.accounts.length} account${state.accounts.length > 1 ? "s" : ""} connected`
@@ -298,16 +515,9 @@ export default function SocialAccountsPage() {
                   : "Not synced yet"
                 : "Sync will start after first connect";
 
-              // mini "fake stats"
-              const followersLabel = hasAccounts
-                ? "Growing steadily"
-                : "Visible after connect";
-              const bestTimeLabel = hasAccounts
-                ? "18:00–21:00 (your peak)"
-                : "Calculated after sync";
-              const trendLabel = hasAccounts
-                ? "Strong fit for short-form"
-                : "Analyzed from your content";
+              const followersLabel = hasAccounts ? "Growing steadily" : "Visible after connect";
+              const bestTimeLabel = hasAccounts ? "18:00–21:00 (your peak)" : "Calculated after sync";
+              const trendLabel = hasAccounts ? "Strong fit for short-form" : "Analyzed from your content";
 
               return (
                 <article
@@ -321,12 +531,8 @@ export default function SocialAccountsPage() {
                   {/* TOP ROW */}
                   <div className="flex items-center justify-between mb-2">
                     <div>
-                      <h3 className="text-sm font-semibold text-slate-50">
-                        {label}
-                      </h3>
-                      <p className="text-[11px] text-slate-500">
-                        Included in {plan}
-                      </p>
+                      <h3 className="text-sm font-semibold text-slate-50">{label}</h3>
+                      <p className="text-[11px] text-slate-500">Included in {plan}</p>
                     </div>
 
                     <div className="flex flex-col items-end gap-1">
@@ -335,42 +541,27 @@ export default function SocialAccountsPage() {
                           {plan} feature
                         </span>
                       )}
-                      <span className="text-[11px] text-slate-400">
-                        {statusLabel}
-                      </span>
+                      <span className="text-[11px] text-slate-400">{statusLabel}</span>
                     </div>
                   </div>
 
                   <p className="text-xs text-slate-300 mb-3">
-                    Analytics & insights for {label}. Connect once — Autoaffi
-                    keeps reading safe data in the background.
+                    Analytics & insights for {label}. Connect once — Autoaffi keeps reading safe data in the background.
                   </p>
 
                   {/* MINI STATS */}
                   <div className="mb-4 grid grid-cols-3 gap-3 text-[11px] text-slate-300">
                     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">
-                        Followers
-                      </p>
-                      <p className="font-semibold text-slate-100">
-                        {followersLabel}
-                      </p>
+                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">Followers</p>
+                      <p className="font-semibold text-slate-100">{followersLabel}</p>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">
-                        Best time
-                      </p>
-                      <p className="font-semibold text-slate-100">
-                        {bestTimeLabel}
-                      </p>
+                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">Best time</p>
+                      <p className="font-semibold text-slate-100">{bestTimeLabel}</p>
                     </div>
                     <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">
-                        Trend fit
-                      </p>
-                      <p className="font-semibold text-slate-100">
-                        {trendLabel}
-                      </p>
+                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">Trend fit</p>
+                      <p className="font-semibold text-slate-100">{trendLabel}</p>
                     </div>
                   </div>
 
@@ -420,9 +611,7 @@ export default function SocialAccountsPage() {
                   </div>
 
                   {/* LAST SYNC */}
-                  <p className="mt-2 text-[10px] text-slate-500">
-                    {lastSyncedLabel}
-                  </p>
+                  <p className="mt-2 text-[10px] text-slate-500">{lastSyncedLabel}</p>
                 </article>
               );
             })}

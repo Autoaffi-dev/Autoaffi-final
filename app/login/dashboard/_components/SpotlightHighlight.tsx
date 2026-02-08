@@ -7,19 +7,19 @@ interface SpotlightHighlightProps {
   stage: TourStage;
   spotlightIndex: number;
   spotlightTargets: string[];
-  aiMessage: string;
-  onNext: () => void; // finns kvar om vi vill använda senare
+  aiMessage: string; // ✅ från page: overlayMessage (tomt när hon är klar)
+  onNext: () => void;
 }
 
 export default function SpotlightHighlight({
   stage,
-  spotlightIndex,
-  spotlightTargets,
   aiMessage,
-  onNext,
 }: SpotlightHighlightProps) {
-  // Visa bara under själva spotlight-rundan
+  // Visa bara under spotlight / final-steps
   if (stage !== "spotlight" && stage !== "final-steps") return null;
+
+  // ✅ Om text är tom (Samantha klar) -> visa inget
+  if (!aiMessage) return null;
 
   return (
     <div className="pointer-events-none fixed top-4 left-0 right-0 z-[998] flex justify-center">
@@ -27,6 +27,7 @@ export default function SpotlightHighlight({
         <span className="text-[11px] uppercase tracking-[0.2em] text-emerald-300">
           Autoaffi Guide
         </span>
+
         <p className="text-xs text-slate-100 leading-relaxed line-clamp-2">
           {aiMessage}
         </p>

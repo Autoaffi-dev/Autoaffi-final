@@ -11,6 +11,9 @@ type FlowArgs = {
   setSpotlightIndex: (n: number) => void;
   finishOnboarding: () => void;
   setAiMessage: (t: string) => void;
+
+  // OPTIONAL: start advanced tour later (Tour 2)
+  startAdvancedTour?: () => void;
 };
 
 export default function OnboardingFlow({
@@ -22,43 +25,66 @@ export default function OnboardingFlow({
   setSpotlightIndex,
   finishOnboarding,
   setAiMessage,
+  startAdvancedTour,
 }: FlowArgs) {
- 
   // ---------------------------------------------
-  // 1. WELCOME → PERSONA
+  // 1) WELCOME → PERSONA
   // ---------------------------------------------
   function handleWelcomeContinue() {
+    setAiMessage(
+      "Perfect. First we choose your creator style — then I’ll show you your first 3 steps so you get momentum fast."
+    );
     setTourStage("persona");
   }
 
   // ---------------------------------------------
-  // 2. PERSONA → PATH
+  // 2) PERSONA → PATH
+  // NOTE: choosePersona() must NOT set aiMessage
   // ---------------------------------------------
   function handlePersonaSelect(mode: CreatorMode) {
     choosePersona(mode);
+
+    setAiMessage(
+      "Great choice. Now pick your starting path — this sets what you’ll see first and how I guide you."
+    );
     setTourStage("path");
   }
 
   // ---------------------------------------------
-  // 3. PATH → SPOTLIGHT
+  // 3) PATH → FINAL STEPS (FIRST WIN)
   // ---------------------------------------------
   function handlePathSelect(path: "beginner" | "pro" | "elite") {
-    setTourStage("spotlight");
+    setAiMessage(
+      "Awesome. Now: your first win. Complete these 3 steps to unlock momentum and smarter guidance."
+    );
+    setTourStage("final-steps");
   }
 
   // ---------------------------------------------
-  // 4. SPOTLIGHT → FINAL STEPS
+  // 4) OPTIONAL ADVANCED TOUR (SPOTLIGHT)
   // ---------------------------------------------
-function handleSpotlightNext() {
-  // Vi använder värdet vi redan har i props: spotlightIndex
-  setSpotlightIndex(spotlightIndex + 1);
-}
+  function handleStartAdvancedTour() {
+    setAiMessage(
+      "Alright — this is the advanced walkthrough. I’ll quickly show you where everything lives so you always know what to do next."
+    );
+    setSpotlightIndex(0);
+    setTourStage("spotlight");
+    startAdvancedTour?.();
+  }
+
   // ---------------------------------------------
-  // 5. FINAL STEPS → FINISH (SAVE TOUR)
+  // 5) FINAL STEPS → FINISH (SAVE TOUR)
   // ---------------------------------------------
   function handleFinalStepsContinue() {
-    finishOnboarding();   // <-- SAVES autoaffi_tour_done = "1"
+    finishOnboarding(); // saves autoaffi_tour_done = "1"
     setTourStage("complete");
+  }
+
+  // ---------------------------------------------
+  // Spotlight next
+  // ---------------------------------------------
+  function handleSpotlightNext() {
+    setSpotlightIndex(spotlightIndex + 1);
   }
 
   return {
@@ -66,11 +92,13 @@ function handleSpotlightNext() {
     creatorMode,
     spotlightIndex,
 
-    // FLOW ACTIONS
     handleWelcomeContinue,
     handlePersonaSelect,
     handlePathSelect,
     handleSpotlightNext,
     handleFinalStepsContinue,
+
+    // optional
+    handleStartAdvancedTour,
   };
 }

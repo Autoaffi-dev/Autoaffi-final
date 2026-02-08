@@ -1,14 +1,7 @@
-import { NextResponse } from "next/server";
+// app/api/oauth/instagram/route.ts
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET() {
-  const params = new URLSearchParams({
-    client_id: process.env.INSTAGRAM_CLIENT_ID!,
-    redirect_uri: process.env.NEXT_PUBLIC_INSTAGRAM_REDIRECT!,
-    scope: "user_profile,user_media",
-    response_type: "code",
-  });
-
-  return NextResponse.redirect(
-    `https://api.instagram.com/oauth/authorize?${params.toString()}`
-  );
+export async function GET(req: NextRequest) {
+  // Håll Instagram i Meta-flödet (stabilt och matchar din sync/meta logik)
+  return NextResponse.redirect(new URL("/api/oauth/facebook?platform=instagram", req.url));
 }

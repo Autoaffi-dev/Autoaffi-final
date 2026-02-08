@@ -6,85 +6,116 @@ interface GrowthPlanProps {
   creatorMode: "beginner" | "consistent" | "growth" | null;
   startStepsCompleted: number;
   markStepCompleted: (step: number) => void;
+
+  // ✅ Tour 2 (Advanced) - reintroduced
+  showContinueTour?: boolean;
+  onContinueTour?: () => void;
+
+  // ✅ Link steps to the right cards
+  onStepNavigate?: (step: 1 | 2 | 3) => void;
 }
 
 export default function GrowthPlan({
   creatorMode,
   startStepsCompleted,
   markStepCompleted,
+  showContinueTour = false,
+  onContinueTour,
+  onStepNavigate,
 }: GrowthPlanProps) {
   if (!creatorMode) return null;
 
-  // 3 STEP DATA
+  // 3 STEP DATA (with navigation intent)
   const steps = [
     {
-      id: 1,
+      id: 1 as const,
       label: "Step 1",
       title: "Connect your social accounts",
       text: "TikTok, Instagram, YouTube & Facebook – this helps Autoaffi understand your content and performance.",
     },
     {
-      id: 2,
+      id: 2 as const,
       label: "Step 2",
       title: "Add your affiliate offers",
       text: "Save your key links and recurring programs so AI can optimize your content and suggestions.",
     },
     {
-      id: 3,
+      id: 3 as const,
       label: "Step 3",
       title: "Generate your first content",
       text: "Use Posts Generator to create your first optimized post and unlock smart guidance.",
     },
   ];
 
+  function handleStepClick(stepId: 1 | 2 | 3) {
+    // ✅ mark progress first
+    markStepCompleted(stepId);
+
+    // ✅ then navigate to the correct card (Tour 1 requirement)
+    if (onStepNavigate) onStepNavigate(stepId);
+  }
+
   return (
     <div id="start-steps-anchor">
       <section className="mb-8 rounded-2xl border border-emerald-400/30 bg-slate-900/70 p-5 shadow-[0_20px_40px_rgba(0,0,0,0.6)]">
         {/* Title */}
-        <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300 mb-3">
-          Your Personalized Growth Plan
-        </h2>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300 mb-3">
+              Your Personalized Growth Plan
+            </h2>
 
-        {/* Creator label */}
-        <p className="text-sm text-slate-200 mb-4">
-          Based on your creator type:{" "}
-          <span className="font-semibold text-emerald-300">
-            {creatorMode === "beginner"
-              ? "Beginner"
-              : creatorMode === "consistent"
-              ? "Consistent Creator"
-              : "Growth Mode"}
-          </span>
-        </p>
+            {/* Creator label */}
+            <p className="text-sm text-slate-200 mb-4">
+              Based on your creator type:{" "}
+              <span className="font-semibold text-emerald-300">
+                {creatorMode === "beginner"
+                  ? "Beginner"
+                  : creatorMode === "consistent"
+                  ? "Consistent Creator"
+                  : "Growth Mode"}
+              </span>
+            </p>
+          </div>
+
+          {/* ✅ Continue Tour (Tour 2 CTA) */}
+          {showContinueTour && (
+            <button
+              onClick={() => onContinueTour?.()}
+              className="whitespace-nowrap rounded-full border border-emerald-400/50 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-300 transition hover:border-emerald-300 hover:bg-emerald-500/15"
+            >
+              Continue Tour
+            </button>
+          )}
+        </div>
 
         {/* Start Steps Title */}
         <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400 mb-3">
-          Start Here — Your First 3 Steps
+          Start Here — Your First 3 Steps (Click to do it now)
         </p>
 
         {/* THREE CLICKABLE STEP CARDS */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           {steps.map((step) => {
             const completed = startStepsCompleted >= step.id;
+
             return (
               <button
                 key={step.id}
-                onClick={() => markStepCompleted(step.id)}
-                className={`text-left p-4 rounded-xl border transition-all
-                  ${
-                    completed
-                      ? "border-emerald-400/60 bg-emerald-600/10"
-                      : "border-slate-700/70 bg-slate-900/60 hover:border-emerald-400/60 hover:bg-slate-900"
-                  }`}
+                onClick={() => handleStepClick(step.id)}
+                className={`text-left p-4 rounded-xl border transition-all ${
+                  completed
+                    ? "border-emerald-400/60 bg-emerald-600/10"
+                    : "border-slate-700/70 bg-slate-900/60 hover:border-emerald-400/60 hover:bg-slate-900"
+                }`}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold
-                      ${
-                        completed
-                          ? "bg-emerald-400 text-slate-900"
-                          : "bg-slate-800 text-slate-200"
-                      }`}
+                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${
+                      completed
+                        ? "bg-emerald-400 text-slate-900"
+                        : "bg-slate-800 text-slate-200"
+                    }`}
                   >
                     {step.id}
                   </span>
@@ -94,17 +125,11 @@ export default function GrowthPlan({
                   </span>
                 </div>
 
-                <p
-                  className={`text-[14px] font-semibold ${
-                    completed ? "text-emerald-300" : "text-slate-100"
-                  }`}
-                >
+                <p className={`text-[14px] font-semibold ${completed ? "text-emerald-300" : "text-slate-100"}`}>
                   {step.title}
                 </p>
 
-                <p className="mt-1 text-[12px] text-slate-400">
-                  {step.text}
-                </p>
+                <p className="mt-1 text-[12px] text-slate-400">{step.text}</p>
 
                 {completed && (
                   <p className="mt-1 text-[11px] font-medium text-emerald-400">
@@ -141,9 +166,7 @@ export default function GrowthPlan({
 
         {/* Today's Key Actions */}
         <div className="mb-6">
-          <h3 className="text-sm font-semibold text-slate-100 mb-1">
-            Today's Key Actions
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-100 mb-1">Today's Key Actions</h3>
 
           <ul className="space-y-2 text-[13px] text-slate-300">
             {creatorMode === "beginner" && (
@@ -174,9 +197,7 @@ export default function GrowthPlan({
 
         {/* Improvements */}
         <div>
-          <h3 className="text-sm font-semibold text-slate-100 mb-2">
-            Improvements to boost revenue
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-100 mb-2">Improvements to boost revenue</h3>
 
           <ul className="space-y-2 text-[13px] text-slate-300">
             {creatorMode === "beginner" && (

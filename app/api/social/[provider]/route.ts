@@ -5,41 +5,43 @@ import {
   SocialProvider,
 } from "@/lib/integrations/socialClient";
 
-export async function GET(req: NextRequest) {
-  try {
-    const { pathname, searchParams } = new URL(req.url);
+const validProviders: SocialProvider[] = [
+  "tiktok",
+  "instagram",
+  "youtube",
+  "linkedin",
+  "facebook",
+  "x",
+  "pinterest",
+  "metricool",
+];
 
-    // 👉 Läs provider direkt från URL istället för context.params
-    const provider = pathname.split("/").pop();
-    if (!provider) {
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { provider: string } }
+) {
+  try {
+    const { searchParams } = new URL(req.url);
+
+    const providerRaw = params?.provider;
+    if (!providerRaw) {
       return NextResponse.json(
         { success: false, error: "Missing social provider" },
         { status: 400 }
       );
     }
 
-    const type = searchParams.get("type") || "status";
-    const userId = searchParams.get("userId") || "demo-user";
-
-    const key = provider.toLowerCase() as SocialProvider;
-
-    const validProviders: SocialProvider[] = [
-      "tiktok",
-      "instagram",
-      "youtube",
-      "linkedin",
-      "facebook",
-      "x",
-      "pinterest",
-      "metricool",
-    ];
+    const key = providerRaw.toLowerCase() as SocialProvider;
 
     if (!validProviders.includes(key)) {
       return NextResponse.json(
-        { success: false, error: `Unknown social provider: ${provider}` },
+        { success: false, error: `Unknown social provider: ${providerRaw}` },
         { status: 400 }
       );
     }
+
+    const type = (searchParams.get("type") || "status").toLowerCase();
+    const userId = searchParams.get("userId") || "demo-user";
 
     if (type === "status") {
       const status = await getSocialStatus(key, userId);
@@ -63,10 +65,7 @@ export async function GET(req: NextRequest) {
     );
   } catch (err: any) {
     return NextResponse.json(
-      {
-        success: false,
-        error: err?.message ?? "Social provider request failed",
-      },
+      { success: false, error: err?.message ?? "Social provider request failed" },
       { status: 500 }
     );
   }
