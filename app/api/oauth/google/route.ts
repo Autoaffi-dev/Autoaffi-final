@@ -1,4 +1,3 @@
-// app/api/oauth/google/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
@@ -9,20 +8,29 @@ export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   const userId = session?.user?.id;
 
+  // Du måste vara inloggad för att koppla ett konto
   if (!userId) {
     return NextResponse.redirect(new URL("/login?error=unauthorized", req.url));
+  }
+
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return NextResponse.json(
+      { success: false, error: "Missing GOOGLE_CLIENT_ID" },
+      { status: 500 }
+    );
   }
 
   const origin = req.nextUrl.origin;
   const platform = req.nextUrl.searchParams.get("platform") || "youtube";
 
-  // ✅ alltid korrekt domän i alla miljöer
+  // ✅ Måste matcha Google Console redirect URI EXAKT
   const redirectUri = new URL("/api/oauth/google/callback", origin).toString();
 
-  const stateObj = { userId, platform, ts: Date.now() };
+  // ✅ State: skicka INTE userId (vi tar userId från session i callback)
+  const stateObj = { platform, ts: Date.now() };
   const state = Buffer.from(JSON.stringify(stateObj), "utf8").toString("base64url");
 
-  // ✅ YouTube kräver extra scope om du ska hämta analytics/data
   const scope =
     platform === "youtube"
       ? [
@@ -34,7 +42,7 @@ export async function GET(req: NextRequest) {
       : ["openid", "profile", "email"].join(" ");
 
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID ?? "",
+    client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
     scope,
@@ -43,9 +51,7 @@ export async function GET(req: NextRequest) {
     state,
   });
 
-  if (!process.env.GOOGLE_CLIENT_ID) {
-    return NextResponse.json({ success: false, error: "Missing GOOGLE_CLIENT_ID" }, { status: 500 });
-  }
-
-  return NextResponse.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+  return NextResponse.redirect(
+    `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+  );
 }
