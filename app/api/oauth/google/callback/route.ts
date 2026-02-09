@@ -1,4 +1,3 @@
-// app/api/oauth/google/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { upsertSocialAccount } from "@/lib/socialStore";
 
@@ -19,6 +18,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login?error=bad_state", req.url));
   }
 
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return NextResponse.redirect(
+      new URL("/login/dashboard/social-accounts?error=missing_google_env&platform=youtube", req.url)
+    );
+  }
+
   const origin = req.nextUrl.origin;
   const redirectUri = new URL("/api/oauth/google/callback", origin).toString();
 
@@ -27,16 +35,16 @@ export async function GET(req: NextRequest) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: process.env.GOOGLE_CLIENT_ID ?? "",
-      client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-      redirect_uri: redirectUri, // ✅ måste matcha auth-steget
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
       grant_type: "authorization_code",
     }),
   });
 
   const token = await tokenRes.json();
 
-  if (!token?.access_token) {
+  if (!tokenRes.ok || !token?.access_token) {
     return NextResponse.redirect(
       new URL("/login/dashboard/social-accounts?error=token_failed&platform=youtube", req.url)
     );
