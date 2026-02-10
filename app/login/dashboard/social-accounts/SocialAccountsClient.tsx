@@ -49,18 +49,23 @@ const INITIAL_STATE: Record<PlatformKey, PlatformState> = {
   linkedin: { accounts: [] },
 };
 
-// ✅ Hämta accounts från DB
+// ✅ Hämta platforms från DB (matchar /api/social/accounts -> { platforms: [...] })
 async function fetchAccounts() {
   const res = await fetch("/api/social/accounts", { cache: "no-store" });
   if (!res.ok) return [];
+
   const json = await res.json();
-  return (json.accounts || []) as Array<{
-    platform: PlatformKey;
-    status: "connected" | "disconnected";
+
+  const rows = (json.platforms || []) as Array<{
+    platform: PlatformKey | string;
+    status: "connected" | "disconnected" | string;
     username?: string | null;
     account_id?: string | null;
+    token_expires_at?: string | null;
     updated_at?: string | null;
   }>;
+
+  return rows;
 }
 
 /** ---------------- UI: Toast + Banner ---------------- */
@@ -194,7 +199,8 @@ export default function SocialAccountsClient() {
       });
 
       for (const row of rows) {
-        const p = row.platform;
+        // ✅ normalisera platform
+        const p = String(row.platform).toLowerCase() as PlatformKey;
         if (!next[p]) continue;
 
         if (row.status === "connected") {
