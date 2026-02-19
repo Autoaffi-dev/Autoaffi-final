@@ -24,9 +24,28 @@ async function loadIndexerModule() {
   return (await import("@/lib/engines/product-indexer/indexer")) as any;
 }
 
+// Default: ALWAYS WP + AWIN (per your request)
+function getSources(): Array<"warriorplus" | "awin"> {
+  const raw = (process.env.PRODUCT_INDEX_CRON_SOURCES || "").trim();
+  if (!raw) return ["warriorplus", "awin"];
+
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean) as any[];
+
+  // hard-safety: only allow these in this cron
+  const allowed = new Set(["warriorplus", "awin"]);
+  const safe = parts.filter((s) => allowed.has(String(s)));
+
+  return (safe.length ? safe : ["warriorplus", "awin"]) as Array<"warriorplus" | "awin">;
+}
+
 async function handle(req: Request) {
   try {
-    if (!isAuthorized(req)) return jsonNoStore({ error: "Unauthorized" }, { status: 401 });
+    if (!isAuthorized(req)) {
+      return jsonNoStore({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const mod = await loadIndexerModule();
     const runner =
@@ -46,9 +65,12 @@ async function handle(req: Request) {
 
     const startedAt = Date.now();
 
+    const sources = getSources();
+    const limit = Math.max(1, Math.min(Number(process.env.PRODUCT_INDEX_CRON_LIMIT || 400), 500));
+
     const result = await runner({
-      limit: 250, // BEAST: högre så vi snabbare når 200–400+ i DB
-      sources: ["digistore", "mylead", "warriorplus"],
+      limit,
+      sources,
     });
 
     const { ok: _ok, tookMs: _tookMs, ...safe } = (result ?? {}) as any;
@@ -56,11 +78,16 @@ async function handle(req: Request) {
     return jsonNoStore({
       ok: true,
       tookMs: Date.now() - startedAt,
+      sources,
+      limit,
       ...safe,
     });
   } catch (err: any) {
     console.error("[cron/product-index] error:", err);
-    return jsonNoStore({ ok: false, error: err?.message ?? "Cron product-index failed" }, { status: 500 });
+    return jsonNoStore(
+      { ok: false, error: err?.message ?? "Cron product-index failed" },
+      { status: 500 }
+    );
   }
 }
 
