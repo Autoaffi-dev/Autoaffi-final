@@ -1,11 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
-import type {
-  ProductIndexerSource,
-  ProductIndexRow,
-  ProductIndexerReport,
-  RawProductRecord,
-} from "./types";
+import type { ProductIndexerSource, ProductIndexRow, ProductIndexerReport } from "./types";
+
+// ✅ FIX: re-export RawProductRecord from types (så importen från indexer funkar)
+export type { RawProductRecord } from "./types";
+import type { RawProductRecord } from "./types";
 
 /**
  * BEAST FINAL (LOCKED)
@@ -319,6 +318,7 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
     currency: input?.currency ?? null,
     price: priceNum,
 
+    // canonical fields + merchant fields + band fields (måste finnas i DB)
     merchant_name: merchant_name ? String(merchant_name) : null,
     merchant_id: merchant_id ? String(merchant_id) : null,
 

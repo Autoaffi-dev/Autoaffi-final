@@ -3,19 +3,6 @@ import { PassThrough, Readable } from "stream";
 import { createGunzip } from "zlib";
 import * as readline from "readline";
 
-// Optional ZIP support (only needed if Awin returns a .zip container)
-let unzipper: any = null;
-async function getUnzipper() {
-  if (unzipper) return unzipper;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    unzipper = require("unzipper");
-    return unzipper;
-  } catch {
-    return null;
-  }
-}
-
 export type AwinIndexedProduct = {
   source: "awin";
   external_id: string;
@@ -91,10 +78,7 @@ const DEFAULT_CATEGORY_DEPTH: 1 | 2 | 3 = 2;
 
 export async function fetchAwin(opts: FetchAwinOptions = {}): Promise<AwinIndexedProduct[]> {
   const feedUrl =
-    opts.feedUrl ||
-    process.env.AWIN_FEED_URL ||
-    process.env.AWIN_FEED_URL_SE ||
-    "";
+    opts.feedUrl || process.env.AWIN_FEED_URL || process.env.AWIN_FEED_URL_SE || "";
 
   if (!feedUrl) {
     throw new Error(
@@ -107,22 +91,16 @@ export async function fetchAwin(opts: FetchAwinOptions = {}): Promise<AwinIndexe
   // FINAL output cap (winners)
   const maxItems =
     opts.maxItems ??
-    (process.env.AWIN_WINNERS_MAX_TOTAL
-      ? Number(process.env.AWIN_WINNERS_MAX_TOTAL)
-      : DEFAULT_MAX_ITEMS);
+    (process.env.AWIN_WINNERS_MAX_TOTAL ? Number(process.env.AWIN_WINNERS_MAX_TOTAL) : DEFAULT_MAX_ITEMS);
 
   const winnersOnly =
     opts.winnersOnly ??
-    (process.env.AWIN_WINNERS_ONLY
-      ? process.env.AWIN_WINNERS_ONLY === "true"
-      : DEFAULT_WINNERS_ONLY);
+    (process.env.AWIN_WINNERS_ONLY ? process.env.AWIN_WINNERS_ONLY === "true" : DEFAULT_WINNERS_ONLY);
 
   // Overall per merchant cap
   const maxPerMerchant =
     opts.maxPerMerchant ??
-    (process.env.AWIN_WINNERS_PER_MERCHANT
-      ? Number(process.env.AWIN_WINNERS_PER_MERCHANT)
-      : DEFAULT_MAX_PER_MERCHANT);
+    (process.env.AWIN_WINNERS_PER_MERCHANT ? Number(process.env.AWIN_WINNERS_PER_MERCHANT) : DEFAULT_MAX_PER_MERCHANT);
 
   // Per merchant+category+band cap
   const maxPerMerchantCategory =
@@ -134,40 +112,30 @@ export async function fetchAwin(opts: FetchAwinOptions = {}): Promise<AwinIndexe
   // Global per category cap
   const maxPerCategory =
     opts.maxPerCategory ??
-    (process.env.AWIN_WINNERS_PER_CATEGORY
-      ? Number(process.env.AWIN_WINNERS_PER_CATEGORY)
-      : DEFAULT_MAX_PER_CATEGORY);
+    (process.env.AWIN_WINNERS_PER_CATEGORY ? Number(process.env.AWIN_WINNERS_PER_CATEGORY) : DEFAULT_MAX_PER_CATEGORY);
 
   const minDescriptionLen =
     opts.minDescriptionLen ??
-    (process.env.AWIN_MIN_DESC_LEN
-      ? Number(process.env.AWIN_MIN_DESC_LEN)
-      : DEFAULT_MIN_DESC);
+    (process.env.AWIN_MIN_DESC_LEN ? Number(process.env.AWIN_MIN_DESC_LEN) : DEFAULT_MIN_DESC);
 
   const requireImage =
     opts.requireImage ??
-    (process.env.AWIN_REQUIRE_IMAGE
-      ? process.env.AWIN_REQUIRE_IMAGE === "true"
-      : DEFAULT_REQUIRE_IMAGE);
+    (process.env.AWIN_REQUIRE_IMAGE ? process.env.AWIN_REQUIRE_IMAGE === "true" : DEFAULT_REQUIRE_IMAGE);
 
   const minPrice =
-    opts.minPrice ??
-    (process.env.AWIN_MIN_PRICE ? Number(process.env.AWIN_MIN_PRICE) : DEFAULT_MIN_PRICE);
+    opts.minPrice ?? (process.env.AWIN_MIN_PRICE ? Number(process.env.AWIN_MIN_PRICE) : DEFAULT_MIN_PRICE);
 
   const maxAgeDays =
-    opts.maxAgeDays ??
-    (process.env.AWIN_MAX_AGE_DAYS ? Number(process.env.AWIN_MAX_AGE_DAYS) : 3650);
+    opts.maxAgeDays ?? (process.env.AWIN_MAX_AGE_DAYS ? Number(process.env.AWIN_MAX_AGE_DAYS) : 3650);
 
   const priceBands = opts.priceBands ?? DEFAULT_PRICE_BANDS;
 
   // Currency/language sanity (optional)
   const enforceCurrency =
-    opts.enforceCurrency ??
-    (process.env.AWIN_ENFORCE_CURRENCY ? process.env.AWIN_ENFORCE_CURRENCY : null);
+    opts.enforceCurrency ?? (process.env.AWIN_ENFORCE_CURRENCY ? process.env.AWIN_ENFORCE_CURRENCY : null);
 
   const enforceLang =
-    opts.enforceLang ??
-    (process.env.AWIN_ENFORCE_LANG ? process.env.AWIN_ENFORCE_LANG : null);
+    opts.enforceLang ?? (process.env.AWIN_ENFORCE_LANG ? process.env.AWIN_ENFORCE_LANG : null);
 
   const categoryDepth =
     opts.categoryDepth ??
@@ -202,7 +170,7 @@ export async function fetchAwin(opts: FetchAwinOptions = {}): Promise<AwinIndexe
   const { head, stream: rejoined } = await peekFirstChunk(nodeStream);
 
   const kind = detectArchiveKind(head, res.headers.get("content-type") || "", feedUrl);
-  const csvStream = await toCsvStream(rejoined, kind);
+  const csvStream = await toCsvStream(rejoined, kind, feedUrl);
 
   // MUST: We collect candidates per primary bucket (merchant::category::band),
   // then do a strict global selection pass enforcing:
@@ -375,14 +343,6 @@ export async function fetchAwin(opts: FetchAwinOptions = {}): Promise<AwinIndexe
 
 /* ----------------------------- CATEGORY NORMALIZE (BEAST) ----------------------------- */
 
-/**
- * Normalizes category strings into:
- * - stable `key` for bucketing (lowercase, cleaned, joined)
- * - pretty `label` for UI (Title-ish, joined with " / ")
- *
- * Handles common separators:
- *  >  /  |  »  →  \  ::  -
- */
 function normalizeCategory(
   input: string,
   depth: 1 | 2 | 3 = 2
@@ -425,7 +385,6 @@ function normalizeCategoryToken(token: string) {
   const t = String(token || "").trim();
   const lower = t.toLowerCase();
 
-  // ultra-light mapping (safe)
   if (["kläder", "clothes", "clothing", "apparel"].includes(lower)) return "clothing";
   if (["skor", "shoes", "footwear"].includes(lower)) return "shoes";
   if (["elektronik", "electronics"].includes(lower)) return "electronics";
@@ -497,12 +456,10 @@ function computeQualityScore(p: AwinIndexedProduct): number {
   if (hasMerchant) q += 10;
   if (hasCategory) q += 10;
 
-  // Price sanity bonus
   if (hasPrice && p.price !== null && p.price !== undefined) {
     if (p.price >= 15 && p.price <= 150) q += 3;
   }
 
-  // Recency bonus (capped)
   if (p.last_updated) {
     const t = new Date(p.last_updated).getTime();
     if (Number.isFinite(t)) {
@@ -526,11 +483,14 @@ function sha1(input: string) {
 function normalizeUrlForId(url: string) {
   const u = String(url || "").trim();
   if (!u) return "";
-  // remove fragments; keep query (awin tracking may be part of uniqueness)
   return u.replace(/#.*$/, "");
 }
 
-function detectArchiveKind(head: Buffer, contentType: string, url: string): "gzip" | "zip" | "plain" {
+function detectArchiveKind(
+  head: Buffer,
+  contentType: string,
+  url: string
+): "gzip" | "zip" | "plain" {
   const isGzip = head.length >= 2 && head[0] === 0x1f && head[1] === 0x8b;
   const isZip =
     head.length >= 4 &&
@@ -554,7 +514,7 @@ function detectArchiveKind(head: Buffer, contentType: string, url: string): "gzi
   return "plain";
 }
 
-async function toCsvStream(input: Readable, kind: "gzip" | "zip" | "plain"): Promise<Readable> {
+async function toCsvStream(input: Readable, kind: "gzip" | "zip" | "plain", feedUrl: string): Promise<Readable> {
   if (kind === "plain") return input;
 
   if (kind === "gzip") {
@@ -563,33 +523,12 @@ async function toCsvStream(input: Readable, kind: "gzip" | "zip" | "plain"): Pro
     return gunzip;
   }
 
-  const uz = await getUnzipper();
-  if (!uz) {
-    throw new Error("AWIN feed appears to be ZIP but 'unzipper' is not installed. Run: npm i unzipper");
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-  const stream = input.pipe(uz.Parse({ forceStream: true }));
-  return await new Promise<Readable>((resolve, reject) => {
-    let resolved = false;
-
-    stream.on("entry", (entry: any) => {
-      const fileName = String(entry.path || "").toLowerCase();
-      const isCsv = fileName.endsWith(".csv") || (entry.type === "File" && fileName.includes("csv"));
-
-      if (!resolved && isCsv) {
-        resolved = true;
-        resolve(entry);
-      } else {
-        entry.autodrain();
-      }
-    });
-
-    stream.on("error", reject);
-    stream.on("close", () => {
-      if (!resolved) reject(new Error("ZIP parsed but no CSV entry found inside."));
-    });
-  });
+  // ✅ BEAST B-mode: NO unzipper (prevents Turbopack pulling AWS SDK deps)
+  // If your AWIN download is truly ZIP: use the gzip URL (.gz) instead.
+  throw new Error(
+    `AWIN feed is ZIP but ZIP parsing is disabled (no unzipper). ` +
+      `Please switch AWIN_FEED_URL to the gzip (.gz) download URL. Feed: ${feedUrl}`
+  );
 }
 
 async function peekFirstChunk(stream: Readable): Promise<{ head: Buffer; stream: Readable }> {
@@ -747,25 +686,18 @@ function mapAwinRow(row: Record<string, string>): AwinIndexedProduct | null {
   const product_name = row["product_name"] || row["name"] || "";
   const description = row["description"] || null;
 
-  const deepLink =
-    row["aw_deep_link"] || row["merchant_deep_link"] || row["deep_link"] || "";
+  const deepLink = row["aw_deep_link"] || row["merchant_deep_link"] || row["deep_link"] || "";
 
-  const image =
-    row["merchant_image_url"] ||
-    row["aw_image_url"] ||
-    row["image_url"] ||
-    "";
+  const image = row["merchant_image_url"] || row["aw_image_url"] || row["image_url"] || "";
 
   const merchantName = row["merchant_name"] || row["advertiser_name"] || null;
   const merchantId = row["merchant_id"] || row["advertiser_id"] || null;
 
-  const category =
-    row["merchant_category"] || row["category_name"] || row["category"] || null;
+  const category = row["merchant_category"] || row["category_name"] || row["category"] || null;
 
   const currency = row["currency"] || null;
 
-  const price =
-    parsePrice(row["store_price"] || "") ?? parsePrice(row["search_price"] || "");
+  const price = parsePrice(row["store_price"] || "") ?? parsePrice(row["search_price"] || "");
 
   const lastUpdatedIso = toIsoDate(row["last_updated"] || row["lastupdated"] || "");
 
