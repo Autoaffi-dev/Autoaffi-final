@@ -18,8 +18,7 @@ const DAILY_CAP = 40;
 const DOWNLOADS_PER_RUN_CAP = 10; // protects quota
 const MIN_DELAY_MS = 350;
 
-// ✅ Vecteezy valid content types (from their error message)
-const CONTENT_TYPES: Array<"video" | "photo"> = ["video", "photo"];
+const LIST_TYPES: Array<"video" | "photo"> = ["video", "photo"];
 
 type AssetInsert = {
   provider: "vecteezy";
@@ -38,7 +37,7 @@ type AssetInsert = {
 };
 
 async function vecteezyFetch(path: string, tries = 3) {
-  // ✅ Default to API host (docs), but allow override
+  // ✅ Vecteezy API server (swagger default)
   const base = process.env.VECTEEZY_BASE_URL || "https://api.vecteezy.com";
   const apiKey = assertEnv("VECTEEZY_API_KEY");
 
@@ -48,7 +47,7 @@ async function vecteezyFetch(path: string, tries = 3) {
     const res = await fetch(`${base}${path}`, {
       headers: {
         Accept: "application/json",
-        // Keep both (different key types may accept one or the other)
+        // keep both – key types differ
         Authorization: `Bearer ${apiKey}`,
         "X-Api-Key": apiKey,
       },
@@ -80,6 +79,11 @@ function normalizeItems(list: any): any[] {
   return list?.resources || list?.results || list?.data || list?.items || [];
 }
 
+function detectMediaType(item: any, fallback: "video" | "photo"): "image" | "video" {
+  const ct = String(item?.content_type || item?.type || fallback || "").toLowerCase();
+  return ct.includes("video") ? "video" : "image";
+}
+
 export async function GET(req: Request) {
   try {
     if (!checkCronSecret(req)) {
@@ -98,13 +102,13 @@ export async function GET(req: Request) {
     for (const q of KEYWORDS) {
       if (inserts.length >= DAILY_CAP) break;
 
-      // ✅ IMPORTANT FIX:
-      // Vecteezy rejects invalid content_type -> we must call with valid types
-      for (const ct of CONTENT_TYPES) {
+      for (const ct of LIST_TYPES) {
         if (inserts.length >= DAILY_CAP) break;
 
+        // ✅ IMPORTANT: Vecteezy requires "term" (NOT query)
+        // ✅ content_type must be one of their valid types (photo, video, ...)
         const list = await vecteezyFetch(
-          `/v2/${accountId}/resources?query=${encodeURIComponent(q)}&content_type=${ct}&page=1&per_page=${PER_KEYWORD}`
+          `/v2/${accountId}/resources?term=${encodeURIComponent(q)}&content_type=${ct}&page=1&per_page=${PER_KEYWORD}`
         );
 
         const items = normalizeItems(list);
@@ -119,8 +123,7 @@ export async function GET(req: Request) {
           const pid = `vecteezy::${provider_asset_id}`;
           if (existingPid.has(pid)) continue;
 
-          // ✅ media_type is now deterministic based on the list call
-          const media_type: "image" | "video" = ct === "video" ? "video" : "image";
+          const media_type = detectMediaType(item, ct);
 
           const width = item?.dimensions?.width ?? item?.width ?? null;
           const height = item?.dimensions?.height ?? item?.height ?? null;
@@ -170,11 +173,9 @@ export async function GET(req: Request) {
           });
         }
 
-        // gentle delay between content types
         await sleep(MIN_DELAY_MS);
       }
 
-      // gentle delay between keywords
       await sleep(MIN_DELAY_MS);
     }
 
