@@ -18,6 +18,9 @@ const DAILY_CAP = 40;
 const DOWNLOADS_PER_RUN_CAP = 10; // protects quota
 const MIN_DELAY_MS = 350;
 
+// ✅ Vecteezy valid content types (from their error message)
+const CONTENT_TYPES: Array<"video" | "photo"> = ["video", "photo"];
+
 type AssetInsert = {
   provider: "vecteezy";
   provider_asset_id: string;
@@ -35,7 +38,8 @@ type AssetInsert = {
 };
 
 async function vecteezyFetch(path: string, tries = 3) {
-  const base = process.env.VECTEEZY_BASE_URL || "https://app.vecteezy.com";
+  // ✅ Default to API host (docs), but allow override
+  const base = process.env.VECTEEZY_BASE_URL || "https://api.vecteezy.com";
   const apiKey = assertEnv("VECTEEZY_API_KEY");
 
   let lastErr: any = null;
@@ -94,72 +98,83 @@ export async function GET(req: Request) {
     for (const q of KEYWORDS) {
       if (inserts.length >= DAILY_CAP) break;
 
-      // List resources
-      const list = await vecteezyFetch(
-        `/v2/${accountId}/resources?query=${encodeURIComponent(q)}&page=1&per_page=${PER_KEYWORD}`
-      );
-
-      const items = normalizeItems(list);
-
-      for (const item of items) {
+      // ✅ IMPORTANT FIX:
+      // Vecteezy rejects invalid content_type -> we must call with valid types
+      for (const ct of CONTENT_TYPES) {
         if (inserts.length >= DAILY_CAP) break;
 
-        const id = String(item?.id ?? item?.resource_id ?? "");
-        if (!id) continue;
+        const list = await vecteezyFetch(
+          `/v2/${accountId}/resources?query=${encodeURIComponent(q)}&content_type=${ct}&page=1&per_page=${PER_KEYWORD}`
+        );
 
-        const provider_asset_id = id;
-        const pid = `vecteezy::${provider_asset_id}`;
-        if (existingPid.has(pid)) continue;
+        const items = normalizeItems(list);
 
-        const contentType = String(item?.content_type || item?.type || "").toLowerCase();
-        const media_type: "image" | "video" = contentType.includes("video") ? "video" : "image";
+        for (const item of items) {
+          if (inserts.length >= DAILY_CAP) break;
 
-        const width = item?.dimensions?.width ?? item?.width ?? null;
-        const height = item?.dimensions?.height ?? item?.height ?? null;
-        const duration = item?.duration ?? null;
+          const id = String(item?.id ?? item?.resource_id ?? "");
+          if (!id) continue;
 
-        const cover =
-          item?.thumbnail_url ||
-          item?.preview_url ||
-          item?.cover_url ||
-          null;
+          const provider_asset_id = id;
+          const pid = `vecteezy::${provider_asset_id}`;
+          if (existingPid.has(pid)) continue;
 
-        // Start with whatever URL the item provides
-        let url: string | null = item?.file_url || item?.url || item?.download_url || null;
+          // ✅ media_type is now deterministic based on the list call
+          const media_type: "image" | "video" = ct === "video" ? "video" : "image";
 
-        // Try download endpoint for a limited number per run (quota-safe)
-        if ((!url || String(url).includes("null")) && downloadsUsed < DOWNLOADS_PER_RUN_CAP) {
-          try {
-            const dl = await vecteezyFetch(`/v2/${accountId}/resources/${id}/download`);
-            const downloadUrl = dl?.download_url || dl?.url || dl?.data?.download_url || null;
-            if (downloadUrl) {
-              url = downloadUrl;
-              downloadsUsed++;
+          const width = item?.dimensions?.width ?? item?.width ?? null;
+          const height = item?.dimensions?.height ?? item?.height ?? null;
+          const duration = item?.duration ?? null;
+
+          const cover =
+            item?.thumbnail_url ||
+            item?.preview_url ||
+            item?.cover_url ||
+            null;
+
+          // Start with whatever URL the item provides
+          let url: string | null =
+            item?.file_url || item?.url || item?.download_url || null;
+
+          // Try download endpoint for a limited number per run (quota-safe)
+          if ((!url || String(url).includes("null")) && downloadsUsed < DOWNLOADS_PER_RUN_CAP) {
+            try {
+              const dl = await vecteezyFetch(`/v2/${accountId}/resources/${id}/download`);
+              const downloadUrl =
+                dl?.download_url || dl?.url || dl?.data?.download_url || null;
+              if (downloadUrl) {
+                url = downloadUrl;
+                downloadsUsed++;
+              }
+            } catch {
+              // ignore
             }
-          } catch {
-            // ignore
           }
+
+          if (!url || existingUrl.has(url)) continue;
+
+          inserts.push({
+            provider: "vecteezy",
+            provider_asset_id,
+            media_type,
+            keyword: q,
+            title: item?.title || item?.name || `Vecteezy ${media_type} ${id}`,
+            url,
+            cover_url: cover,
+            duration,
+            width,
+            height,
+            source_page: item?.page_url || item?.source_page || null,
+            score: scoreAsset({ media_type, width, height, duration, keyword: q }),
+            raw: item,
+          });
         }
 
-        if (!url || existingUrl.has(url)) continue;
-
-        inserts.push({
-          provider: "vecteezy",
-          provider_asset_id,
-          media_type,
-          keyword: q,
-          title: item?.title || item?.name || `Vecteezy ${media_type} ${id}`,
-          url,
-          cover_url: cover,
-          duration,
-          width,
-          height,
-          source_page: item?.page_url || item?.source_page || null,
-          score: scoreAsset({ media_type, width, height, duration, keyword: q }),
-          raw: item,
-        });
+        // gentle delay between content types
+        await sleep(MIN_DELAY_MS);
       }
 
+      // gentle delay between keywords
       await sleep(MIN_DELAY_MS);
     }
 
