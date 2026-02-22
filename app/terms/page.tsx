@@ -19,7 +19,9 @@ export default function TermsPage() {
           </p>
 
           <section className="space-y-3">
-            <h2 className="text-xl font-semibold text-yellow-400">1. About Autoaffi</h2>
+            <h2 className="text-xl font-semibold text-yellow-400">
+              1. About Autoaffi
+            </h2>
             <p className="leading-relaxed text-slate-300">
               Autoaffi is a platform that helps creators and affiliates plan, organize and optimize
               content and affiliate marketing across multiple networks. We integrate with partners such
@@ -30,13 +32,21 @@ export default function TermsPage() {
           </section>
 
           <section className="space-y-3 mt-8">
-            <h2 className="text-xl font-semibold text-yellow-400">2. Accepting these terms</h2>
-            <p className="leading-relaxed text-slate-300">By creating an account or using Autoaffi, you confirm that:</p>
+            <h2 className="text-xl font-semibold text-yellow-400">
+              2. Accepting these terms
+            </h2>
+            <p className="leading-relaxed text-slate-300">
+              By creating an account or using Autoaffi, you confirm that:
+            </p>
 
             <ul className="list-disc pl-5 space-y-1 text-slate-300">
               <li>You are at least 18 years old.</li>
-              <li>You have the right to connect and manage any social media or affiliate accounts you authorize in Autoaffi.</li>
-              <li>You will follow the terms and community standards of all connected platforms, including Meta, Google, TikTok and any affiliate networks you use.</li>
+              <li>
+                You have the right to connect and manage any social media or affiliate accounts you authorize in Autoaffi.
+              </li>
+              <li>
+                You will follow the terms and community standards of all connected platforms, including Meta, Google, TikTok and any affiliate networks you use.
+              </li>
             </ul>
           </section>
 
@@ -55,7 +65,9 @@ export default function TermsPage() {
             <ul className="list-disc pl-5 space-y-1 text-slate-300">
               <li>Scrape or collect data in a way that violates platform rules.</li>
               <li>Spam users with unwanted messages, comments or DMs (including through automated tools).</li>
-              <li>Publish misleading, illegal or harmful content, or content that violates local law or platform community standards.</li>
+              <li>
+                Publish misleading, illegal or harmful content, or content that violates local law or platform community standards.
+              </li>
             </ul>
 
             <p className="text-sm text-slate-500">
@@ -65,24 +77,63 @@ export default function TermsPage() {
           </section>
 
           <section className="space-y-3 mt-8">
-            <h2 className="text-xl font-semibold text-yellow-400">4. Your responsibilities</h2>
+            <h2 className="text-xl font-semibold text-yellow-400">
+              4. Your responsibilities
+            </h2>
             <ul className="list-disc pl-5 space-y-1 text-slate-300">
               <li>You are responsible for all content you create, schedule or publish with Autoaffi.</li>
-              <li>You are responsible for any affiliate disclosures required by law or by the affiliate networks you work with.</li>
+              <li>
+                You are responsible for any affiliate disclosures required by law or by the affiliate networks you work with.
+              </li>
               <li>You must keep your login details and API keys secret and secure.</li>
             </ul>
           </section>
 
           <section className="space-y-3 mt-8">
-            <h2 className="text-xl font-semibold text-yellow-400">5. No guarantee of earnings</h2>
+            <h2 className="text-xl font-semibold text-yellow-400">
+              5. No guarantee of earnings
+            </h2>
             <p className="leading-relaxed text-slate-300">
               Autoaffi is a tool to help you work more efficiently. We do not guarantee any specific results, sales or income.
               Your performance depends on your content, your audience and the offers you promote.
             </p>
           </section>
 
+          {/* ✅ New: Sub-network compliance */}
           <section className="space-y-3 mt-8">
-            <h2 className="text-xl font-semibold text-yellow-400">6. Data & privacy</h2>
+            <h2 className="text-xl font-semibold text-yellow-400">
+              6. Affiliate &amp; Sub-Network Compliance
+            </h2>
+
+            <p className="leading-relaxed text-slate-300">
+              Autoaffi may integrate with third-party affiliate networks and advertiser programs. In some cases, Autoaffi
+              may operate as a publisher network or sub-network (meaning users can promote offers through Autoaffi).
+            </p>
+
+            <ul className="list-disc pl-5 space-y-1 text-slate-300">
+              <li>
+                We only enable promotion for advertisers/programs that explicitly permit sub-network / third-party promotion where such approval is required.
+              </li>
+              <li>
+                We do not bypass network controls, advertiser restrictions, or approval processes.
+              </li>
+              <li>
+                Users must comply with each affiliate network&apos;s terms, each advertiser program&apos;s terms, and all applicable laws (including disclosure requirements).
+              </li>
+              <li>
+                Autoaffi may restrict, disable, or remove offers if approvals are missing, revoked, or if compliance risks are identified.
+              </li>
+            </ul>
+
+            <p className="text-sm text-slate-500">
+              Autoaffi does not guarantee acceptance into any affiliate network or advertiser program. Eligibility and approvals are controlled by the respective network/advertiser.
+            </p>
+          </section>
+
+          <section className="space-y-3 mt-8">
+            <h2 className="text-xl font-semibold text-yellow-400">
+              7. Data &amp; privacy
+            </h2>
             <p className="leading-relaxed text-slate-300">
               Our use of your data is described in more detail in our{" "}
               <a
@@ -96,7 +147,9 @@ export default function TermsPage() {
           </section>
 
           <section className="space-y-3 mt-8">
-            <h2 className="text-xl font-semibold text-yellow-400">7. Suspension & termination</h2>
+            <h2 className="text-xl font-semibold text-yellow-400">
+              8. Suspension &amp; termination
+            </h2>
             <p className="leading-relaxed text-slate-300">
               We may suspend or terminate access to Autoaffi if we detect abuse, spam, illegal activity, or breaches of these terms
               or the terms of our partners (for example Meta Platform Terms). Serious violations can lead to immediate termination without refund.
@@ -104,7 +157,9 @@ export default function TermsPage() {
           </section>
 
           <section className="space-y-3 mt-8">
-            <h2 className="text-xl font-semibold text-yellow-400">8. Changes to these terms</h2>
+            <h2 className="text-xl font-semibold text-yellow-400">
+              9. Changes to these terms
+            </h2>
             <p className="leading-relaxed text-slate-300">
               We may update these Terms of Service when we add new features or when platform policies change.
               Important changes will be notified via email, in-app messages or both. Continued use of Autoaffi after changes means you accept the new terms.
@@ -112,7 +167,9 @@ export default function TermsPage() {
           </section>
 
           <section className="space-y-3 mt-8">
-            <h2 className="text-xl font-semibold text-yellow-400">9. Contact</h2>
+            <h2 className="text-xl font-semibold text-yellow-400">
+              10. Contact
+            </h2>
             <p className="leading-relaxed text-slate-300">
               If you have questions about these terms, please contact{" "}
               <a
