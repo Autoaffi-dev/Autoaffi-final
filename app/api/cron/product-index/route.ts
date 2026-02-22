@@ -3,13 +3,32 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * ✅ Universal Cron Auth (Autoaffi)
+ * Supports:
+ * - Header: x-autoaffi-cron
+ * - Header: x-cron-secret
+ * - Header: Authorization: Bearer <secret>
+ * - Query: ?secret=<secret>
+ * - Query: ?key=<secret> (back-compat)
+ */
 function isAuthorized(req: Request) {
-  const headerSecret = req.headers.get("x-autoaffi-cron");
-  const url = new URL(req.url);
-  const querySecret = url.searchParams.get("key");
   const secret = process.env.CRON_SECRET;
-
   if (!secret) return false;
+
+  const url = new URL(req.url);
+
+  const headerSecret =
+    req.headers.get("x-autoaffi-cron") ||
+    req.headers.get("x-cron-secret") ||
+    req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ||
+    null;
+
+  const querySecret =
+    url.searchParams.get("secret") ||
+    url.searchParams.get("key") ||
+    null;
+
   return headerSecret === secret || querySecret === secret;
 }
 
@@ -38,7 +57,9 @@ function getSources(): Array<"warriorplus" | "awin"> {
   const allowed = new Set(["warriorplus", "awin"]);
   const safe = parts.filter((s) => allowed.has(String(s)));
 
-  return (safe.length ? safe : ["warriorplus", "awin"]) as Array<"warriorplus" | "awin">;
+  return (safe.length ? safe : ["warriorplus", "awin"]) as Array<
+    "warriorplus" | "awin"
+  >;
 }
 
 async function handle(req: Request) {
@@ -66,7 +87,10 @@ async function handle(req: Request) {
     const startedAt = Date.now();
 
     const sources = getSources();
-    const limit = Math.max(1, Math.min(Number(process.env.PRODUCT_INDEX_CRON_LIMIT || 400), 500));
+    const limit = Math.max(
+      1,
+      Math.min(Number(process.env.PRODUCT_INDEX_CRON_LIMIT || 400), 500)
+    );
 
     const result = await runner({
       limit,
@@ -98,6 +122,6 @@ export async function GET(req: Request) {
   return handle(req);
 }
 export async function HEAD(req: Request) {
-  const res = await handle(req);
+  const res: any = await handle(req);
   return new Response(null, { status: res.status, headers: res.headers });
 }
