@@ -27,28 +27,38 @@ function getSupabaseAdmin() {
   return createClient(url, serviceKey, { auth: { persistSession: false } });
 }
 
-type SetDefaultBody = {
+type Body = {
   source: string;
   external_id: string;
 };
 
+type SessionWithUserId = {
+  user?: {
+    id?: string | null;
+  };
+} | null;
+
+function cleanStr(v: any) {
+  return String(v ?? "").trim();
+}
+
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions as any);
+    const session = (await getServerSession(authOptions as any)) as SessionWithUserId;
     const userId = session?.user?.id;
 
     if (!userId) {
       return jsonNoStore({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = (await req.json().catch(() => null)) as SetDefaultBody | null;
+    const raw = (await req.json().catch(() => null)) as Partial<Body> | null;
 
-    const source = String(body?.source || "").trim();
-    const external_id = String(body?.external_id || "").trim();
+    const source = cleanStr(raw?.source);
+    const external_id = cleanStr(raw?.external_id);
 
     if (!source || !external_id) {
       return jsonNoStore(
-        { ok: false, error: "Missing required fields: source, external_id" },
+        { ok: false, error: "Missing source or external_id" },
         { status: 400 }
       );
     }
@@ -56,62 +66,67 @@ export async function POST(req: Request) {
     const supabase = getSupabaseAdmin();
     const now = new Date().toISOString();
 
-    /**
-     * IMPORTANT:
-     * This endpoint assumes your table `user_selected_products` has:
-     * - is_default boolean
-     * - default_at timestamptz (nullable)
-     *
-     * If not, Supabase will return a clear error and you’ll add columns in Supabase UI.
-     */
-
-    // 1) Clear any existing default for this user
-    const clearRes = await supabase
+    const { data: exists, error: exErr } = await supabase
       .from("user_selected_products")
-      .update({
-        is_default: false,
-        default_at: null,
-        updated_at: now,
-      } as any)
-      .eq("user_id", userId)
-      .eq("is_active", true)
-      .eq("is_default", true);
-
-    if (clearRes.error) {
-      return jsonNoStore(
-        { ok: false, error: `clear default failed: ${clearRes.error.message}` },
-        { status: 500 }
-      );
-    }
-
-    // 2) Set selected product as default (must exist + be active)
-    const { data, error } = await supabase
-      .from("user_selected_products")
-      .update({
-        is_default: true,
-        default_at: now,
-        updated_at: now,
-      } as any)
+      .select("user_id,source,external_id,is_active")
       .eq("user_id", userId)
       .eq("source", source)
       .eq("external_id", external_id)
-      .eq("is_active", true)
-      .select("source,external_id,is_default,default_at");
+      .maybeSingle();
 
-    if (error) {
+    if (exErr) {
       return jsonNoStore(
-        { ok: false, error: `set default failed: ${error.message}` },
+        { ok: false, error: `lookup failed: ${exErr.message}` },
         { status: 500 }
       );
     }
 
-    const updated = Array.isArray(data) ? data.length : 0;
+    if (!exists) {
+      return jsonNoStore(
+        { ok: false, error: "Selection not found for user" },
+        { status: 404 }
+      );
+    }
+
+    if (exists?.is_active === false) {
+      return jsonNoStore(
+        { ok: false, error: "Selection is inactive/removed" },
+        { status: 409 }
+      );
+    }
+
+    const { error: clearErr } = await supabase
+      .from("user_selected_products")
+      .update({ is_default: false, updated_at: now })
+      .eq("user_id", userId)
+      .eq("is_default", true);
+
+    if (clearErr) {
+      return jsonNoStore(
+        { ok: false, error: `clear default failed: ${clearErr.message}` },
+        { status: 500 }
+      );
+    }
+
+    const { error: setErr } = await supabase
+      .from("user_selected_products")
+      .update({ is_default: true, default_at: now, updated_at: now })
+      .eq("user_id", userId)
+      .eq("source", source)
+      .eq("external_id", external_id);
+
+    if (setErr) {
+      return jsonNoStore(
+        { ok: false, error: `set default failed: ${setErr.message}` },
+        { status: 500 }
+      );
+    }
 
     return jsonNoStore({
       ok: true,
-      clearedDefaults: (clearRes as any)?.count ?? null,
-      updated,
-      item: updated ? data?.[0] : null,
+      user_id: userId,
+      default: { source, external_id },
+      updated_at: now,
     });
   } catch (e: any) {
     console.error("[api/affiliate/products/set-default] error:", e);

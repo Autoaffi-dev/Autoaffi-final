@@ -32,6 +32,12 @@ type Body = {
   external_id: string;
 };
 
+type SessionWithUserId = {
+  user?: {
+    id?: string | null;
+  };
+} | null;
+
 function cleanStr(v: any) {
   return String(v ?? "").trim();
 }
@@ -57,7 +63,7 @@ function cleanStr(v: any) {
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions as any);
+    const session = (await getServerSession(authOptions as any)) as SessionWithUserId;
     const userId = session?.user?.id;
 
     if (!userId) {

@@ -27,6 +27,12 @@ function getSupabaseAdmin() {
   return createClient(url, serviceKey, { auth: { persistSession: false } });
 }
 
+type SessionWithUser = {
+  user?: {
+    id?: string;
+  };
+} | null;
+
 type UnselectBody = {
   source: string;
   external_id: string;
@@ -35,7 +41,7 @@ type UnselectBody = {
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions as any);
+    const session = (await getServerSession(authOptions as any)) as SessionWithUser;
     const userId = session?.user?.id;
 
     if (!userId) {
@@ -69,7 +75,6 @@ export async function POST(req: Request) {
      * If columns missing, Supabase will error and you add them in Supabase UI.
      */
 
-    // If it was default, remove default state as well
     const { data, error } = await supabase
       .from("user_selected_products")
       .update({

@@ -23,6 +23,8 @@ export type ProductNetworkSource =
   | "rakuten"
   | "impact"; // if used for product-mode later
 
+export type OfferSource = ProductNetworkSource;
+
 export type ProductPlacement =
   | "affiliate_offers"
   | "reels"
@@ -31,11 +33,11 @@ export type ProductPlacement =
   | "other";
 
 type BuildSubIdArgs = {
-  userId: string;                // Supabase auth user id (uuid)
-  source: ProductNetworkSource;  // network source for product
-  externalId: string;            // product_index.external_id
-  placement?: ProductPlacement;  // optional: where link was generated from
-  offerKey?: string | null;      // optional: your internal offer key if you have one
+  userId: string; // Supabase auth user id (uuid)
+  source: ProductNetworkSource; // network source for product
+  externalId: string; // product_index.external_id
+  placement?: ProductPlacement; // optional: where link was generated from
+  offerKey?: string | null; // optional: your internal offer key if you have one
 };
 
 function sha1(input: string) {

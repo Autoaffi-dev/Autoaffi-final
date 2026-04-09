@@ -15,6 +15,11 @@ export async function savePushForUser(args: {
   const { userId, push } = args;
   const supabase = getSupabaseClient();
 
+  const tone = (push as any).tone ?? "balanced";
+  const ctaIntensity = (push as any).ctaIntensity ?? "medium";
+  const targetMarket = (push as any).targetMarket ?? "international_english";
+  const language = (push as any).language ?? "english";
+
   const { data: pushRow, error: pushError } = await supabase
     .from("autoaffi_pushes")
     .insert({
@@ -26,8 +31,10 @@ export async function savePushForUser(args: {
       offer_focus: push.offerFocus || null,
       goal: push.goal,
       duration_days: push.durationDays,
-      tone: push.tone,
-      cta_intensity: push.ctaIntensity,
+      tone,
+      cta_intensity: ctaIntensity,
+      target_market: targetMarket,
+      language,
       why_this_push_works: push.whyThisPushWorks,
     })
     .select("id")
@@ -40,16 +47,22 @@ export async function savePushForUser(args: {
     };
   }
 
-  const rows = push.days.map((day) => ({
+  const rows = push.days.map((day: any) => ({
     push_id: pushRow.id,
     day_number: day.dayNumber,
     day_title: day.dayTitle,
     day_role: day.dayRole,
     why_this_day_matters: day.whyThisDayMatters,
+    optimizing_for: day.optimizingFor || [],
     hook: day.hook,
     body: day.body,
     cta: day.cta,
     algorithm_note: day.algorithmNote,
+    hashtags: day.hashtags || [],
+    keyword_focus: day.keywordFocus || [],
+    image_prompt: day.imagePrompt || "",
+    video_script: day.videoScript || [],
+    comment_reply: day.commentReply || null,
   }));
 
   const { error: daysError } = await supabase
@@ -80,7 +93,8 @@ export async function listPushesForUser(userId: string): Promise<SavedPush[]> {
 
   if (error || !pushes) return [];
 
-  const pushIds = pushes.map((p) => p.id);
+  const pushIds = pushes.map((p: any) => p.id);
+
   const { data: days } = await supabase
     .from("autoaffi_push_days")
     .select("*")
@@ -88,13 +102,15 @@ export async function listPushesForUser(userId: string): Promise<SavedPush[]> {
     .order("day_number", { ascending: true });
 
   const groupedDays = new Map<string, any[]>();
+
   for (const day of days || []) {
-    const list = groupedDays.get(day.push_id) || [];
-    list.push(day);
-    groupedDays.set(day.push_id, list);
+    const typedDay = day as any;
+    const list = groupedDays.get(typedDay.push_id) || [];
+    list.push(typedDay);
+    groupedDays.set(typedDay.push_id, list);
   }
 
-  return pushes.map((row) => ({
+  const mapped: SavedPush[] = (pushes as any[]).map((row: any) => ({
     id: row.id,
     userId: row.user_id,
     createdAt: row.created_at,
@@ -106,19 +122,29 @@ export async function listPushesForUser(userId: string): Promise<SavedPush[]> {
       offerFocus: row.offer_focus || "",
       goal: row.goal,
       durationDays: row.duration_days,
-      tone: row.tone,
-      ctaIntensity: row.cta_intensity,
-      whyThisPushWorks: row.why_this_push_works,
-      days: (groupedDays.get(row.id) || []).map((day) => ({
+      tone: row.tone ?? "balanced",
+      ctaIntensity: row.cta_intensity ?? "medium",
+      targetMarket: row.target_market ?? "international_english",
+      language: row.language ?? "english",
+      whyThisPushWorks: row.why_this_push_works ?? "",
+      days: (groupedDays.get(row.id) || []).map((day: any) => ({
         dayNumber: day.day_number,
         dayTitle: day.day_title,
         dayRole: day.day_role,
-        whyThisDayMatters: day.why_this_day_matters,
-        hook: day.hook,
-        body: day.body,
-        cta: day.cta,
-        algorithmNote: day.algorithm_note,
+        whyThisDayMatters: day.why_this_day_matters ?? "",
+        optimizingFor: day.optimizing_for || [],
+        hook: day.hook ?? "",
+        body: day.body ?? "",
+        cta: day.cta ?? "",
+        algorithmNote: day.algorithm_note ?? "",
+        hashtags: day.hashtags || [],
+        keywordFocus: day.keyword_focus || [],
+        imagePrompt: day.image_prompt || "",
+        videoScript: day.video_script || [],
+        commentReply: day.comment_reply || null,
       })),
     },
-  })) as SavedPush[];
+  }));
+
+  return mapped;
 }

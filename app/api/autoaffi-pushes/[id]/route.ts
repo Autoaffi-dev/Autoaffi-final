@@ -14,10 +14,10 @@ function getAdminSupabase() {
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const id = params.id;
+    const { id } = await params;
     const supabase = getAdminSupabase();
 
     const { data: pushRow, error: pushError } = await supabase
