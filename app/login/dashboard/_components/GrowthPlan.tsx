@@ -7,7 +7,7 @@ interface GrowthPlanProps {
   startStepsCompleted: number;
   markStepCompleted: (step: number) => void;
 
-  // ✅ Tour 2 (Advanced) - reintroduced
+  // ✅ Tour 2 (Advanced)
   showContinueTour?: boolean;
   onContinueTour?: () => void;
 
@@ -25,7 +25,6 @@ export default function GrowthPlan({
 }: GrowthPlanProps) {
   if (!creatorMode) return null;
 
-  // 3 STEP DATA (with navigation intent)
   const steps = [
     {
       id: 1 as const,
@@ -48,25 +47,21 @@ export default function GrowthPlan({
   ];
 
   function handleStepClick(stepId: 1 | 2 | 3) {
-    // ✅ mark progress first
     markStepCompleted(stepId);
 
-    // ✅ then navigate to the correct card (Tour 1 requirement)
     if (onStepNavigate) onStepNavigate(stepId);
   }
 
   return (
     <div id="start-steps-anchor">
       <section className="mb-8 rounded-2xl border border-emerald-400/30 bg-slate-900/70 p-5 shadow-[0_20px_40px_rgba(0,0,0,0.6)]">
-        {/* Title */}
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300 mb-3">
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300">
               Your Personalized Growth Plan
             </h2>
 
-            {/* Creator label */}
-            <p className="text-sm text-slate-200 mb-4">
+            <p className="mb-4 text-sm text-slate-200">
               Based on your creator type:{" "}
               <span className="font-semibold text-emerald-300">
                 {creatorMode === "beginner"
@@ -78,7 +73,6 @@ export default function GrowthPlan({
             </p>
           </div>
 
-          {/* ✅ Continue Tour (Tour 2 CTA) */}
           {showContinueTour && (
             <button
               onClick={() => onContinueTour?.()}
@@ -89,13 +83,11 @@ export default function GrowthPlan({
           )}
         </div>
 
-        {/* Start Steps Title */}
-        <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400 mb-3">
+        <p className="mb-3 text-[11px] uppercase tracking-[0.18em] text-slate-400">
           Start Here — Your First 3 Steps (Click to do it now)
         </p>
 
-        {/* THREE CLICKABLE STEP CARDS */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
           {steps.map((step) => {
             const completed = startStepsCompleted >= step.id;
 
@@ -125,7 +117,11 @@ export default function GrowthPlan({
                   </span>
                 </div>
 
-                <p className={`text-[14px] font-semibold ${completed ? "text-emerald-300" : "text-slate-100"}`}>
+                <p
+                  className={`text-[14px] font-semibold ${
+                    completed ? "text-emerald-300" : "text-slate-100"
+                  }`}
+                >
                   {step.title}
                 </p>
 
@@ -141,8 +137,7 @@ export default function GrowthPlan({
           })}
         </div>
 
-        {/* Progress Bar */}
-        <div className="mb-8">
+        <div className="mb-1">
           <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
             <div
               className="h-full bg-emerald-400 transition-all duration-700"
@@ -159,71 +154,9 @@ export default function GrowthPlan({
             />
           </div>
 
-          <p className="text-[11px] text-slate-400 mt-2">
+          <p className="mt-2 text-[11px] text-slate-400">
             {startStepsCompleted}/3 steps completed
           </p>
-        </div>
-
-        {/* Today's Key Actions */}
-        <div className="mb-6">
-          <h3 className="text-sm font-semibold text-slate-100 mb-1">Today's Key Actions</h3>
-
-          <ul className="space-y-2 text-[13px] text-slate-300">
-            {creatorMode === "beginner" && (
-              <>
-                <li>• Connect 1–2 socials (TikTok or Instagram first)</li>
-                <li>• Add 1 recurring affiliate offer</li>
-                <li>• Generate 1 post today (keep it simple)</li>
-              </>
-            )}
-
-            {creatorMode === "consistent" && (
-              <>
-                <li>• Connect all your active socials</li>
-                <li>• Add best-performing offers</li>
-                <li>• Create 2–3 optimized posts today</li>
-              </>
-            )}
-
-            {creatorMode === "growth" && (
-              <>
-                <li>• Build a 7-day content campaign</li>
-                <li>• Choose 1 recurring offer to push harder</li>
-                <li>• Analyze niche trends for new angles</li>
-              </>
-            )}
-          </ul>
-        </div>
-
-        {/* Improvements */}
-        <div>
-          <h3 className="text-sm font-semibold text-slate-100 mb-2">Improvements to boost revenue</h3>
-
-          <ul className="space-y-2 text-[13px] text-slate-300">
-            {creatorMode === "beginner" && (
-              <>
-                <li>• Add a recurring SaaS offer</li>
-                <li>• Post daily small wins</li>
-                <li>• Follow 5 creators in your niche</li>
-              </>
-            )}
-
-            {creatorMode === "consistent" && (
-              <>
-                <li>• Start posting 2× per day for 7 days</li>
-                <li>• Build a lead magnet funnel</li>
-                <li>• Track hooks generating most comments</li>
-              </>
-            )}
-
-            {creatorMode === "growth" && (
-              <>
-                <li>• Test 2–3 backend offers for higher EPC</li>
-                <li>• Build a 3-email mini funnel</li>
-                <li>• Increase posting frequency by 20%</li>
-              </>
-            )}
-          </ul>
         </div>
       </section>
     </div>

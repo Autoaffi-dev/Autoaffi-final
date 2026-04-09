@@ -5,14 +5,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * PRODUCT MAINTENANCE (BEAST + TIMEOUT SAFE)
+ * PRODUCT MAINTENANCE (SAFE VERSION)
  * GET/POST /api/cron/product-maintenance?key=CRON_SECRET
  * header (optional): x-autoaffi-cron: CRON_SECRET
  *
- * ✅ Timeout-safe for cron-job.org:
- * - time budget (stop early)
- * - batch processing
- * - limited HEAD checks with concurrency + abort
+ * FIX:
+ * - DO NOT deactivate products just because they were not seen recently
+ * - DO NOT apply cooldown_45d to product_index
+ * - ONLY do light dead-link checks (404/410)
  */
 
 function isAuthorized(req: Request) {
@@ -33,12 +33,11 @@ function jsonNoStore(body: any, init?: ResponseInit) {
 }
 
 function getSupabaseAdmin() {
-  // ✅ support both naming styles you’ve used
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
 
   const key =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE__SERVICE_ROLE_KEY || // <-- double underscore variant
+    process.env.SUPABASE__SERVICE_ROLE_KEY ||
     process.env.SUPABASE_SERVICE_KEY;
 
   if (!url || !key) {
@@ -54,20 +53,10 @@ function isoNow() {
   return new Date().toISOString();
 }
 
-function daysAgoIso(days: number) {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString();
-}
-
 function clampInt(v: any, def: number, min: number, max: number) {
   const n = Number(v);
   if (!Number.isFinite(n)) return def;
   return Math.max(min, Math.min(max, Math.floor(n)));
-}
-
-async function sleep(ms: number) {
-  await new Promise((r) => setTimeout(r, ms));
 }
 
 async function headWithTimeout(url: string, timeoutMs: number): Promise<number | null> {
@@ -82,7 +71,6 @@ async function headWithTimeout(url: string, timeoutMs: number): Promise<number |
     });
     return res.status;
   } catch {
-    // network error/timeout => do NOT mark dead aggressively
     return null;
   } finally {
     clearTimeout(t);
@@ -109,44 +97,23 @@ async function runWithConcurrency<T, R>(
   return out;
 }
 
-async function runProductMaintenance(req: Request, opts?: {
-  staleDays?: number;        // default 14
-  cooldownDays?: number;     // default 45
-  headTimeoutMs?: number;    // default 3500
-  linkCheckLimit?: number;   // default 12
-  headConcurrency?: number;  // default 2
-  // Timeout-safe knobs:
-  timeBudgetMs?: number;     // default 6500
-  staleBatch?: number;       // default 400
-  cooldownBatch?: number;    // default 400
-}) {
+async function runProductMaintenance(
+  req: Request,
+  opts?: {
+    headTimeoutMs?: number;
+    linkCheckLimit?: number;
+    headConcurrency?: number;
+    timeBudgetMs?: number;
+  }
+) {
   const supabase = getSupabaseAdmin();
-
   const url = new URL(req.url);
-
-  // ---- Defaults + override via env/query (safe) ----
-  const staleDays = Math.max(1, Math.min(opts?.staleDays ?? 14, 90));
-  const cooldownDays = Math.max(staleDays + 1, Math.min(opts?.cooldownDays ?? 45, 365));
 
   const timeBudgetMs = clampInt(
     url.searchParams.get("budgetMs") ?? process.env.PRODUCT_MAINTENANCE_BUDGET_MS ?? opts?.timeBudgetMs,
     6500,
     1500,
     20000
-  );
-
-  const staleBatch = clampInt(
-    url.searchParams.get("staleBatch") ?? process.env.PRODUCT_MAINTENANCE_STALE_BATCH ?? opts?.staleBatch,
-    400,
-    50,
-    5000
-  );
-
-  const cooldownBatch = clampInt(
-    url.searchParams.get("cooldownBatch") ?? process.env.PRODUCT_MAINTENANCE_COOLDOWN_BATCH ?? opts?.cooldownBatch,
-    400,
-    50,
-    5000
   );
 
   const linkCheckLimit = clampInt(
@@ -174,85 +141,21 @@ async function runProductMaintenance(req: Request, opts?: {
   const startedAt = Date.now();
   const errors: string[] = [];
 
-  let markedStaleInactive = 0;
-  let cooledDown = 0;
   let checkedLinks = 0;
   let markedDeadByHttp = 0;
 
   const timeLeft = () => timeBudgetMs - (Date.now() - startedAt);
-  const shouldStop = () => timeLeft() <= 300; // leave some buffer
+  const shouldStop = () => timeLeft() <= 300;
 
-  // 1) Stale cleanup (TIME SAFE) => inactivate if not seen in X days
-  // We do this in a "select ids" + "update ids" pattern to avoid huge update timeouts.
-  try {
-    if (!shouldStop()) {
-      const staleBefore = daysAgoIso(staleDays);
+  /**
+   * IMPORTANT:
+   * stale_not_seen + cooldown_45d are intentionally disabled.
+   * Product index sources do not all refresh at the same frequency,
+   * and temporary cron/fetch failures should NOT deactivate entire sources.
+   */
+  const staleCleanupDisabled = true;
+  const cooldownDisabled = true;
 
-      const { data: staleRows, error: selErr } = await supabase
-        .from("product_index")
-        .select("id")
-        .lt("last_seen_at", staleBefore)
-        .eq("is_active", true)
-        .limit(staleBatch);
-
-      if (selErr) throw selErr;
-
-      const ids = (staleRows ?? []).map((r: any) => r.id).filter(Boolean);
-
-      if (ids.length > 0 && !shouldStop()) {
-        const { data: upd, error: updErr } = await supabase
-          .from("product_index")
-          .update({
-            is_active: false,
-            dead_reason: "stale_not_seen",
-          })
-          .in("id", ids)
-          .select("id");
-
-        if (updErr) throw updErr;
-        markedStaleInactive = upd?.length ?? 0;
-      }
-    }
-  } catch (e: any) {
-    errors.push(`stale_cleanup: ${e?.message ?? String(e)}`);
-  }
-
-  // 2) Cooldown (TIME SAFE) => harder cleanup after cooldownDays
-  try {
-    if (!shouldStop()) {
-      const cooldownBefore = daysAgoIso(cooldownDays);
-
-      const { data: cdRows, error: selErr } = await supabase
-        .from("product_index")
-        .select("id")
-        .lt("last_seen_at", cooldownBefore)
-        .eq("is_active", true)
-        .limit(cooldownBatch);
-
-      if (selErr) throw selErr;
-
-      const ids = (cdRows ?? []).map((r: any) => r.id).filter(Boolean);
-
-      if (ids.length > 0 && !shouldStop()) {
-        const { data: upd, error: updErr } = await supabase
-          .from("product_index")
-          .update({
-            is_active: false,
-            dead_reason: "cooldown_45d",
-            winner_tier: null,
-          })
-          .in("id", ids)
-          .select("id");
-
-        if (updErr) throw updErr;
-        cooledDown = upd?.length ?? 0;
-      }
-    }
-  } catch (e: any) {
-    errors.push(`cooldown: ${e?.message ?? String(e)}`);
-  }
-
-  // 3) Light dead-link check (only 404/410) - TIME SAFE + concurrency + abort
   if (linkCheckLimit > 0) {
     try {
       if (!shouldStop()) {
@@ -266,8 +169,6 @@ async function runProductMaintenance(req: Request, opts?: {
         if (error) throw error;
 
         const rows = (data ?? []).filter(Boolean);
-
-        // Stop early if low time left
         const safeRows = shouldStop() ? [] : rows;
 
         const results = await runWithConcurrency(
@@ -285,7 +186,6 @@ async function runProductMaintenance(req: Request, opts?: {
           }
         );
 
-        // Apply updates for 404/410 only
         const deadIds = results
           .filter((r) => r.status === 404 || r.status === 410)
           .map((r) => r.id)
@@ -294,7 +194,6 @@ async function runProductMaintenance(req: Request, opts?: {
         if (deadIds.length > 0 && !shouldStop()) {
           markedDeadByHttp = deadIds.length;
 
-          // Update in one query (fast)
           const { error: updErr } = await supabase
             .from("product_index")
             .update({
@@ -316,17 +215,13 @@ async function runProductMaintenance(req: Request, opts?: {
     ranAt,
     timeBudgetMs,
     config: {
-      staleDays,
-      cooldownDays,
-      staleBatch,
-      cooldownBatch,
+      staleCleanupDisabled,
+      cooldownDisabled,
       linkCheckLimit,
       headTimeoutMs,
       headConcurrency,
     },
     summary: {
-      markedStaleInactive,
-      cooledDown,
       checkedLinks,
       markedDeadByHttp,
       errors,
@@ -343,14 +238,10 @@ async function handle(req: Request) {
     }
 
     const result = await runProductMaintenance(req, {
-      staleDays: 14,
-      cooldownDays: 45,
-      linkCheckLimit: 12,     // ✅ lower default to avoid cron-job.org timeout
-      headTimeoutMs: 3500,    // ✅ lower default
-      headConcurrency: 2,     // ✅ gentle
-      timeBudgetMs: 6500,     // ✅ safe default for cron-job.org
-      staleBatch: 400,
-      cooldownBatch: 400,
+      linkCheckLimit: 12,
+      headTimeoutMs: 3500,
+      headConcurrency: 2,
+      timeBudgetMs: 6500,
     });
 
     return jsonNoStore(result);

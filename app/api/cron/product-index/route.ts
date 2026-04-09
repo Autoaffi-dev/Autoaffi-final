@@ -3,15 +3,6 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * ✅ Universal Cron Auth (Autoaffi)
- * Supports:
- * - Header: x-autoaffi-cron
- * - Header: x-cron-secret
- * - Header: Authorization: Bearer <secret>
- * - Query: ?secret=<secret>
- * - Query: ?key=<secret> (back-compat)
- */
 function isAuthorized(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
@@ -43,22 +34,21 @@ async function loadIndexerModule() {
   return (await import("@/lib/engines/product-indexer/indexer")) as any;
 }
 
-// Default: ALWAYS WP + AWIN (per your request)
-function getSources(): Array<"warriorplus" | "awin"> {
+function getSources(): Array<"warriorplus" | "awin" | "cj" | "aliexpress"> {
   const raw = (process.env.PRODUCT_INDEX_CRON_SOURCES || "").trim();
-  if (!raw) return ["warriorplus", "awin"];
+
+  if (!raw) return ["warriorplus", "awin", "aliexpress"];
 
   const parts = raw
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean) as any[];
 
-  // hard-safety: only allow these in this cron
-  const allowed = new Set(["warriorplus", "awin"]);
+  const allowed = new Set(["warriorplus", "awin", "cj", "aliexpress"]);
   const safe = parts.filter((s) => allowed.has(String(s)));
 
-  return (safe.length ? safe : ["warriorplus", "awin"]) as Array<
-    "warriorplus" | "awin"
+  return (safe.length ? safe : ["warriorplus", "awin", "aliexpress"]) as Array<
+    "warriorplus" | "awin" | "cj" | "aliexpress"
   >;
 }
 

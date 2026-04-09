@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 const PER_KEYWORD = 8;
 const DAILY_CAP = 40;
-const DOWNLOADS_PER_RUN_CAP = 10; // protects quota
+const DOWNLOADS_PER_RUN_CAP = 10;
 const MIN_DELAY_MS = 350;
 
 const LIST_TYPES: Array<"video" | "photo"> = ["video", "photo"];
@@ -36,43 +36,66 @@ type AssetInsert = {
   raw: any;
 };
 
-async function vecteezyFetch(path: string, tries = 3) {
-  // ✅ Vecteezy API server (swagger default)
+function getVecteezyConfig() {
   const base = process.env.VECTEEZY_BASE_URL || "https://api.vecteezy.com";
-  const apiKey = assertEnv("VECTEEZY_API_KEY");
+  const apiKey = process.env.VECTEEZY_API_KEY || "";
+  const accountId = process.env.VECTEEZY_ACCOUNT_ID || "";
+
+  return {
+    base,
+    apiKey,
+    accountId,
+  };
+}
+
+async function vecteezyFetch(path: string, tries = 3) {
+  const { base, apiKey } = getVecteezyConfig();
+
+  if (!apiKey) {
+    throw new Error("Missing VECTEEZY_API_KEY");
+  }
 
   let lastErr: any = null;
 
   for (let i = 0; i < tries; i++) {
-    const res = await fetch(`${base}${path}`, {
-      headers: {
-        Accept: "application/json",
-        // keep both – key types differ
-        Authorization: `Bearer ${apiKey}`,
-        "X-Api-Key": apiKey,
-      },
-      cache: "no-store",
-    });
+    try {
+      const res = await fetch(`${base}${path}`, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "X-Api-Key": apiKey,
+        },
+        cache: "no-store",
+      });
 
-    const json = await safeJson(res);
-    if (res.ok) return json;
+      const json = await safeJson(res);
 
-    const msg =
-      json?.errors?.[0]?.message ||
-      json?.message ||
-      json?._raw ||
-      `HTTP ${res.status}`;
+      if (res.ok) return json;
 
-    lastErr = new Error(`Vecteezy API error ${res.status}: ${msg}`);
+      const msg =
+        json?.errors?.[0]?.message ||
+        json?.message ||
+        json?._raw ||
+        `HTTP ${res.status}`;
 
-    if (res.status === 429 || res.status >= 500) {
-      await sleep(650 * (i + 1));
-      continue;
+      lastErr = new Error(`Vecteezy API error ${res.status}: ${msg}`);
+
+      if (res.status === 429 || res.status >= 500) {
+        await sleep(650 * (i + 1));
+        continue;
+      }
+
+      throw lastErr;
+    } catch (err: any) {
+      lastErr = err;
+      if (i < tries - 1) {
+        await sleep(650 * (i + 1));
+        continue;
+      }
     }
-    throw lastErr;
   }
 
-  throw lastErr;
+  throw lastErr || new Error("Vecteezy request failed");
 }
 
 function normalizeItems(list: any): any[] {
@@ -90,14 +113,28 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const accountId = assertEnv("VECTEEZY_ACCOUNT_ID");
+    const { accountId, apiKey } = getVecteezyConfig();
+
+    if (!apiKey || !accountId) {
+      return NextResponse.json({
+        ok: true,
+        provider: "vecteezy",
+        inserted: 0,
+        downloadsUsed: 0,
+        skipped: true,
+        reason: "Vecteezy env vars missing",
+      });
+    }
+
     const rotation = getRotationForToday();
     const KEYWORDS = rotation.keywords;
 
     const { existingUrl, existingPid } = await loadExistingIndex();
 
     const inserts: AssetInsert[] = [];
+    const errors: string[] = [];
     let downloadsUsed = 0;
+    let successfulListCalls = 0;
 
     for (const q of KEYWORDS) {
       if (inserts.length >= DAILY_CAP) break;
@@ -105,72 +142,74 @@ export async function GET(req: Request) {
       for (const ct of LIST_TYPES) {
         if (inserts.length >= DAILY_CAP) break;
 
-        // ✅ IMPORTANT: Vecteezy requires "term" (NOT query)
-        // ✅ content_type must be one of their valid types (photo, video, ...)
-        const list = await vecteezyFetch(
-          `/v2/${accountId}/resources?term=${encodeURIComponent(q)}&content_type=${ct}&page=1&per_page=${PER_KEYWORD}`
-        );
+        try {
+          const list = await vecteezyFetch(
+            `/v2/${accountId}/resources?term=${encodeURIComponent(q)}&content_type=${ct}&page=1&per_page=${PER_KEYWORD}`
+          );
 
-        const items = normalizeItems(list);
+          successfulListCalls += 1;
+          const items = normalizeItems(list);
 
-        for (const item of items) {
-          if (inserts.length >= DAILY_CAP) break;
+          for (const item of items) {
+            if (inserts.length >= DAILY_CAP) break;
 
-          const id = String(item?.id ?? item?.resource_id ?? "");
-          if (!id) continue;
+            const id = String(item?.id ?? item?.resource_id ?? "");
+            if (!id) continue;
 
-          const provider_asset_id = id;
-          const pid = `vecteezy::${provider_asset_id}`;
-          if (existingPid.has(pid)) continue;
+            const provider_asset_id = id;
+            const pid = `vecteezy::${provider_asset_id}`;
+            if (existingPid.has(pid)) continue;
 
-          const media_type = detectMediaType(item, ct);
+            const media_type = detectMediaType(item, ct);
 
-          const width = item?.dimensions?.width ?? item?.width ?? null;
-          const height = item?.dimensions?.height ?? item?.height ?? null;
-          const duration = item?.duration ?? null;
+            const width = item?.dimensions?.width ?? item?.width ?? null;
+            const height = item?.dimensions?.height ?? item?.height ?? null;
+            const duration = item?.duration ?? null;
 
-          const cover =
-            item?.thumbnail_url ||
-            item?.preview_url ||
-            item?.cover_url ||
-            null;
+            const cover =
+              item?.thumbnail_url ||
+              item?.preview_url ||
+              item?.cover_url ||
+              null;
 
-          // Start with whatever URL the item provides
-          let url: string | null =
-            item?.file_url || item?.url || item?.download_url || null;
+            let url: string | null =
+              item?.file_url || item?.url || item?.download_url || null;
 
-          // Try download endpoint for a limited number per run (quota-safe)
-          if ((!url || String(url).includes("null")) && downloadsUsed < DOWNLOADS_PER_RUN_CAP) {
-            try {
-              const dl = await vecteezyFetch(`/v2/${accountId}/resources/${id}/download`);
-              const downloadUrl =
-                dl?.download_url || dl?.url || dl?.data?.download_url || null;
-              if (downloadUrl) {
-                url = downloadUrl;
-                downloadsUsed++;
+            if ((!url || String(url).includes("null")) && downloadsUsed < DOWNLOADS_PER_RUN_CAP) {
+              try {
+                const dl = await vecteezyFetch(`/v2/${accountId}/resources/${id}/download`);
+                const downloadUrl =
+                  dl?.download_url || dl?.url || dl?.data?.download_url || null;
+
+                if (downloadUrl) {
+                  url = downloadUrl;
+                  downloadsUsed++;
+                }
+              } catch (downloadErr: any) {
+                errors.push(`download:${id}:${downloadErr?.message ?? "failed"}`);
               }
-            } catch {
-              // ignore
             }
+
+            if (!url || existingUrl.has(url)) continue;
+
+            inserts.push({
+              provider: "vecteezy",
+              provider_asset_id,
+              media_type,
+              keyword: q,
+              title: item?.title || item?.name || `Vecteezy ${media_type} ${id}`,
+              url,
+              cover_url: cover,
+              duration,
+              width,
+              height,
+              source_page: item?.page_url || item?.source_page || null,
+              score: scoreAsset({ media_type, width, height, duration, keyword: q }),
+              raw: item,
+            });
           }
-
-          if (!url || existingUrl.has(url)) continue;
-
-          inserts.push({
-            provider: "vecteezy",
-            provider_asset_id,
-            media_type,
-            keyword: q,
-            title: item?.title || item?.name || `Vecteezy ${media_type} ${id}`,
-            url,
-            cover_url: cover,
-            duration,
-            width,
-            height,
-            source_page: item?.page_url || item?.source_page || null,
-            score: scoreAsset({ media_type, width, height, duration, keyword: q }),
-            raw: item,
-          });
+        } catch (listErr: any) {
+          errors.push(`list:${q}:${ct}:${listErr?.message ?? "failed"}`);
         }
 
         await sleep(MIN_DELAY_MS);
@@ -179,9 +218,9 @@ export async function GET(req: Request) {
       await sleep(MIN_DELAY_MS);
     }
 
-    // Local dedupe
     const seenUrl = new Set<string>();
     const seenPid = new Set<string>();
+
     const finalInserts = inserts.filter((a) => {
       const pid = `${a.provider}::${a.provider_asset_id}`;
       if (seenPid.has(pid)) return false;
@@ -197,7 +236,12 @@ export async function GET(req: Request) {
         provider: "vecteezy",
         inserted: 0,
         downloadsUsed,
-        reason: `No new assets (rotation day ${rotation.day}: ${rotation.label})`,
+        successfulListCalls,
+        errors,
+        reason:
+          successfulListCalls === 0
+            ? "Vecteezy returned no usable data this run"
+            : `No new assets (rotation day ${rotation.day}: ${rotation.label})`,
         rotation,
       });
     }
@@ -209,10 +253,20 @@ export async function GET(req: Request) {
       provider: "vecteezy",
       inserted,
       downloadsUsed,
+      successfulListCalls,
+      errors,
       rotation,
     });
   } catch (err: any) {
     console.error("VECTEEZY CRON ERROR:", err);
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
+
+    return NextResponse.json({
+      ok: true,
+      provider: "vecteezy",
+      inserted: 0,
+      downloadsUsed: 0,
+      errors: [err?.message ?? "unknown error"],
+      reason: "Vecteezy job failed gracefully",
+    });
   }
 }

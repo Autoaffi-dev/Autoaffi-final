@@ -3,15 +3,16 @@ export type ProductIndexerSource =
   | "mylead"
   | "warriorplus"
   | "impact"
-  | "awin";
-// NOTE: CJ lägger vi senare när du vill.
+  | "awin"
+  | "cj"
+  | "aliexpress";
 
 export type ProductSource = ProductIndexerSource;
 
 export type GeoScope = "worldwide" | "tier1" | "eu" | "us" | "nordics";
 
 export type ProductIndexRow = {
-  id?: string; // uuid only if provided
+  id?: string;
   source: ProductIndexerSource;
   external_id: string;
 
@@ -29,20 +30,15 @@ export type ProductIndexRow = {
   price?: number | null;
 
   score?: number | null;
-
-  // DB kräver NOT NULL -> vi skickar alltid number (default 0)
   quality_score: number;
 
-  // BEAST: approved-state från källan (ex WarriorPlus affiliate_requests)
   is_approved?: boolean;
-
   is_active?: boolean;
   winner_tier?: string | null;
   dead_reason?: string | null;
 
   geo_scope?: string | null;
 
-  // ✅ CANONICAL + DEDUPE (WP + AWIN + CJ senare)
   merchant_name?: string | null;
   merchant_id?: string | null;
   canonical_url?: string | null;
@@ -71,13 +67,12 @@ export type ProductIndexerReport = {
     }
   >;
 
-  // NICE: om indexer lägger in winner policy result
   winnerPolicy?: any;
   winnerPolicyError?: string;
 };
 
 export type RawProductRecord = {
-  id: string; // stable id for UI
+  id: string;
   title: string;
   description: string | null;
   epc: number | null;
@@ -87,12 +82,11 @@ export type RawProductRecord = {
 
 export interface IndexedProductInput {
   source: ProductSource;
-  external_id: string; // stable per source
+  external_id: string;
   title: string;
   description?: string | null;
   category?: string | null;
 
-  // canonical product page / landing
   product_url: string;
   landing_url?: string | null;
   image_url?: string | null;
@@ -105,10 +99,9 @@ export interface IndexedProductInput {
   score?: number | null;
   quality_score?: number | null;
 
-  geo_scope?: GeoScope; // BEAST GEO
+  geo_scope?: GeoScope;
   winner_tier?: string | null;
 
-  // ✅ optional canonical fields (indexer kommer fylla om de saknas)
   merchant_name?: string | null;
   merchant_id?: string | null;
   canonical_url?: string | null;

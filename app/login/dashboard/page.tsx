@@ -16,6 +16,7 @@ import AtAGlance from "./_components/AtAGlance";
 import GrowthPlan from "./_components/GrowthPlan";
 import PlanStrip from "./_components/PlanStrip";
 import ConsistencyText from "./_components/ConsistencyText";
+import LeadEngineCard from "./_components/LeadEngineCard";
 
 // ONBOARDING
 import OnboardingOverlay from "./_components/OnboardingOverlay";
@@ -372,24 +373,24 @@ export default function DashboardPage({ searchParams }: any) {
 
   // START ADVANCED TOUR (Tour 2)
   function startAdvancedTour() {
-  if (typeof window === "undefined") return;
+    if (typeof window === "undefined") return;
 
-  // ✅ reset so Tour 2 can always be started
-  try {
-    window.localStorage.removeItem("autoaffi_tour2_done");
-  } catch {}
+    // ✅ reset so Tour 2 can always be started
+    try {
+      window.localStorage.removeItem("autoaffi_tour2_done");
+    } catch {}
 
-  setAdvancedTourDone(false);
-  setSpotlightIndex(0);
-  setTourStage("spotlight");
+    setAdvancedTourDone(false);
+    setSpotlightIndex(0);
+    setTourStage("spotlight");
 
-  speak(getStageMessage("spotlight"));
+    speak(getStageMessage("spotlight"));
 
-  window.setTimeout(() => {
-    const el = document.getElementById(SPOTLIGHT_TARGETS[0]);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, 80);
-}
+    window.setTimeout(() => {
+      const el = document.getElementById(SPOTLIGHT_TARGETS[0]);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+  }
 
   /**
    * ✅ Stage intro speech (ONE TIME per onboarding run, persisted)
@@ -501,14 +502,14 @@ export default function DashboardPage({ searchParams }: any) {
     spotlightIndex,
     setSpotlightIndex: (n) => setSpotlightIndex(n),
     finishOnboarding,
-    setAiMessage: speak, // ✅ IMPORTANT: all stage prompts go through speak()
+    setAiMessage: speak,
     startAdvancedTour,
   });
 
   return (
     <main className="relative min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50">
       {/* HEADER */}
-      <DashboardHeader heroIntro={heroIntro} />
+      <DashboardHeader heroIntro={heroIntro} isReturningUser />
 
       {/* ✅ AI VOICE (AUDIO ONLY) */}
       {booted && ["welcome", "persona", "path", "spotlight", "final-steps", "complete"].includes(tourStage) && (
@@ -518,7 +519,7 @@ export default function DashboardPage({ searchParams }: any) {
       {/* AI OVERLAY */}
       <OnboardingOverlay
         stage={tourStage}
-        aiMessage={aiMessage} // ✅ always show message in the SAME modal (no dubbelruta)
+        aiMessage={aiMessage}
         handleWelcomeContinue={flow.handleWelcomeContinue}
         handlePersonaSelect={flow.handlePersonaSelect}
         handlePathSelect={flow.handlePathSelect}
@@ -549,14 +550,14 @@ export default function DashboardPage({ searchParams }: any) {
 
       {/* SPOTLIGHT HIGHLIGHT */}
       {tourStage === "spotlight" && (
-  <SpotlightHighlight
-    stage={tourStage}
-    spotlightIndex={spotlightIndex}
-    spotlightTargets={SPOTLIGHT_TARGETS}
-    aiMessage={aiMessage}
-    onNext={() => setSpotlightIndex((prev) => prev + 1)}
-  />
-)}
+        <SpotlightHighlight
+          stage={tourStage}
+          spotlightIndex={spotlightIndex}
+          spotlightTargets={SPOTLIGHT_TARGETS}
+          aiMessage={aiMessage}
+          onNext={() => setSpotlightIndex((prev) => prev + 1)}
+        />
+      )}
 
       {/* PLAN STRIP */}
       <PlanStrip plan={activePlan} beginnerHoursLeft={beginnerHoursLeft} />
@@ -567,40 +568,51 @@ export default function DashboardPage({ searchParams }: any) {
       {/* MINI NAV */}
       <MiniNav onJump={scrollToId} />
 
+      {/* ✅ NEW: Lead Engine */}
+      <LeadEngineCard />
+
       {/* ✅ AT A GLANCE */}
-      {showCreatorMeta && <AtAGlance socials={1} offers={2} recurring={0} postsToday={0} steps={startStepsCompleted} />}
+      {showCreatorMeta && (
+        <AtAGlance
+          socials={0}
+          offers={0}
+          recurring={0}
+          postsToday={0}
+          steps={startStepsCompleted}
+        />
+      )}
 
       {/* WEEKLY FOCUS */}
       <WeeklyFocus creatorMode={creatorMode} plan={activePlan} />
 
       {/* GROWTH PLAN */}
-{creatorMode && (
-  <GrowthPlan
-    creatorMode={creatorMode}
-    startStepsCompleted={startStepsCompleted}
-    markStepCompleted={markStepCompleted}
-    // ✅ FIX: Tour 2 ska synas även när du är i "final-steps" (det är då Growth Plan visas)
-    showContinueTour={!advancedTourDone && (tourStage === "off" || tourStage === "final-steps")}
-    onContinueTour={startAdvancedTour}
-    onStepNavigate={(step) => {
-      // ✅ CRITICAL: prevent ANY re-speak when clicking Step 1/2/3 and navigating away/back
-      suppressSpeechRef.current = true;
-      hardStopSpeech();
+      {creatorMode && (
+        <GrowthPlan
+          creatorMode={creatorMode}
+          startStepsCompleted={startStepsCompleted}
+          markStepCompleted={markStepCompleted}
+          // ✅ FIX: Tour 2 ska synas även när du är i "final-steps" (det är då Growth Plan visas)
+          showContinueTour={!advancedTourDone && (tourStage === "off" || tourStage === "final-steps")}
+          onContinueTour={startAdvancedTour}
+          onStepNavigate={(step) => {
+            // ✅ CRITICAL: prevent ANY re-speak when clicking Step 1/2/3 and navigating away/back
+            suppressSpeechRef.current = true;
+            hardStopSpeech();
 
-      // ✅ also mark final-steps as “already spoken” so it won't repeat when returning
-      markSpoken("final-steps");
+            // ✅ also mark final-steps as “already spoken” so it won't repeat when returning
+            markSpoken("final-steps");
 
-      // release after short time (in case you cancel navigation)
-      window.setTimeout(() => {
-        suppressSpeechRef.current = false;
-      }, 2000);
+            // release after short time (in case you cancel navigation)
+            window.setTimeout(() => {
+              suppressSpeechRef.current = false;
+            }, 2000);
 
-      if (step === 1) window.location.href = "/login/dashboard/social-accounts";
-      if (step === 2) window.location.href = "/login/dashboard/affiliate";
-      if (step === 3) window.location.href = "/login/dashboard/content-optimizer/posts";
-    }}
-  />
-)}
+            if (step === 1) window.location.href = "/login/dashboard/social-accounts";
+            if (step === 2) window.location.href = "/login/dashboard/affiliate";
+            if (step === 3) window.location.href = "/login/dashboard/content-optimizer/posts";
+          }}
+        />
+      )}
 
       {/* MAIN WRAPPER */}
       <div className="mx-auto max-w-6xl px-4 py-10 md:py-14">
@@ -633,6 +645,22 @@ export default function DashboardPage({ searchParams }: any) {
               description="Save your links & recurring programs."
               points={["Better targeting", "Optimized Content AI", "Organized funnels"]}
             />
+
+
+
+            <DashboardCard
+  plan={activePlan}
+  minPlan="basic"
+  title="Profile Setup"
+  badge="Core"
+  href="/login/dashboard/profile-setup"
+  description="Optimize your social profiles for trust, clicks, leads and commissions with Autoaffi’s guided setup system."
+  points={[
+    "Platform-specific profile optimization",
+    "Pinned content + proof structure",
+    "Better CTA flow + tracked setup",
+  ]}
+/>
 
             <DashboardCard
               plan={activePlan}
@@ -675,14 +703,19 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
-              minPlan="pro"
-              title="Campaigns"
-              badge="Pro"
-              href="/login/dashboard/campaigns"
-              description="Organize themed multi-day campaigns."
-              points={["Attach offers", "Track performance", "Future: auto sequences"]}
-            />
+  plan={activePlan}
+  minPlan="pro"
+  title="Autoaffi Pushes"
+  badge="Pro"
+  href="/login/dashboard/autoaffi-pushes"
+  description="Generate focused 5–7 day pushes designed to build curiosity, engagement, followers and trust — while warming people up for the right offer over time."
+  points={[
+    "Algorithm-first content",
+    "Copy-paste ready pushes",
+    "Build momentum before conversion",
+  ]}
+/>
+
           </div>
         </SectionBlock>
 

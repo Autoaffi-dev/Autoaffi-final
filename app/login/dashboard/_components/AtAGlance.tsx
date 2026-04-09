@@ -7,7 +7,7 @@ export type AtAGlanceProps = {
   offers: number;
   recurring: number;
   postsToday: number;
-  steps: number; // ✔ du skickar steps i page.tsx, så detta måste finnas här
+  steps: number;
 };
 
 export default function AtAGlance({
@@ -19,7 +19,7 @@ export default function AtAGlance({
 }: AtAGlanceProps) {
   return (
     <div className="mb-8 rounded-2xl border border-slate-700/60 bg-slate-900/70 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.7)]">
-      <h3 className="text-xs uppercase tracking-[0.22em] text-yellow-300 mb-4">
+      <h3 className="mb-4 text-xs uppercase tracking-[0.22em] text-yellow-300">
         At a Glance
       </h3>
 
@@ -46,7 +46,7 @@ export default function AtAGlance({
         />
 
         <StatBlock
-          label="Posts Today"
+          label="Posts Published"
           value={postsToday}
           icon="🟣"
           color="text-purple-300"

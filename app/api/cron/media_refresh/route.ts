@@ -16,20 +16,33 @@ async function callInternal(req: Request, path: string, secret: string): Promise
   url.pathname = path;
   url.searchParams.set("secret", secret);
 
-  const res = await fetch(url.toString(), { cache: "no-store" });
-  let body: any = null;
   try {
-    body = await res.json();
-  } catch {
-    body = { raw: await res.text().catch(() => "") };
-  }
+    const res = await fetch(url.toString(), { cache: "no-store" });
 
-  return {
-    path,
-    ok: res.ok && body?.ok !== false,
-    status: res.status,
-    body,
-  };
+    let body: any = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = { raw: await res.text().catch(() => "") };
+    }
+
+    return {
+      path,
+      ok: res.ok && body?.ok !== false,
+      status: res.status,
+      body,
+    };
+  } catch (err: any) {
+    return {
+      path,
+      ok: false,
+      status: 500,
+      body: {
+        ok: false,
+        error: err?.message ?? "Internal fetch failed",
+      },
+    };
+  }
 }
 
 export async function GET(req: Request) {
@@ -45,16 +58,21 @@ export async function GET(req: Request) {
 
     const results: SubJobResult[] = [];
 
-    // Always run in this order (best stability):
     results.push(await callInternal(req, "/api/cron/vecteezy_refresh", secret));
     results.push(await callInternal(req, "/api/cron/pexels_refresh", secret));
     results.push(await callInternal(req, "/api/cron/pixabay_refresh", secret));
 
-    const anyFail = results.some((r) => !r.ok);
+    const successCount = results.filter((r) => r.ok).length;
+    const failCount = results.length - successCount;
 
     return NextResponse.json(
       {
-        ok: !anyFail,
+        ok: successCount > 0,
+        summary: {
+          total: results.length,
+          successCount,
+          failCount,
+        },
         ran: results.map((r) => ({
           path: r.path,
           ok: r.ok,
@@ -67,10 +85,17 @@ export async function GET(req: Request) {
           error: r.body?.error ?? null,
         })),
       },
-      { status: anyFail ? 500 : 200 }
+      { status: 200 }
     );
   } catch (err: any) {
     console.error("MEDIA REFRESH CRON ERROR:", err);
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: err?.message ?? "media_refresh failed",
+      },
+      { status: 500 }
+    );
   }
 }

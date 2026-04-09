@@ -28,8 +28,6 @@ export default function LeadCaptureClient({
 
   const nextUrl = useMemo(() => (isNonEmpty(next) ? next.trim() : ""), [next]);
 
-  // ✅ IMPORTANT: Contact flow should NEVER go to mock.
-  // Legacy safety: treat "both" as "lead" (contact) in this form.
   const effectiveMode: Mode = mode === "both" ? "lead" : mode;
 
   async function postLead(payload: any) {
@@ -66,11 +64,10 @@ export default function LeadCaptureClient({
       return;
     }
 
-    // ✅ matchar API: kräver email eller phone
-if (!isNonEmpty(email) && !isNonEmpty(phone)) {
-  setErrMsg("Please add email or phone.");
-  return;
-}
+    if (!isNonEmpty(email) && !isNonEmpty(phone)) {
+      setErrMsg("Please add email or phone.");
+      return;
+    }
 
     const payload = {
       token,
@@ -79,10 +76,16 @@ if (!isNonEmpty(email) && !isNonEmpty(phone)) {
       phone: isNonEmpty(phone) ? phone.trim() : null,
       message: isNonEmpty(message) ? message.trim() : null,
 
-      // context
-      mode: effectiveMode, // ✅ important
+      mode: effectiveMode,
       next: nextUrl || null,
       ts: new Date().toISOString(),
+
+      // extra context so backend can support both QR tokens and profile-setup tokens
+      source_context: "profile_connect_or_qr",
+      entry_flow: "lead_capture",
+      token_type_hint: "token",
+      current_path:
+        typeof window !== "undefined" ? window.location.pathname : null,
     };
 
     try {
@@ -97,15 +100,12 @@ if (!isNonEmpty(email) && !isNonEmpty(phone)) {
 
       setOkMsg("Sent ✅");
 
-      // Small UX pause so user sees "Sent ✅"
       setTimeout(() => {
-        // ✅ 1) LEAD (and legacy BOTH) => thank you page
         if (effectiveMode === "lead") {
           window.location.href = `/lead/thanks/${encodeURIComponent(token)}`;
           return;
         }
 
-        // ✅ 2) AFFILIATE => go routing (should be rare for this form)
         window.location.href = `/go/${encodeURIComponent(token)}?skip_log=1`;
       }, 350);
     } catch (e: any) {

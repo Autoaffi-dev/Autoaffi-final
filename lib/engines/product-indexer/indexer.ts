@@ -1,23 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
-import type { ProductIndexerSource, ProductIndexRow, ProductIndexerReport } from "./types";
+import type {
+  ProductIndexerSource,
+  ProductIndexRow,
+  ProductIndexerReport,
+} from "./types";
 
-// ✅ FIX: re-export RawProductRecord from types (så importen från indexer funkar)
 export type { RawProductRecord } from "./types";
 import type { RawProductRecord } from "./types";
-
-/**
- * BEAST FINAL (LOCKED)
- * - Sources: warriorplus (default) + awin + impact + (legacy)
- * - Upsert into public.product_index using (source, external_id)
- * - Never send "id" unless it is a uuid
- * - IMPORTANT: quality_score MUST NEVER be null (db NOT NULL)
- * - Includes winner_tier scoring + searchProductIndex exports
- *
- * + CANONICAL DEDUPE READY:
- *   canonical_url + canonical_hash + merchant_name/id + price_band
- *   so SQL winner-policy can dedupe across sources (WP + AWIN + CJ later)
- */
 
 function isUuid(v: unknown): v is string {
   if (typeof v !== "string") return false;
@@ -36,16 +26,11 @@ function toFiniteNumberOrNull(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-// quality_score får aldrig bli null
 function toFiniteNumberOrDefault(v: any, fallback: number): number {
   if (v === undefined || v === null) return fallback;
   const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
   return Number.isFinite(n) ? n : fallback;
 }
-
-/* ===========================
-   CANONICAL (BEAST)
-   =========================== */
 
 function envBool(key: string, fallback: boolean) {
   const v = process.env[key];
@@ -69,14 +54,10 @@ function normalizeUrlForCanonical(url: string) {
   }
 
   u.hash = "";
-
-  // normalize host
   u.hostname = u.hostname.toLowerCase().replace(/^www\./, "");
 
-  // normalize path (strip trailing slash except root)
   if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, "");
 
-  // drop known tracking params (keep only stable identifiers)
   const drop = new Set([
     "utm_source",
     "utm_medium",
@@ -105,28 +86,20 @@ function normalizeUrlForCanonical(url: string) {
     "src",
   ]);
 
-  // For AWIN: keep ONLY product identity params if present, drop the rest
-  // (AWIN deep links can be tracking-heavy)
   const keepIfPresent = new Set(["p", "product", "productid", "id", "pid", "sku"]);
-
   const params = new URLSearchParams(u.search);
   const out = new URLSearchParams();
 
-  // strict mode means: if keepIfPresent exists, only keep those
   const strict = envBool("PRODUCT_INDEX_CANONICAL_STRICT", true);
-
   const hasKeep = Array.from(params.keys()).some((k) => keepIfPresent.has(k.toLowerCase()));
 
   for (const [k, v] of params.entries()) {
     const kk = k.toLowerCase();
     if (drop.has(kk)) continue;
-
     if (strict && hasKeep && !keepIfPresent.has(kk)) continue;
-
     out.append(kk, v);
   }
 
-  // sort params for deterministic canonical
   const sorted = Array.from(out.entries()).sort(([a], [b]) => a.localeCompare(b));
   const finalParams = new URLSearchParams();
   for (const [k, v] of sorted) finalParams.append(k, v);
@@ -158,11 +131,6 @@ function getPriceBand(price: number | null) {
   return "high";
 }
 
-/**
- * BEAST scoring:
- * - Deterministic quality_score (0..100), never null.
- * - winner_tier based on quality_score.
- */
 function computeQualityScore(input: any): number {
   const epc = toFiniteNumberOrNull(input?.epc);
   const commission = toFiniteNumberOrNull(input?.commission);
@@ -190,12 +158,6 @@ function computeWinnerTier(quality_score: number): string | null {
   return null;
 }
 
-/**
- * IMPORTANT:
- * - Do NOT send id unless uuid.
- * - Must always have (source + external_id)
- * - quality_score ALWAYS number
- */
 function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow | null {
   const externalIdRaw =
     input?.external_id ??
@@ -216,7 +178,6 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
 
   const now = toIsoNow();
 
-  // BEAST URL fallback:
   const product_url =
     input?.product_url ??
     input?.productUrl ??
@@ -246,7 +207,7 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
       ? input.approved
       : typeof input?.isApproved === "boolean"
       ? input.isApproved
-      : true; // BEAST default true
+      : true;
 
   const quality_score = toFiniteNumberOrDefault(
     input?.quality_score ?? computeQualityScore(input),
@@ -265,7 +226,6 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
   const winner_tier =
     input?.winner_tier ?? input?.winnerTier ?? computeWinnerTier(quality_score);
 
-  // Merchant fields (used for caps)
   const merchant_name =
     input?.merchant_name ??
     input?.merchantName ??
@@ -283,11 +243,9 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
     input?.advertiser_id ??
     null;
 
-  // Price band (used for category+band cap)
   const priceNum = toFiniteNumberOrNull(input?.price);
   const price_band = input?.price_band ?? input?.priceBand ?? getPriceBand(priceNum);
 
-  // Canonical (for cross-source dedupe)
   const { canonical_url, canonical_hash } = computeCanonical(
     product_url ? String(product_url) : null,
     landing_url ? String(landing_url) : null
@@ -318,7 +276,6 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
     currency: input?.currency ?? null,
     price: priceNum,
 
-    // canonical fields + merchant fields + band fields (måste finnas i DB)
     merchant_name: merchant_name ? String(merchant_name) : null,
     merchant_id: merchant_id ? String(merchant_id) : null,
 
@@ -333,10 +290,11 @@ function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow
     winner_tier,
     geo_scope: input?.geo_scope ?? input?.geoScope ?? "worldwide",
 
-    is_active: typeof input?.is_active === "boolean" ? input.is_active : true,
-    dead_reason: input?.dead_reason ?? null,
+    // IMPORTANT FIXES:
+    is_active: true,
+    dead_reason: null,
 
-    last_seen_at: input?.last_seen_at ?? now,
+    last_seen_at: now,
     updated_at: now,
   };
 
@@ -364,6 +322,8 @@ async function loadFetcher(source: ProductIndexerSource) {
     warriorplus: "./fetch-warriorplus",
     impact: "./fetch-impact",
     awin: "./fetch-awin",
+    cj: "./fetch-cj",
+    aliexpress: "./fetch-aliexpress",
   };
 
   const mod: any = await import(map[source]);
@@ -377,6 +337,8 @@ async function loadFetcher(source: ProductIndexerSource) {
     mod?.fetchWarriorplus,
     mod?.fetchImpact,
     mod?.fetchAwin,
+    mod?.fetchCj,
+    mod?.fetchAliexpress,
 
     mod?.default,
   ];
@@ -410,7 +372,9 @@ async function applyWinnerPolicyIfEnabled() {
   const p_source_cap = Number(process.env.PRODUCT_INDEX_SOURCE_CAP || 800);
   const p_category_cap = Number(process.env.PRODUCT_INDEX_CATEGORY_CAP || 250);
   const p_merchant_cap = Number(process.env.PRODUCT_INDEX_MERCHANT_CAP || 35);
-  const p_merchant_category_cap = Number(process.env.PRODUCT_INDEX_MERCHANT_CATEGORY_CAP || 12);
+  const p_merchant_category_cap = Number(
+    process.env.PRODUCT_INDEX_MERCHANT_CATEGORY_CAP || 12
+  );
   const p_category_band_cap = Number(process.env.PRODUCT_INDEX_CATEGORY_BAND_CAP || 120);
 
   const { data, error } = await supabase.rpc("product_index_apply_winner_policy", {
@@ -447,6 +411,8 @@ export async function runProductIndexer(args?: {
       warriorplus: { fetched: 0, normalized: 0, upserted: 0, skipped: 0, errors: [] },
       impact: { fetched: 0, normalized: 0, upserted: 0, skipped: 0, errors: [] },
       awin: { fetched: 0, normalized: 0, upserted: 0, skipped: 0, errors: [] },
+      cj: { fetched: 0, normalized: 0, upserted: 0, skipped: 0, errors: [] },
+      aliexpress: { fetched: 0, normalized: 0, upserted: 0, skipped: 0, errors: [] },
     },
   };
 
@@ -495,7 +461,6 @@ export async function runProductIndexer(args?: {
     }
   }
 
-  // After upserts: apply global winner policy (dedupe+caps)
   try {
     const rpcRes = await applyWinnerPolicyIfEnabled();
     (report as any).winnerPolicy = rpcRes;
@@ -507,10 +472,6 @@ export async function runProductIndexer(args?: {
   report.tookMs = Date.now() - started;
   return report;
 }
-
-/* ==========================================================
-   ✅ REQUIRED BY product-discovery-engine.ts
-   ========================================================== */
 
 export async function searchProductIndex(args: {
   query: string;
