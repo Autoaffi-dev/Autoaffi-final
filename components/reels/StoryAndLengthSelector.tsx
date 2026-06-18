@@ -62,10 +62,9 @@ export default function StoryAndLengthSelector({
             onChange={(e) => setVideoLength(Number(e.target.value))}
             className="w-full rounded-lg bg-slate-800 border border-slate-700 text-xs px-3 py-2 text-slate-200"
           >
-            {/* REMOVED: 15 seconds */}
-            <option value={30}>30 seconds</option>
-            <option value={45}>45 seconds</option>
-            <option value={60}>60 seconds</option>
+            <option value={15}>15 seconds</option>
+            <option value={20}>20 seconds</option>
+            <option value={25}>25 seconds</option>
           </select>
         </div>
       </div>

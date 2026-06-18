@@ -38,6 +38,29 @@ function clampScore(value: number, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value));
 }
 
+function normalizeHeatScore(value: unknown, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+
+  // stöd för 0–1, 0–10 och 0–100
+  if (n >= 0 && n <= 1) return clampScore(Math.round(n * 100));
+  if (n > 1 && n <= 10) return clampScore(Math.round(n * 10));
+  return clampScore(Math.round(n));
+}
+
+function normalizeHeatLabel(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function includesAny(label: string, terms: string[]) {
+  return terms.some((term) => label.includes(term));
+}
+
 function scoreLabel(score: number) {
   if (score >= 85) return "Strong";
   if (score >= 70) return "Good";
@@ -49,29 +72,39 @@ export default function AdvancedAIBreakdown({ breakdown }: Props) {
 
   const hooks = b.hooks && b.hooks.length > 0 ? b.hooks : [];
 
+  const incomingHeatValues = Array.isArray(b.heatValues) ? b.heatValues : [];
+
+  const findHeatScore = (terms: string[], fallback: number) => {
+    const match = incomingHeatValues.find((h) =>
+      includesAny(normalizeHeatLabel(h?.label), terms)
+    );
+
+    if (!match) return clampScore(fallback);
+    return normalizeHeatScore(match.score, fallback);
+  };
+
   // --- Base scores from heatValues (if any) ---
-  const baseHookScore = clampScore(
-    b.heatValues?.find((h) =>
-      h.label.toLowerCase().includes("hook")
-    )?.score ?? 85
-  );
-  const baseCtaScore = clampScore(
-    b.heatValues?.find((h) =>
-      h.label.toLowerCase().includes("cta")
-    )?.score ?? 82
-  );
-  const basePacingScore = clampScore(
-    b.heatValues?.find((h) =>
-      h.label.toLowerCase().includes("pacing")
-    )?.score ?? 80
-  );
-  const baseValueDensityScore = clampScore(
-    b.heatValues?.find((h) =>
-      h.label.toLowerCase().includes("value")
-    )?.score ?? 78
+  const baseHookScore = findHeatScore(
+    ["hook", "opening", "pattern break", "intro"],
+    85
   );
 
-  const emotionImpactScore = 80; // stabil
+  const baseCtaScore = findHeatScore(
+    ["cta", "call to action", "conversion", "final push", "closing"],
+    82
+  );
+
+  const basePacingScore = findHeatScore(
+    ["pacing", "tempo", "flow", "rhythm", "timeline"],
+    80
+  );
+
+  const baseValueDensityScore = findHeatScore(
+    ["value", "promise", "problem", "benefit", "proof", "demo"],
+    78
+  );
+
+  const emotionImpactScore = 80;
   const sceneVariationScore = 82;
 
   // --- Retention + CTA Conversion: alltid minst "Good" ---
@@ -129,7 +162,7 @@ export default function AdvancedAIBreakdown({ breakdown }: Props) {
     },
   ];
 
-  // --- Pacing list (snyggare copy) ---
+  // --- Pacing list ---
   const pacingList: {
     label: string;
     range: string;
@@ -213,46 +246,72 @@ export default function AdvancedAIBreakdown({ breakdown }: Props) {
           "End with a clear, spoken CTA that matches the on-screen text.",
         ]) as string[];
 
-  // --- Heat Values (Key Moments) – alltid 4 rader med namn ---
-const heatDefaults: HeatValue[] = [
+  // --- Heat Values – alltid fasta labels i UI ---
+  const heatDefinitions: Array<{
+    label: string;
+    fallbackScore: number;
+    terms: string[];
+  }> = [
     {
       label: "Hook moment (0–3s)",
-      score: baseHookScore,
+      fallbackScore: baseHookScore,
+      terms: ["hook", "opening", "intro", "pattern break"],
     },
     {
       label: "Big promise / problem (3–8s)",
-      score: baseValueDensityScore,
+      fallbackScore: baseValueDensityScore,
+      terms: ["promise", "problem", "value", "benefit"],
     },
     {
       label: "Proof / demo peak (8–20s)",
-      score: retentionPredictionScore,
+      fallbackScore: retentionPredictionScore,
+      terms: ["proof", "demo", "retention", "middle", "peak"],
     },
     {
       label: "Final CTA push (last seconds)",
-      score: ctaConversionScore,
+      fallbackScore: ctaConversionScore,
+      terms: ["cta", "call to action", "conversion", "final push", "closing"],
     },
   ];
 
-  const hasAnyHeat = Array.isArray(b.heatValues) && b.heatValues.length > 0;
-  const heatSource = hasAnyHeat ? b.heatValues! : heatDefaults;
+  const usedHeatIndexes = new Set<number>();
 
-  const heatValues: HeatValue[] = Array.from({ length: 4 }, (_, idx) => {
-    const h = heatSource[idx];
-    const fallback = heatDefaults[idx];
+  const heatValues: HeatValue[] = heatDefinitions.map((def, idx) => {
+    const matchedIndex = incomingHeatValues.findIndex((h, i) => {
+      if (usedHeatIndexes.has(i)) return false;
+      return includesAny(normalizeHeatLabel(h?.label), def.terms);
+    });
 
-    if (!fallback) {
+    if (matchedIndex >= 0) {
+      usedHeatIndexes.add(matchedIndex);
       return {
-        label: `Key moment ${idx + 1}`,
-        score: 75,
+        label: def.label,
+        score: normalizeHeatScore(
+          incomingHeatValues[matchedIndex]?.score,
+          def.fallbackScore
+        ),
+      };
+    }
+
+    const positionalFallback = incomingHeatValues[idx];
+    if (
+      positionalFallback &&
+      typeof positionalFallback === "object" &&
+      !usedHeatIndexes.has(idx)
+    ) {
+      usedHeatIndexes.add(idx);
+      return {
+        label: def.label,
+        score: normalizeHeatScore(
+          positionalFallback?.score,
+          def.fallbackScore
+        ),
       };
     }
 
     return {
-      label: fallback.label || h?.label || `Key moment ${idx + 1}`,
-      score:
-        typeof h?.score === "number" && h.score > 0
-          ? clampScore(h.score)
-          : fallback.score || 75,
+      label: def.label,
+      score: clampScore(def.fallbackScore),
     };
   });
 
@@ -290,7 +349,6 @@ const heatDefaults: HeatValue[] = [
 
       {/* HOOKS & PACING */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Hooks */}
         <div className="rounded-xl bg-slate-900/70 border border-slate-700 p-4">
           <h3 className="text-sm font-semibold text-emerald-300 mb-3">
             Hooks
@@ -313,7 +371,6 @@ const heatDefaults: HeatValue[] = [
           )}
         </div>
 
-        {/* Pacing */}
         <div className="rounded-xl bg-slate-900/70 border border-slate-700 p-4">
           <h3 className="text-sm font-semibold text-emerald-300 mb-3">
             Pacing (Timeline Flow)
@@ -334,13 +391,11 @@ const heatDefaults: HeatValue[] = [
 
       {/* CTA + EMOTIONS + RECOMMENDATIONS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* CTA */}
         <div className="rounded-xl bg-slate-900/80 border border-slate-700 p-4 space-y-2">
           <h3 className="text-sm font-semibold text-emerald-300">CTA</h3>
           <p className="text-xs text-slate-100">{ctaText}</p>
         </div>
 
-        {/* Emotional Drivers */}
         <div className="rounded-xl bg-slate-900/80 border border-slate-700 p-4">
           <h3 className="text-sm font-semibold text-emerald-300 mb-2">
             Emotional Drivers
@@ -355,7 +410,6 @@ const heatDefaults: HeatValue[] = [
           </div>
         </div>
 
-        {/* Recommendations */}
         <div className="rounded-xl bg-slate-900/80 border border-slate-700 p-4">
           <h3 className="text-sm font-semibold text-emerald-300 mb-2">
             Autoaffi AI Optimization Recommendations

@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 
 type PlatformKey =
+  | "autoaffi"
   | "syllaby"
   | "submagic"
   | "simplified"
@@ -37,64 +38,85 @@ function jsonNoStore(data: any, status = 200) {
 }
 
 function genCode8() {
-  // 8 chars, lower-case a-z0-9, safe for platforms with short limits
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let out = "";
-  for (let i = 0; i < 8; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 8; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
   return out;
 }
 
+function sanitizeHeaderId(raw: string) {
+  return String(raw || "")
+    .trim()
+    .replace(/^"+|"+$/g, "");
+}
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
+}
+
 function buildPromoLink(platform: PlatformKey, tracking: string, userId: string) {
-  // You can move these into env vars later. Keep it explicit for reliability.
   switch (platform) {
-    // FirstPromoter-style (we verified: Syllaby uses fp_sid)
+    case "autoaffi": {
+      const base =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.QR_PUBLIC_BASE_URL ||
+        process.env.NEXT_PUBLIC_BASE_URL ||
+        process.env.NEXTAUTH_URL ||
+        "http://localhost:3000";
+
+      return `${base.replace(/\/$/, "")}/?ref=${encodeURIComponent(tracking)}`;
+    }
+
     case "syllaby":
       return `https://syllaby.io/?via=autoaffi31&fp_sid=${tracking}`;
 
     case "submagic":
-      // Submagic also supports Sub ID. Most FP programs accept fp_sid.
-      // If Submagic uses a different param later, adjust here ONLY.
       return `https://www.submagic.co/?via=autoaffi&fp_sid=${tracking}`;
 
     case "simplified":
       return `https://simplified.com/?fp_sid=${tracking}`;
 
-    // Fliki uses via=token (verified)
     case "fliki":
       return `https://fliki.ai/?via=${tracking}`;
 
-    // DFIRST uses ref=token (verified)
     case "dfirst":
       return `https://dfirst.ai/?ref=${tracking}`;
 
-    // Digistore24 custom domain flow for TubeMagic (verified)
     case "tubemagic": {
       const AFF = process.env.TUBEMAGIC_AFFILIATE || "AutoAffi";
-      return `https://tubemagic.com/ds#aff=${encodeURIComponent(AFF)}&cam=${encodeURIComponent(tracking)}`;
+      return `https://tubemagic.com/ds#aff=${encodeURIComponent(
+        AFF
+      )}&cam=${encodeURIComponent(tracking)}`;
     }
 
-    // These two should ideally go through Autoaffi /go redirect for robustness
     case "systeme": {
-      // tk can be packed; simplest: use tracking and let /go pack later
-      // Replace MASTER_ID once you store it centrally
       const MASTER = process.env.SYSTEME_MASTER_ID || "MASTER_ID_MISSING";
-      return `https://systeme.io/?sa=${encodeURIComponent(MASTER)}&tk=${encodeURIComponent(tracking)}`;
+      return `https://systeme.io/?sa=${encodeURIComponent(
+        MASTER
+      )}&tk=${encodeURIComponent(tracking)}`;
     }
 
     case "clickfunnels": {
       const AFF = process.env.CLICKFUNNELS_AFF_CODE || "AFF_CODE_MISSING";
-      const SIGNUP = process.env.CLICKFUNNELS_SIGNUP_FLOW_URL || "https://www.clickfunnels.com/";
-      // Use tracking in aff_sub. You can also add aff_sub2/3 later.
+      const SIGNUP =
+        process.env.CLICKFUNNELS_SIGNUP_FLOW_URL ||
+        "https://www.clickfunnels.com/";
       const sep = SIGNUP.includes("?") ? "&" : "?";
-      return `${SIGNUP}${sep}aff=${encodeURIComponent(AFF)}&aff_sub=${encodeURIComponent(tracking)}`;
+      return `${SIGNUP}${sep}aff=${encodeURIComponent(
+        AFF
+      )}&aff_sub=${encodeURIComponent(tracking)}`;
     }
 
-    // For anything uncertain, route via Autoaffi /go and keep tracking internal.
-    // You can later swap to direct param models if partner confirms.
     case "minea":
-      return `https://www.minea.com/?via=autoaffi&aa=${tracking}`; // safe placeholder (Autoaffi can also /go)
+      return `https://www.minea.com/?via=autoaffi&aa=${tracking}`;
+
     case "justcall":
       return `https://justcall.io/?aa=${tracking}`;
+
     case "heygen":
       return `https://www.heygen.com/?aa=${tracking}`;
 
@@ -103,14 +125,27 @@ function buildPromoLink(platform: PlatformKey, tracking: string, userId: string)
   }
 }
 
-async function requireUserId() {
+async function resolveUserIds(req: Request) {
+  const hdr = sanitizeHeaderId(req.headers.get("x-autoaffi-user-id") || "");
+  const devUuid = (process.env.NEXT_PUBLIC_DEV_USER_ID || "").trim();
+
+  let resolvedUserId: string | null = null;
+  if (isUuid(hdr)) resolvedUserId = hdr;
+  else if (isUuid(devUuid)) resolvedUserId = devUuid;
+
   const session = await getServerSession(authOptions);
-  const userId = (session as any)?.user?.id as string | undefined;
-  if (!userId) return null;
-  return userId;
+  const sessionUserId = ((session as any)?.user?.id as string | undefined) || null;
+
+  if (!resolvedUserId && sessionUserId) resolvedUserId = sessionUserId;
+
+  return {
+    resolvedUserId,
+    sessionUserId,
+  };
 }
 
 const ALL_PLATFORMS: PlatformKey[] = [
+  "autoaffi",
   "syllaby",
   "submagic",
   "simplified",
@@ -124,30 +159,96 @@ const ALL_PLATFORMS: PlatformKey[] = [
   "heygen",
 ];
 
-export async function GET() {
-  const userId = await requireUserId();
-  if (!userId) return jsonNoStore({ error: "Unauthorized" }, 401);
-
+async function fetchExternalRows(userId: string) {
   const { data, error } = await supabaseAdmin
     .from("user_recurring_offers")
     .select("platform, active, tracking_code, promo_link, updated_at")
     .eq("user_id", userId);
 
-  if (error) return jsonNoStore({ error: error.message }, 500);
+  return { data, error };
+}
+
+export async function GET(req: Request) {
+  const { resolvedUserId, sessionUserId } = await resolveUserIds(req);
+  if (!resolvedUserId) return jsonNoStore({ error: "Unauthorized" }, 401);
 
   const map: Record<string, PlatformState> = {};
+
   for (const p of ALL_PLATFORMS) {
-    map[p] = { key: p, active: false, tracking_code: null, promo_link: null };
+    map[p] = {
+      key: p,
+      active: false,
+      tracking_code: null,
+      promo_link: null,
+    };
   }
 
-  for (const row of data ?? []) {
+  // =====================================================
+  // 1) AUTOAFFI – alltid från resolved user
+  // =====================================================
+  const { data: autoaffiRow, error: autoaffiErr } = await supabaseAdmin
+    .from("user_recurring_platforms")
+    .select("platform, autoaffi_user_code")
+    .eq("user_id", resolvedUserId)
+    .eq("platform", "autoaffi")
+    .maybeSingle();
+
+  if (autoaffiErr) {
+    return jsonNoStore({ error: autoaffiErr.message }, 500);
+  }
+
+  if (autoaffiRow?.autoaffi_user_code) {
+    const tracking = autoaffiRow.autoaffi_user_code;
+    map.autoaffi = {
+      key: "autoaffi",
+      active: true,
+      tracking_code: tracking,
+      promo_link: buildPromoLink("autoaffi", tracking, resolvedUserId),
+    };
+  }
+
+  // =====================================================
+  // 2) EXTERNA – först resolved user
+  // =====================================================
+  let { data: externalRows, error: externalErr } = await fetchExternalRows(
+    resolvedUserId
+  );
+
+  if (externalErr) {
+    return jsonNoStore({ error: externalErr.message }, 500);
+  }
+
+  // Om inga externa hittas på resolved user men session user skiljer sig:
+  const noExternalFound = !externalRows || externalRows.length === 0;
+  const shouldTrySessionFallback =
+    noExternalFound &&
+    !!sessionUserId &&
+    sessionUserId !== resolvedUserId;
+
+  if (shouldTrySessionFallback) {
+    const fallback = await fetchExternalRows(sessionUserId);
+    if (fallback.error) {
+      return jsonNoStore({ error: fallback.error.message }, 500);
+    }
+    externalRows = fallback.data ?? [];
+  }
+
+  for (const row of externalRows ?? []) {
     const key = row.platform as PlatformKey;
     if (!map[key]) continue;
+    if (key === "autoaffi") continue;
+
+    let promoLink = row.promo_link ?? null;
+
+    if (!promoLink && row.tracking_code) {
+      promoLink = buildPromoLink(key, row.tracking_code, resolvedUserId);
+    }
+
     map[key] = {
       key,
       active: !!row.active,
       tracking_code: row.tracking_code ?? null,
-      promo_link: row.promo_link ?? null,
+      promo_link: promoLink,
       updated_at: row.updated_at ?? null,
     };
   }
@@ -156,8 +257,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const userId = await requireUserId();
-  if (!userId) return jsonNoStore({ error: "Unauthorized" }, 401);
+  const { resolvedUserId } = await resolveUserIds(req);
+  if (!resolvedUserId) return jsonNoStore({ error: "Unauthorized" }, 401);
 
   const body = await req.json().catch(() => null);
   const platform = body?.platform as PlatformKey | undefined;
@@ -166,15 +267,87 @@ export async function POST(req: Request) {
   if (!platform || typeof active !== "boolean") {
     return jsonNoStore({ error: "Bad request" }, 400);
   }
+
   if (!ALL_PLATFORMS.includes(platform)) {
     return jsonNoStore({ error: "Unknown platform" }, 400);
   }
 
-  // Fetch existing
+  // =====================================================
+  // AUTOAFFI – skriv till user_recurring_platforms
+  // =====================================================
+  if (platform === "autoaffi") {
+    if (!active) {
+      const { data: existing, error } = await supabaseAdmin
+        .from("user_recurring_platforms")
+        .select("platform, autoaffi_user_code")
+        .eq("user_id", resolvedUserId)
+        .eq("platform", "autoaffi")
+        .maybeSingle();
+
+      if (error) return jsonNoStore({ error: error.message }, 500);
+
+      const code = existing?.autoaffi_user_code ?? null;
+
+      return jsonNoStore({
+        platform: {
+          key: "autoaffi",
+          active: !!code,
+          tracking_code: code,
+          promo_link: code
+            ? buildPromoLink("autoaffi", code, resolvedUserId)
+            : null,
+        },
+      });
+    }
+
+    const { data: existing, error: existingErr } = await supabaseAdmin
+      .from("user_recurring_platforms")
+      .select("platform, autoaffi_user_code")
+      .eq("user_id", resolvedUserId)
+      .eq("platform", "autoaffi")
+      .maybeSingle();
+
+    if (existingErr) {
+      return jsonNoStore({ error: existingErr.message }, 500);
+    }
+
+    let tracking = existing?.autoaffi_user_code ?? null;
+
+    if (!tracking) {
+      tracking = genCode8();
+
+      const { error: insertErr } = await supabaseAdmin
+        .from("user_recurring_platforms")
+        .insert({
+          user_id: resolvedUserId,
+          platform: "autoaffi",
+          autoaffi_user_code: tracking,
+        });
+
+      if (insertErr) {
+        return jsonNoStore({ error: insertErr.message }, 500);
+      }
+    }
+
+    const promo = buildPromoLink("autoaffi", tracking, resolvedUserId);
+
+    return jsonNoStore({
+      platform: {
+        key: "autoaffi",
+        active: true,
+        tracking_code: tracking,
+        promo_link: promo,
+      },
+    });
+  }
+
+  // =====================================================
+  // EXTERNA – skriv till user_recurring_offers
+  // =====================================================
   const existing = await supabaseAdmin
     .from("user_recurring_offers")
     .select("active, tracking_code, promo_link")
-    .eq("user_id", userId)
+    .eq("user_id", resolvedUserId)
     .eq("platform", platform)
     .maybeSingle();
 
@@ -185,14 +358,13 @@ export async function POST(req: Request) {
   let tracking = existing.data?.tracking_code ?? null;
   let promo = existing.data?.promo_link ?? null;
 
-  // On activate: ensure tracking + link exist
   if (active) {
     if (!tracking) tracking = genCode8();
-    promo = buildPromoLink(platform, tracking, userId);
+    promo = buildPromoLink(platform, tracking, resolvedUserId);
   }
 
   const upsertPayload = {
-    user_id: userId,
+    user_id: resolvedUserId,
     platform,
     active,
     tracking_code: tracking,

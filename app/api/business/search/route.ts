@@ -1,34 +1,70 @@
 import { NextResponse } from "next/server";
 import { searchBusinesses } from "@/lib/business/services/businessFinderService";
+import { requireUserId } from "@/lib/supabase/server";
 import type { BusinessSearchParams } from "@/lib/business/types";
+
+export const runtime = "nodejs";
+
+function toOptionalTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function toOptionalNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return value;
+}
+
+function toLimit(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 10;
+  return Math.min(100, Math.max(1, Math.round(value)));
+}
+
+function toBoolean(value: unknown): boolean {
+  return value === true;
+}
 
 export async function POST(req: Request) {
   try {
+    const userId = await requireUserId(req);
     const body = (await req.json()) as Partial<BusinessSearchParams>;
 
     const params: BusinessSearchParams = {
       mode: body.mode === "company" ? "company" : "local",
       keyword: String(body.keyword ?? "").trim(),
-      country: body.country ? String(body.country).trim() : undefined,
-      city: body.city ? String(body.city).trim() : undefined,
-      radiusKm: typeof body.radiusKm === "number" ? body.radiusKm : undefined,
-      limit: typeof body.limit === "number" ? body.limit : 20,
+      country: toOptionalTrimmedString(body.country),
+      city: toOptionalTrimmedString(body.city),
+      radiusKm: toOptionalNumber(body.radiusKm),
+      limit: toLimit(body.limit),
 
-      requireWebsite: Boolean(body.requireWebsite),
-      requirePhone: Boolean(body.requirePhone),
-      requireContactForm: Boolean(body.requireContactForm),
+      requireWebsite: toBoolean(body.requireWebsite),
+      requirePhone: toBoolean(body.requirePhone),
+      requireContactForm: toBoolean(body.requireContactForm),
 
-      // Enrichment toggles
+      // Production: always resolved from authenticated user identity
+      userId,
+
       enrichEmails: body.enrichEmails !== false,
-      emailConcurrency: typeof body.emailConcurrency === "number" ? body.emailConcurrency : 4,
-      emailTimeoutMs: typeof body.emailTimeoutMs === "number" ? body.emailTimeoutMs : 6000,
+      emailConcurrency:
+        typeof body.emailConcurrency === "number" &&
+        Number.isFinite(body.emailConcurrency)
+          ? Math.min(10, Math.max(1, Math.round(body.emailConcurrency)))
+          : 4,
+      emailTimeoutMs:
+        typeof body.emailTimeoutMs === "number" &&
+        Number.isFinite(body.emailTimeoutMs)
+          ? Math.min(15000, Math.max(1000, Math.round(body.emailTimeoutMs)))
+          : 6000,
     };
 
     if (!params.keyword) {
-      return NextResponse.json({ ok: false, error: "keyword is required" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "keyword is required" },
+        { status: 400 }
+      );
     }
 
-    // ✅ Coming soon: Company/Registry mode (no token cost now)
     if (params.mode === "company") {
       return NextResponse.json({
         ok: true,
@@ -39,18 +75,23 @@ export async function POST(req: Request) {
           returned: 0,
           comingSoon: true,
           note:
-            "Company/Registry Finder is Coming Soon. Local Finder (Google Places) is live and already gives website/phone + email enrichment.",
+            "Company/Registry Finder is Coming Soon. Local Finder (Google Places) is live and already gives website/phone plus email enrichment.",
         },
       });
     }
 
-    // ✅ Live: Local mode
     const result = await searchBusinesses(params);
     return NextResponse.json(result);
   } catch (err: any) {
+    const msg = err?.message ?? "Unknown error";
+    const status = msg === "UNAUTHORIZED" ? 401 : 400;
+
     return NextResponse.json(
-      { ok: false, error: "Invalid request", details: err?.message ?? null },
-      { status: 400 }
+      {
+        ok: false,
+        error: msg,
+      },
+      { status }
     );
   }
 }

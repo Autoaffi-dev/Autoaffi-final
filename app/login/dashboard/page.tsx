@@ -803,6 +803,20 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
+  plan={activePlan}
+  minPlan="basic"
+  title="Business Finder"
+  badge="Growth"
+  href="/login/dashboard/business-finder"
+  description="Find, qualify and manage business leads with built-in scoring, pipeline tracking and outreach guidance."
+  points={[
+    "Live lead discovery",
+    "Pipeline + status tracking",
+    "Outreach guidance + wins",
+  ]}
+/>
+
+            <DashboardCard
               plan={activePlan}
               minPlan="basic"
               title="Leads Hub"

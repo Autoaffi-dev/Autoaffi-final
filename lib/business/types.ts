@@ -9,6 +9,13 @@ export type ContactStrategy =
 
 export type BusinessSearchMode = "local" | "company";
 
+export type BusinessAvailability =
+  | "available"
+  | "claimed"
+  | "claimed_by_me"
+  | "won_by_me"
+  | "suppressed";
+
 /**
  * Email Enrichment (V1.1)
  * - FOUND = extracted from public website HTML (mailto/regex)
@@ -55,6 +62,9 @@ export type BusinessSearchParams = {
   requireWebsite?: boolean;
   requirePhone?: boolean;
   requireContactForm?: boolean; // used later when we do enrichment
+
+  // Current signed-in/internal user id (optional for now, used for smarter availability)
+  userId?: string;
 
   // ✅ Enrichment toggles (V1.1) - optional, safe defaults in service
   enrichEmails?: boolean; // default true in code
@@ -109,8 +119,7 @@ export type BusinessSearchResultItem = {
 
   contactStrategy: ContactStrategy;
 
-  // Availability (V1 stub - later backed by DB suppression/claims)
-  availability: "available" | "claimed" | "suppressed";
+  availability: BusinessAvailability;
 
   // ✅ V1.1 Email enrichment badge (optional to not break V1)
   email?: EmailEnrichmentBadge;

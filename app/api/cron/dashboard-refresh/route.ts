@@ -64,7 +64,9 @@ function getISOWeekNumber(d = new Date()) {
   const dayNum = date.getUTCDay() || 7;
   date.setUTCDate(date.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((date as any) - (yearStart as any)) / 86400000 + 1) / 7);
+  const weekNo = Math.ceil(
+    (((date as any) - (yearStart as any)) / 86400000 + 1) / 7
+  );
   return weekNo;
 }
 
@@ -179,7 +181,9 @@ function buildDailyPost(creatorMode: CreatorMode, plan: Plan, dayKey: string) {
 
   const body =
     `Hook:\n` +
-    `If you want more ${creatorMode === "growth" ? "buyers" : "momentum"}, stop overcomplicating your content.\n\n` +
+    `If you want more ${
+      creatorMode === "growth" ? "buyers" : "momentum"
+    }, stop overcomplicating your content.\n\n` +
     `Body:\n` +
     `Today’s focus is ${angle}. Keep your post simple, clear and easy to engage with. ` +
     `Use one CTA, one angle and one helpful message.\n\n` +
@@ -193,6 +197,8 @@ function buildDailyPost(creatorMode: CreatorMode, plan: Plan, dayKey: string) {
   };
 }
 
+// Legacy/dev-only mock lead builder.
+// Real leads are now handled by YouTube/Social Lead Engine routes.
 function buildLeadSignals(dayKey: string): LeadSignalRow[] {
   const seed = hashString(dayKey);
 
@@ -331,7 +337,11 @@ async function sendDailyEmails(dayKey: string) {
   const resendFrom = process.env.RESEND_FROM_EMAIL;
 
   if (!resendApiKey || !resendFrom) {
-    return { attempted: 0, sent: 0, skipped: "Missing RESEND_API_KEY or RESEND_FROM_EMAIL" };
+    return {
+      attempted: 0,
+      sent: 0,
+      skipped: "Missing RESEND_API_KEY or RESEND_FROM_EMAIL",
+    };
   }
 
   const { data: recipients, error } = await supabaseAdmin
@@ -341,7 +351,11 @@ async function sendDailyEmails(dayKey: string) {
     .or(`last_sent_day_key.is.null,last_sent_day_key.neq.${dayKey}`);
 
   if (error || !recipients?.length) {
-    return { attempted: 0, sent: 0, skipped: error?.message ?? "No enabled recipients" };
+    return {
+      attempted: 0,
+      sent: 0,
+      skipped: error?.message ?? "No enabled recipients",
+    };
   }
 
   let attempted = 0;
@@ -397,6 +411,41 @@ async function sendDailyEmails(dayKey: string) {
   return { attempted, sent, skipped: null };
 }
 
+async function maybeInsertMockLeadSignals(dayKey: string) {
+  const enableMockLeads = process.env.ENABLE_MOCK_LEADS === "true";
+
+  if (!enableMockLeads) {
+    return {
+      enabled: false,
+      inserted: 0,
+      message:
+        "Mock lead signals disabled. Real leads are handled by Social Lead Engine.",
+    };
+  }
+
+  const leadRows = buildLeadSignals(dayKey);
+
+  // Important: never delete all lead_signals here.
+  // This cron route must not remove real YouTube/Telegram/MLGS leads.
+  const leadResult = await supabaseAdmin
+    .from("lead_signals")
+    .insert(leadRows as any);
+
+  if (leadResult.error) {
+    return {
+      enabled: true,
+      inserted: 0,
+      message: leadResult.error.message,
+    };
+  }
+
+  return {
+    enabled: true,
+    inserted: leadRows.length,
+    message: "Mock lead signals inserted for dev/testing.",
+  };
+}
+
 export async function GET(req: Request) {
   if (!checkCronAuth(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -433,8 +482,6 @@ export async function GET(req: Request) {
     }
   }
 
-  const leadRows = buildLeadSignals(dayKey);
-
   const dailyResult = await supabaseAdmin
     .from("dashboard_daily_content_cache")
     .upsert(dailyRows as any, { onConflict: "day_key,creator_mode,plan" });
@@ -451,9 +498,7 @@ export async function GET(req: Request) {
       { onConflict: "week_key,creator_mode,plan" }
     );
 
-  await supabaseAdmin.from("lead_signals").delete().not("id", "is", null);
-  const leadResult = await supabaseAdmin.from("lead_signals").insert(leadRows as any);
-
+  const leadResult = await maybeInsertMockLeadSignals(dayKey);
   const emailResult = await sendDailyEmails(dayKey);
 
   return NextResponse.json({
@@ -462,7 +507,7 @@ export async function GET(req: Request) {
     weekKey,
     daily_cache: dailyResult.error ? dailyResult.error.message : "ok",
     weekly_cache: weeklyResult.error ? weeklyResult.error.message : "ok",
-    lead_signals: leadResult.error ? leadResult.error.message : "ok",
+    lead_signals: leadResult,
     email: emailResult,
   });
 }

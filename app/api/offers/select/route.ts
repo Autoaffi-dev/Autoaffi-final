@@ -37,6 +37,21 @@ type IncomingItem = {
   canonical_hash?: string | null;
 };
 
+type SavedUserOfferRow = {
+  id: string | null;
+  user_id: string | null;
+  source: string | null;
+  external_id: string | null;
+  title: string | null;
+  category: string | null;
+  merchant_name: string | null;
+  product_url: string | null;
+  affiliate_link: string | null;
+  subid: string | null;
+  is_primary: boolean | null;
+  is_pinned: boolean | null;
+};
+
 function jsonNoStore(data: any, status = 200) {
   return new NextResponse(JSON.stringify(data), {
     status,
@@ -100,6 +115,12 @@ function resolveExternalId(item: IncomingItem) {
   return rawId;
 }
 
+function buildDisplayLink(savedOfferId: string | null | undefined) {
+  const id = safeString(savedOfferId);
+  if (!id) return "";
+  return `/go/offer/${id}`;
+}
+
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions as any);
@@ -142,6 +163,8 @@ export async function POST(req: Request) {
       );
     }
 
+    const context = safeNullableString(body?.from) || "affiliate_offers";
+    const campaign = safeNullableString(body?.campaign);
     const subid = buildStableSubId(userId, source, externalId);
 
     const built = await buildAffiliateLink({
@@ -152,9 +175,13 @@ export async function POST(req: Request) {
       subid,
       title,
       merchantName: safeNullableString(payload.merchant_name),
-      campaign: safeNullableString(body?.campaign),
-      context: safeNullableString(body?.from) || "affiliate_offers",
+      campaign,
+      context,
     });
+
+    const finalAffiliateLink = safeString(built?.affiliateLink) || productUrl;
+    const finalProductUrl = safeString(built?.productUrl) || productUrl;
+    const finalSubId = safeString(built?.subid) || subid;
 
     const upsertRow = {
       user_id: userId,
@@ -170,7 +197,7 @@ export async function POST(req: Request) {
       merchant_name: safeNullableString(payload.merchant_name),
       merchant_id: safeNullableString(payload.merchant_id),
 
-      product_url: built.productUrl || productUrl,
+      product_url: finalProductUrl,
       image_url: safeNullableString(payload.image_url),
 
       price: safeNumber(payload.price),
@@ -182,10 +209,10 @@ export async function POST(req: Request) {
       canonical_url: safeNullableString(payload.canonical_url),
       canonical_hash: safeNullableString(payload.canonical_hash),
 
-      affiliate_link: built.affiliateLink,
-      subid: built.subid,
+      affiliate_link: finalAffiliateLink,
+      subid: finalSubId,
 
-      saved_from_context: safeNullableString(body?.from) || "affiliate_offers",
+      saved_from_context: context,
       saved_query: safeNullableString(body?.query),
 
       updated_at: new Date().toISOString(),
@@ -223,10 +250,25 @@ export async function POST(req: Request) {
       );
     }
 
+    const saved = (upsertRes.data as SavedUserOfferRow | null) ?? null;
+    const displayLink = buildDisplayLink(saved?.id);
+
     return jsonNoStore({
       ok: true,
-      saved: upsertRes.data || null,
-      builder_meta: built.meta || null,
+      saved,
+      affiliate_link: displayLink || null,
+      display_link: displayLink || null,
+      subid: saved?.subid || finalSubId,
+      builder_meta: {
+        ...(built?.meta || {}),
+        source,
+        externalId,
+        context,
+        campaign,
+        network_affiliate_link: finalAffiliateLink,
+        autoaffi_display_link: displayLink || null,
+        subid: saved?.subid || finalSubId,
+      },
     });
   } catch (e: any) {
     return jsonNoStore(
