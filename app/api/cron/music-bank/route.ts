@@ -11,7 +11,8 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-const FREESOUND_BASE = "https://freesound.org/apiv2/search/text";
+// Viktigt: Freesound text search ska ha /text/
+const FREESOUND_BASE = "https://freesound.org/apiv2/search/text/";
 
 const SEARCH_QUERIES = [
   "cinematic ambient",
@@ -132,7 +133,11 @@ function slugify(input: string): string {
 function parseMood(query: string, title: string, tags: string[]): string {
   const text = `${query} ${title} ${tags.join(" ")}`.toLowerCase();
 
-  if (text.includes("uplifting") || text.includes("inspiring") || text.includes("motivational")) {
+  if (
+    text.includes("uplifting") ||
+    text.includes("inspiring") ||
+    text.includes("motivational")
+  ) {
     return "uplifting";
   }
   if (text.includes("dark") || text.includes("suspense") || text.includes("thriller")) {
@@ -206,7 +211,8 @@ function isAllowed(item: FreesoundResult): boolean {
 
   const title = normalizeText(item.name);
   const tags = (item.tags || []).map((t) => normalizeText(t));
-  const previewMp3 = item.previews?.["preview-hq-mp3"] || item.previews?.["preview-lq-mp3"] || null;
+  const previewMp3 =
+    item.previews?.["preview-hq-mp3"] || item.previews?.["preview-lq-mp3"] || null;
 
   if (!previewMp3) return false;
   if (!title) return false;
@@ -222,19 +228,16 @@ async function fetchFreesoundPage(query: string, page = 1): Promise<FreesoundRes
   const url = new URL(FREESOUND_BASE);
 
   url.searchParams.set("query", query);
-  url.searchParams.set(
-    "filter",
-    'duration:[10 TO 90] license:"Creative Commons 0"'
-  );
-  url.searchParams.set(
-    "fields",
-    "id,name,username,license,tags,previews,duration,url"
-  );
+  url.searchParams.set("filter", 'duration:[10 TO 90] license:"Creative Commons 0"');
+  url.searchParams.set("fields", "id,name,username,license,tags,previews,duration,url");
   url.searchParams.set("page", String(page));
   url.searchParams.set("page_size", "25");
   url.searchParams.set("token", FREESOUND_API_KEY);
 
-  const res = await fetch(url.toString(), {
+  const finalUrl = url.toString();
+  console.log("[music-bank][freesound] requesting:", finalUrl);
+
+  const res = await fetch(finalUrl, {
     method: "GET",
     headers: {
       Accept: "application/json",
@@ -244,7 +247,9 @@ async function fetchFreesoundPage(query: string, page = 1): Promise<FreesoundRes
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Freesound fetch failed (${res.status}): ${text}`);
+    throw new Error(
+      `Freesound fetch failed (${res.status}) url=${finalUrl} body=${text}`
+    );
   }
 
   const data = await res.json();
@@ -253,15 +258,14 @@ async function fetchFreesoundPage(query: string, page = 1): Promise<FreesoundRes
 
 function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
   const title = (item.name || "untitled").trim();
-  const tags = Array.isArray(item.tags) ? item.tags.map((t) => String(t).trim()).filter(Boolean) : [];
+  const tags = Array.isArray(item.tags)
+    ? item.tags.map((t) => String(t).trim()).filter(Boolean)
+    : [];
+
   const previewMp3 =
-    item.previews?.["preview-hq-mp3"] ||
-    item.previews?.["preview-lq-mp3"] ||
-    null;
+    item.previews?.["preview-hq-mp3"] || item.previews?.["preview-lq-mp3"] || null;
   const previewOgg =
-    item.previews?.["preview-hq-ogg"] ||
-    item.previews?.["preview-lq-ogg"] ||
-    null;
+    item.previews?.["preview-hq-ogg"] || item.previews?.["preview-lq-ogg"] || null;
 
   const qualityScore = scoreTrack(item, query);
   const now = new Date().toISOString();
@@ -272,7 +276,9 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
     title,
     slug: slugify(`freesound-${item.id}-${title}`),
     provider_username: item.username || null,
-    provider_url: `https://freesound.org/people/${encodeURIComponent(item.username || "")}/sounds/${item.id}/`,
+    provider_url: `https://freesound.org/people/${encodeURIComponent(
+      item.username || ""
+    )}/sounds/${item.id}/`,
     license: item.license || null,
     preview_mp3_url: previewMp3,
     preview_ogg_url: previewOgg,
@@ -322,14 +328,27 @@ async function cleanupOldRows() {
 export async function GET(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization");
+    const xCronSecret = req.headers.get("x-cron-secret");
     const urlSecret = req.nextUrl.searchParams.get("secret");
 
     const isAuthorized =
       (CRON_SECRET && authHeader === `Bearer ${CRON_SECRET}`) ||
+      (CRON_SECRET && xCronSecret === CRON_SECRET) ||
       (CRON_SECRET && urlSecret === CRON_SECRET);
 
     if (CRON_SECRET && !isAuthorized) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Unauthorized",
+          debug_auth: {
+            hasAuthorizationHeader: !!authHeader,
+            hasXCronSecretHeader: !!xCronSecret,
+            hasSecretQuery: !!urlSecret,
+          },
+        },
+        { status: 401 }
+      );
     }
 
     const allRows: MusicBankRow[] = [];
@@ -373,11 +392,9 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { error: upsertError } = await supabase
-      .from("music_bank")
-      .upsert(deduped, {
-        onConflict: "source,external_id",
-      });
+    const { error: upsertError } = await supabase.from("music_bank").upsert(deduped, {
+      onConflict: "source,external_id",
+    });
 
     if (upsertError) {
       return NextResponse.json(
