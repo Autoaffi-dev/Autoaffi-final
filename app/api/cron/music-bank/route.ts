@@ -11,7 +11,7 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-const FREESOUND_BASE = "https://freesound.org/apiv2/search/";
+const FREESOUND_BASE = "https://freesound.org/apiv2/search/text";
 
 const SEARCH_QUERIES = [
   "cinematic ambient",
