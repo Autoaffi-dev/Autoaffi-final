@@ -11,9 +11,6 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-// Viktigt: Freesound text search ska ha /text/
-const FREESOUND_BASE = "https://freesound.org/apiv2/search/text/";
-
 const SEARCH_QUERIES = [
   "cinematic ambient",
   "ambient texture",
@@ -140,16 +137,28 @@ function parseMood(query: string, title: string, tags: string[]): string {
   ) {
     return "uplifting";
   }
-  if (text.includes("dark") || text.includes("suspense") || text.includes("thriller")) {
+  if (
+    text.includes("dark") ||
+    text.includes("suspense") ||
+    text.includes("thriller")
+  ) {
     return "dark";
   }
-  if (text.includes("emotional") || text.includes("sad") || text.includes("melancholic")) {
+  if (
+    text.includes("emotional") ||
+    text.includes("sad") ||
+    text.includes("melancholic")
+  ) {
     return "emotional";
   }
   if (text.includes("corporate") || text.includes("documentary")) {
     return "corporate";
   }
-  if (text.includes("tech") || text.includes("cyber") || text.includes("sci-fi")) {
+  if (
+    text.includes("tech") ||
+    text.includes("cyber") ||
+    text.includes("sci-fi")
+  ) {
     return "tech";
   }
 
@@ -161,7 +170,13 @@ function parseGenre(query: string, title: string, tags: string[]): string {
 
   if (text.includes("documentary")) return "documentary";
   if (text.includes("corporate")) return "corporate";
-  if (text.includes("sci-fi") || text.includes("cyber") || text.includes("tech")) return "tech";
+  if (
+    text.includes("sci-fi") ||
+    text.includes("cyber") ||
+    text.includes("tech")
+  ) {
+    return "tech";
+  }
   if (text.includes("cinematic")) return "cinematic";
   return "ambient";
 }
@@ -212,7 +227,9 @@ function isAllowed(item: FreesoundResult): boolean {
   const title = normalizeText(item.name);
   const tags = (item.tags || []).map((t) => normalizeText(t));
   const previewMp3 =
-    item.previews?.["preview-hq-mp3"] || item.previews?.["preview-lq-mp3"] || null;
+    item.previews?.["preview-hq-mp3"] ||
+    item.previews?.["preview-lq-mp3"] ||
+    null;
 
   if (!previewMp3) return false;
   if (!title) return false;
@@ -224,12 +241,17 @@ function isAllowed(item: FreesoundResult): boolean {
   return true;
 }
 
-async function fetchFreesoundPage(query: string, page = 1): Promise<FreesoundResult[]> {
-  const url = new URL(FREESOUND_BASE);
+async function fetchFreesoundPage(
+  query: string,
+  page = 1
+): Promise<FreesoundResult[]> {
+  const url = new URL("https://freesound.org/apiv2/search/text/");
 
   url.searchParams.set("query", query);
-  url.searchParams.set("filter", 'duration:[10 TO 90] license:"Creative Commons 0"');
-  url.searchParams.set("fields", "id,name,username,license,tags,previews,duration,url");
+  url.searchParams.set(
+    "fields",
+    "id,name,username,license,tags,previews,duration"
+  );
   url.searchParams.set("page", String(page));
   url.searchParams.set("page_size", "25");
   url.searchParams.set("token", FREESOUND_API_KEY);
@@ -261,11 +283,14 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
   const tags = Array.isArray(item.tags)
     ? item.tags.map((t) => String(t).trim()).filter(Boolean)
     : [];
-
   const previewMp3 =
-    item.previews?.["preview-hq-mp3"] || item.previews?.["preview-lq-mp3"] || null;
+    item.previews?.["preview-hq-mp3"] ||
+    item.previews?.["preview-lq-mp3"] ||
+    null;
   const previewOgg =
-    item.previews?.["preview-hq-ogg"] || item.previews?.["preview-lq-ogg"] || null;
+    item.previews?.["preview-hq-ogg"] ||
+    item.previews?.["preview-lq-ogg"] ||
+    null;
 
   const qualityScore = scoreTrack(item, query);
   const now = new Date().toISOString();
@@ -282,7 +307,8 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
     license: item.license || null,
     preview_mp3_url: previewMp3,
     preview_ogg_url: previewOgg,
-    duration_seconds: typeof item.duration === "number" ? Math.round(item.duration) : null,
+    duration_seconds:
+      typeof item.duration === "number" ? Math.round(item.duration) : null,
     mood: parseMood(query, title, tags),
     genre: parseGenre(query, title, tags),
     tags,
@@ -316,7 +342,9 @@ function dedupeByExternalId(rows: MusicBankRow[]): MusicBankRow[] {
 }
 
 async function cleanupOldRows() {
-  const staleDate = new Date(Date.now() - 1000 * 60 * 60 * 24 * 14).toISOString();
+  const staleDate = new Date(
+    Date.now() - 1000 * 60 * 60 * 24 * 14
+  ).toISOString();
 
   await supabase
     .from("music_bank")
@@ -328,23 +356,23 @@ async function cleanupOldRows() {
 export async function GET(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization");
-    const xCronSecret = req.headers.get("x-cron-secret");
     const urlSecret = req.nextUrl.searchParams.get("secret");
+    const headerSecret = req.headers.get("x-cron-secret");
 
     const isAuthorized =
       (CRON_SECRET && authHeader === `Bearer ${CRON_SECRET}`) ||
-      (CRON_SECRET && xCronSecret === CRON_SECRET) ||
-      (CRON_SECRET && urlSecret === CRON_SECRET);
+      (CRON_SECRET && urlSecret === CRON_SECRET) ||
+      (CRON_SECRET && headerSecret === CRON_SECRET);
 
     if (CRON_SECRET && !isAuthorized) {
       return NextResponse.json(
         {
           ok: false,
           error: "Unauthorized",
-          debug_auth: {
-            hasAuthorizationHeader: !!authHeader,
-            hasXCronSecretHeader: !!xCronSecret,
-            hasSecretQuery: !!urlSecret,
+          debug: {
+            hasAuthHeader: Boolean(authHeader),
+            hasUrlSecret: Boolean(urlSecret),
+            hasXCronSecret: Boolean(headerSecret),
           },
         },
         { status: 401 }
@@ -392,9 +420,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { error: upsertError } = await supabase.from("music_bank").upsert(deduped, {
-      onConflict: "source,external_id",
-    });
+    const { error: upsertError } = await supabase
+      .from("music_bank")
+      .upsert(deduped, {
+        onConflict: "source,external_id",
+      });
 
     if (upsertError) {
       return NextResponse.json(
