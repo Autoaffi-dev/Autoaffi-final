@@ -99,7 +99,6 @@ type MusicBankRow = {
   title: string;
   slug: string;
   provider_username: string | null;
-  provider_url: string | null;
   license: string | null;
   preview_mp3_url: string | null;
   preview_ogg_url: string | null;
@@ -248,10 +247,7 @@ async function fetchFreesoundPage(
   const url = new URL("https://freesound.org/apiv2/search/text/");
 
   url.searchParams.set("query", query);
-  url.searchParams.set(
-    "fields",
-    "id,name,username,license,tags,previews,duration"
-  );
+  url.searchParams.set("fields", "id,name,username,license,tags,previews,duration");
   url.searchParams.set("page", String(page));
   url.searchParams.set("page_size", "25");
   url.searchParams.set("token", FREESOUND_API_KEY);
@@ -301,9 +297,6 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
     title,
     slug: slugify(`freesound-${item.id}-${title}`),
     provider_username: item.username || null,
-    provider_url: `https://freesound.org/people/${encodeURIComponent(
-      item.username || ""
-    )}/sounds/${item.id}/`,
     license: item.license || null,
     preview_mp3_url: previewMp3,
     preview_ogg_url: previewOgg,
@@ -322,6 +315,9 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
       username: item.username || null,
       raw_license: item.license || null,
       raw_tags: tags,
+      provider_url: `https://freesound.org/people/${encodeURIComponent(
+        item.username || ""
+      )}/sounds/${item.id}/`,
     },
     fetched_at: now,
     updated_at: now,
