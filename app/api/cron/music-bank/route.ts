@@ -94,19 +94,35 @@ type FreesoundResult = {
 };
 
 type MusicBankRow = {
-  source: "freesound";
+  source: string;
   external_id: string;
-  title: string;
+  source_url: string | null;
+  name: string;
+  title: string | null;
+  slug: string | null;
+  provider_username: string | null;
+  provider_url: string | null;
   license: string | null;
+  license_url: string | null;
+  attribution_text: string | null;
+  attribution_required: boolean;
+  is_cc0: boolean;
   preview_mp3_url: string | null;
   preview_ogg_url: string | null;
+  original_download_url: string | null;
   duration_seconds: number | null;
   mood: string | null;
+  category: string | null;
   genre: string | null;
   tags: string[];
-  search_query: string | null;
   quality_score: number;
+  is_music: boolean;
+  is_preview_only: boolean;
   is_active: boolean;
+  is_approved: boolean;
+  is_fallback: boolean;
+  is_deleted: boolean;
+  search_query: string | null;
   metadata: Record<string, unknown>;
   fetched_at: string;
   updated_at: string;
@@ -122,10 +138,6 @@ function slugify(input: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 120);
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseMood(query: string, title: string, tags: string[]): string {
@@ -279,77 +291,77 @@ async function fetchFreesoundPage(
   return Array.isArray(data.results) ? data.results : [];
 }
 
-async function fetchFreesoundPageWithRetry(
-  query: string,
-  page = 1,
-  retries = 3
-): Promise<FreesoundResult[]> {
-  let attempt = 0;
-
-  while (attempt <= retries) {
-    try {
-      return await fetchFreesoundPage(query, page);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unknown Freesound error";
-
-      const isRateLimit =
-        message.includes("Freesound fetch failed (429)") ||
-        message.includes("rate limit") ||
-        message.includes("Too Many Requests");
-
-      if (!isRateLimit || attempt === retries) {
-        throw error;
-      }
-
-      const waitMs = 2000 * (attempt + 1);
-      console.warn(
-        `[music-bank][freesound] rate limited for query="${query}" page=${page}, retrying in ${waitMs}ms`
-      );
-      await sleep(waitMs);
-      attempt += 1;
-    }
-  }
-
-  return [];
-}
-
 function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
-  const title = (item.name || "untitled").trim();
+  const trackName = (item.name || "untitled").trim();
   const tags = Array.isArray(item.tags)
     ? item.tags.map((t) => String(t).trim()).filter(Boolean)
     : [];
+
   const previewMp3 =
     item.previews?.["preview-hq-mp3"] ||
     item.previews?.["preview-lq-mp3"] ||
     null;
+
   const previewOgg =
     item.previews?.["preview-hq-ogg"] ||
     item.previews?.["preview-lq-ogg"] ||
     null;
 
-  const qualityScore = scoreTrack(item, query);
-  const now = new Date().toISOString();
-  const derivedSlug = slugify(`freesound-${item.id}-${title}`);
   const providerUrl = `https://freesound.org/people/${encodeURIComponent(
     item.username || ""
   )}/sounds/${item.id}/`;
 
+  const qualityScore = scoreTrack(item, query);
+  const now = new Date().toISOString();
+
   return {
     source: "freesound",
     external_id: String(item.id),
-    title,
+    source_url: providerUrl,
+
+    name: trackName,
+    title: trackName,
+    slug: slugify(`freesound-${item.id}-${trackName}`),
+
+    provider_username: item.username || null,
+    provider_url: providerUrl,
+
     license: item.license || null,
+    license_url:
+      item.license &&
+      (item.license.includes("zero/1.0") || item.license === "CC0")
+        ? "https://creativecommons.org/publicdomain/zero/1.0/"
+        : item.license || null,
+
+    attribution_text: item.username
+      ? `Sound by ${item.username} on Freesound`
+      : "Sound from Freesound",
+    attribution_required: false,
+    is_cc0: true,
+
     preview_mp3_url: previewMp3,
     preview_ogg_url: previewOgg,
+    original_download_url: null,
+
     duration_seconds:
       typeof item.duration === "number" ? Math.round(item.duration) : null,
-    mood: parseMood(query, title, tags),
-    genre: parseGenre(query, title, tags),
+
+    mood: parseMood(query, trackName, tags),
+    category: "music",
+    genre: parseGenre(query, trackName, tags),
+
     tags,
-    search_query: query,
     quality_score: qualityScore,
+
+    is_music: true,
+    is_preview_only: true,
     is_active: true,
+    is_approved: true,
+    is_fallback: false,
+    is_deleted: false,
+
+    search_query: query,
+
     metadata: {
       source: "freesound",
       query,
@@ -357,9 +369,8 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
       username: item.username || null,
       raw_license: item.license || null,
       raw_tags: tags,
-      provider_url: providerUrl,
-      derived_slug: derivedSlug,
     },
+
     fetched_at: now,
     updated_at: now,
   };
@@ -385,7 +396,7 @@ async function cleanupOldRows() {
 
   await supabase
     .from("music_bank")
-    .update({ is_active: false })
+    .update({ is_active: false, updated_at: new Date().toISOString() })
     .eq("source", "freesound")
     .lt("fetched_at", staleDate);
 }
@@ -420,11 +431,12 @@ export async function GET(req: NextRequest) {
     const debug: Array<Record<string, unknown>> = [];
 
     for (const query of SEARCH_QUERIES) {
-      await sleep(1200);
+      const [page1, page2] = await Promise.all([
+        fetchFreesoundPage(query, 1),
+        fetchFreesoundPage(query, 2),
+      ]);
 
-      const page1 = await fetchFreesoundPageWithRetry(query, 1, 3);
-      const merged = [...page1];
-
+      const merged = [...page1, ...page2];
       const filtered = merged.filter(isAllowed);
       const scored = filtered
         .map((item) => mapToRow(item, query))
@@ -437,6 +449,7 @@ export async function GET(req: NextRequest) {
       debug.push({
         query,
         fetched: merged.length,
+        filtered: filtered.length,
         kept: scored.length,
       });
     }
@@ -456,28 +469,9 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const rowsForUpsert = deduped.map((row) => ({
-      source: row.source,
-      external_id: row.external_id,
-      title: row.title,
-      license: row.license,
-      preview_mp3_url: row.preview_mp3_url,
-      preview_ogg_url: row.preview_ogg_url,
-      duration_seconds: row.duration_seconds,
-      mood: row.mood,
-      genre: row.genre,
-      tags: row.tags,
-      search_query: row.search_query,
-      quality_score: row.quality_score,
-      is_active: row.is_active,
-      metadata: row.metadata,
-      fetched_at: row.fetched_at,
-      updated_at: row.updated_at,
-    }));
-
     const { error: upsertError } = await supabase
       .from("music_bank")
-      .upsert(rowsForUpsert, {
+      .upsert(deduped, {
         onConflict: "source,external_id",
       });
 
@@ -497,12 +491,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       source: "freesound",
-      inserted_or_updated: rowsForUpsert.length,
+      inserted_or_updated: deduped.length,
       queries: SEARCH_QUERIES.length,
       debug,
-      sample: rowsForUpsert.slice(0, 10).map((row) => ({
+      sample: deduped.slice(0, 10).map((row) => ({
         external_id: row.external_id,
-        title: row.title,
+        name: row.name,
         mood: row.mood,
         genre: row.genre,
         quality_score: row.quality_score,
