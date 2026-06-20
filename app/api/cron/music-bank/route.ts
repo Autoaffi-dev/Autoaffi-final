@@ -124,6 +124,10 @@ function slugify(input: string): string {
     .slice(0, 120);
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function parseMood(query: string, title: string, tags: string[]): string {
   const text = `${query} ${title} ${tags.join(" ")}`.toLowerCase();
 
@@ -245,7 +249,10 @@ async function fetchFreesoundPage(
   const url = new URL("https://freesound.org/apiv2/search/text/");
 
   url.searchParams.set("query", query);
-  url.searchParams.set("fields", "id,name,username,license,tags,previews,duration");
+  url.searchParams.set(
+    "fields",
+    "id,name,username,license,tags,previews,duration"
+  );
   url.searchParams.set("page", String(page));
   url.searchParams.set("page_size", "25");
   url.searchParams.set("token", FREESOUND_API_KEY);
@@ -270,6 +277,41 @@ async function fetchFreesoundPage(
 
   const data = await res.json();
   return Array.isArray(data.results) ? data.results : [];
+}
+
+async function fetchFreesoundPageWithRetry(
+  query: string,
+  page = 1,
+  retries = 3
+): Promise<FreesoundResult[]> {
+  let attempt = 0;
+
+  while (attempt <= retries) {
+    try {
+      return await fetchFreesoundPage(query, page);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown Freesound error";
+
+      const isRateLimit =
+        message.includes("Freesound fetch failed (429)") ||
+        message.includes("rate limit") ||
+        message.includes("Too Many Requests");
+
+      if (!isRateLimit || attempt === retries) {
+        throw error;
+      }
+
+      const waitMs = 2000 * (attempt + 1);
+      console.warn(
+        `[music-bank][freesound] rate limited for query="${query}" page=${page}, retrying in ${waitMs}ms`
+      );
+      await sleep(waitMs);
+      attempt += 1;
+    }
+  }
+
+  return [];
 }
 
 function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
@@ -378,12 +420,11 @@ export async function GET(req: NextRequest) {
     const debug: Array<Record<string, unknown>> = [];
 
     for (const query of SEARCH_QUERIES) {
-      const [page1, page2] = await Promise.all([
-        fetchFreesoundPage(query, 1),
-        fetchFreesoundPage(query, 2),
-      ]);
+      await sleep(1200);
 
-      const merged = [...page1, ...page2];
+      const page1 = await fetchFreesoundPageWithRetry(query, 1, 3);
+      const merged = [...page1];
+
       const filtered = merged.filter(isAllowed);
       const scored = filtered
         .map((item) => mapToRow(item, query))
@@ -415,9 +456,28 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const rowsForUpsert = deduped.map((row) => ({
+      source: row.source,
+      external_id: row.external_id,
+      title: row.title,
+      license: row.license,
+      preview_mp3_url: row.preview_mp3_url,
+      preview_ogg_url: row.preview_ogg_url,
+      duration_seconds: row.duration_seconds,
+      mood: row.mood,
+      genre: row.genre,
+      tags: row.tags,
+      search_query: row.search_query,
+      quality_score: row.quality_score,
+      is_active: row.is_active,
+      metadata: row.metadata,
+      fetched_at: row.fetched_at,
+      updated_at: row.updated_at,
+    }));
+
     const { error: upsertError } = await supabase
       .from("music_bank")
-      .upsert(deduped, {
+      .upsert(rowsForUpsert, {
         onConflict: "source,external_id",
       });
 
@@ -437,10 +497,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       source: "freesound",
-      inserted_or_updated: deduped.length,
+      inserted_or_updated: rowsForUpsert.length,
       queries: SEARCH_QUERIES.length,
       debug,
-      sample: deduped.slice(0, 10).map((row) => ({
+      sample: rowsForUpsert.slice(0, 10).map((row) => ({
         external_id: row.external_id,
         title: row.title,
         mood: row.mood,
