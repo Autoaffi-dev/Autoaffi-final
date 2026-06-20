@@ -97,8 +97,6 @@ type MusicBankRow = {
   source: "freesound";
   external_id: string;
   title: string;
-  slug: string;
-  provider_username: string | null;
   license: string | null;
   preview_mp3_url: string | null;
   preview_ogg_url: string | null;
@@ -290,13 +288,15 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
 
   const qualityScore = scoreTrack(item, query);
   const now = new Date().toISOString();
+  const derivedSlug = slugify(`freesound-${item.id}-${title}`);
+  const providerUrl = `https://freesound.org/people/${encodeURIComponent(
+    item.username || ""
+  )}/sounds/${item.id}/`;
 
   return {
     source: "freesound",
     external_id: String(item.id),
     title,
-    slug: slugify(`freesound-${item.id}-${title}`),
-    provider_username: item.username || null,
     license: item.license || null,
     preview_mp3_url: previewMp3,
     preview_ogg_url: previewOgg,
@@ -315,9 +315,8 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
       username: item.username || null,
       raw_license: item.license || null,
       raw_tags: tags,
-      provider_url: `https://freesound.org/people/${encodeURIComponent(
-        item.username || ""
-      )}/sounds/${item.id}/`,
+      provider_url: providerUrl,
+      derived_slug: derivedSlug,
     },
     fetched_at: now,
     updated_at: now,
