@@ -110,12 +110,22 @@ type MusicBankRow = {
   preview_mp3_url: string | null;
   preview_ogg_url: string | null;
   original_download_url: string | null;
+  waveform_url?: string | null;
   duration_seconds: number | null;
+  bpm?: number | null;
+  sample_rate?: number | null;
+  bit_depth?: number | null;
+  channels?: number | null;
+  file_format?: string | null;
   mood: string | null;
   category: string | null;
   genre: string | null;
+  energy_level: number;
   tags: string[];
   quality_score: number;
+  priority_score: number;
+  usage_count: number;
+  is_loop: boolean;
   is_music: boolean;
   is_preview_only: boolean;
   is_active: boolean;
@@ -125,6 +135,9 @@ type MusicBankRow = {
   search_query: string | null;
   metadata: Record<string, unknown>;
   fetched_at: string;
+  last_checked_at?: string | null;
+  approved_at?: string | null;
+  rejected_at?: string | null;
   updated_at: string;
 };
 
@@ -140,6 +153,10 @@ function slugify(input: string): string {
     .slice(0, 120);
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function parseMood(query: string, title: string, tags: string[]): string {
   const text = `${query} ${title} ${tags.join(" ")}`.toLowerCase();
 
@@ -150,6 +167,7 @@ function parseMood(query: string, title: string, tags: string[]): string {
   ) {
     return "uplifting";
   }
+
   if (
     text.includes("dark") ||
     text.includes("suspense") ||
@@ -157,6 +175,7 @@ function parseMood(query: string, title: string, tags: string[]): string {
   ) {
     return "dark";
   }
+
   if (
     text.includes("emotional") ||
     text.includes("sad") ||
@@ -164,9 +183,11 @@ function parseMood(query: string, title: string, tags: string[]): string {
   ) {
     return "emotional";
   }
+
   if (text.includes("corporate") || text.includes("documentary")) {
     return "corporate";
   }
+
   if (
     text.includes("tech") ||
     text.includes("cyber") ||
@@ -192,6 +213,28 @@ function parseGenre(query: string, title: string, tags: string[]): string {
   }
   if (text.includes("cinematic")) return "cinematic";
   return "ambient";
+}
+
+function parseEnergyLevel(query: string, title: string, tags: string[]): number {
+  const text = `${query} ${title} ${tags.join(" ")}`.toLowerCase();
+
+  if (
+    text.includes("motivational") ||
+    text.includes("uplifting") ||
+    text.includes("inspiring")
+  ) {
+    return 4;
+  }
+
+  if (text.includes("dark") || text.includes("emotional")) {
+    return 2;
+  }
+
+  if (text.includes("tech") || text.includes("cinematic")) {
+    return 3;
+  }
+
+  return 3;
 }
 
 function hasBlockedTerms(title: string, tags: string[]): boolean {
@@ -266,7 +309,7 @@ async function fetchFreesoundPage(
     "id,name,username,license,tags,previews,duration"
   );
   url.searchParams.set("page", String(page));
-  url.searchParams.set("page_size", "25");
+  url.searchParams.set("page_size", "15");
   url.searchParams.set("token", FREESOUND_API_KEY);
 
   const finalUrl = url.toString();
@@ -342,17 +385,28 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
     preview_mp3_url: previewMp3,
     preview_ogg_url: previewOgg,
     original_download_url: null,
+    waveform_url: null,
 
     duration_seconds:
       typeof item.duration === "number" ? Math.round(item.duration) : null,
 
+    bpm: null,
+    sample_rate: null,
+    bit_depth: null,
+    channels: null,
+    file_format: "mp3",
+
     mood: parseMood(query, trackName, tags),
     category: "music",
     genre: parseGenre(query, trackName, tags),
+    energy_level: parseEnergyLevel(query, trackName, tags),
 
     tags,
     quality_score: qualityScore,
+    priority_score: qualityScore,
+    usage_count: 0,
 
+    is_loop: false,
     is_music: true,
     is_preview_only: true,
     is_active: true,
@@ -372,6 +426,9 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
     },
 
     fetched_at: now,
+    last_checked_at: now,
+    approved_at: now,
+    rejected_at: null,
     updated_at: now,
   };
 }
@@ -396,7 +453,10 @@ async function cleanupOldRows() {
 
   await supabase
     .from("music_bank")
-    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .update({
+      is_active: false,
+      updated_at: new Date().toISOString(),
+    })
     .eq("source", "freesound")
     .lt("fetched_at", staleDate);
 }
@@ -431,32 +491,30 @@ export async function GET(req: NextRequest) {
     const debug: Array<Record<string, unknown>> = [];
 
     for (const query of SEARCH_QUERIES) {
-      const [page1, page2] = await Promise.all([
-        fetchFreesoundPage(query, 1),
-        fetchFreesoundPage(query, 2),
-      ]);
+      const page1 = await fetchFreesoundPage(query, 1);
 
-      const merged = [...page1, ...page2];
-      const filtered = merged.filter(isAllowed);
+      const filtered = page1.filter(isAllowed);
       const scored = filtered
         .map((item) => mapToRow(item, query))
         .filter((row) => row.quality_score >= 20)
         .sort((a, b) => b.quality_score - a.quality_score)
-        .slice(0, 12);
+        .slice(0, 8);
 
       allRows.push(...scored);
 
       debug.push({
         query,
-        fetched: merged.length,
+        fetched: page1.length,
         filtered: filtered.length,
         kept: scored.length,
       });
+
+      await sleep(1200);
     }
 
     const deduped = dedupeByExternalId(allRows)
       .sort((a, b) => b.quality_score - a.quality_score)
-      .slice(0, 150);
+      .slice(0, 80);
 
     if (!deduped.length) {
       return NextResponse.json(
