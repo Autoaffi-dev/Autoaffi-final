@@ -99,7 +99,6 @@ type MusicBankRow = {
   source_url: string | null;
   name: string;
   title: string | null;
-  slug: string | null;
   provider_username: string | null;
   provider_url: string | null;
   license: string | null;
@@ -110,22 +109,12 @@ type MusicBankRow = {
   preview_mp3_url: string | null;
   preview_ogg_url: string | null;
   original_download_url: string | null;
-  waveform_url?: string | null;
   duration_seconds: number | null;
-  bpm?: number | null;
-  sample_rate?: number | null;
-  bit_depth?: number | null;
-  channels?: number | null;
-  file_format?: string | null;
   mood: string | null;
   category: string | null;
   genre: string | null;
-  energy_level: number;
   tags: string[];
   quality_score: number;
-  priority_score: number;
-  usage_count: number;
-  is_loop: boolean;
   is_music: boolean;
   is_preview_only: boolean;
   is_active: boolean;
@@ -135,26 +124,11 @@ type MusicBankRow = {
   search_query: string | null;
   metadata: Record<string, unknown>;
   fetched_at: string;
-  last_checked_at?: string | null;
-  approved_at?: string | null;
-  rejected_at?: string | null;
   updated_at: string;
 };
 
 function normalizeText(input: string | null | undefined): string {
   return (input || "").trim().toLowerCase();
-}
-
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120);
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseMood(query: string, title: string, tags: string[]): string {
@@ -215,28 +189,6 @@ function parseGenre(query: string, title: string, tags: string[]): string {
   return "ambient";
 }
 
-function parseEnergyLevel(query: string, title: string, tags: string[]): number {
-  const text = `${query} ${title} ${tags.join(" ")}`.toLowerCase();
-
-  if (
-    text.includes("motivational") ||
-    text.includes("uplifting") ||
-    text.includes("inspiring")
-  ) {
-    return 4;
-  }
-
-  if (text.includes("dark") || text.includes("emotional")) {
-    return 2;
-  }
-
-  if (text.includes("tech") || text.includes("cinematic")) {
-    return 3;
-  }
-
-  return 3;
-}
-
 function hasBlockedTerms(title: string, tags: string[]): boolean {
   const text = `${title} ${tags.join(" ")}`.toLowerCase();
   return BLOCK_TERMS.some((term) => text.includes(term));
@@ -270,7 +222,6 @@ function scoreTrack(item: FreesoundResult, query: string): number {
   else score -= 15;
 
   if (title.length > 10 && title.length < 120) score += 5;
-
   if (hasBlockedTerms(title, tags)) score -= 100;
 
   return score;
@@ -309,7 +260,7 @@ async function fetchFreesoundPage(
     "id,name,username,license,tags,previews,duration"
   );
   url.searchParams.set("page", String(page));
-  url.searchParams.set("page_size", "15");
+  url.searchParams.set("page_size", "25");
   url.searchParams.set("token", FREESOUND_API_KEY);
 
   const finalUrl = url.toString();
@@ -317,9 +268,7 @@ async function fetchFreesoundPage(
 
   const res = await fetch(finalUrl, {
     method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
+    headers: { Accept: "application/json" },
     cache: "no-store",
   });
 
@@ -364,7 +313,6 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
 
     name: trackName,
     title: trackName,
-    slug: slugify(`freesound-${item.id}-${trackName}`),
 
     provider_username: item.username || null,
     provider_url: providerUrl,
@@ -385,28 +333,17 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
     preview_mp3_url: previewMp3,
     preview_ogg_url: previewOgg,
     original_download_url: null,
-    waveform_url: null,
 
     duration_seconds:
       typeof item.duration === "number" ? Math.round(item.duration) : null,
 
-    bpm: null,
-    sample_rate: null,
-    bit_depth: null,
-    channels: null,
-    file_format: "mp3",
-
     mood: parseMood(query, trackName, tags),
     category: "music",
     genre: parseGenre(query, trackName, tags),
-    energy_level: parseEnergyLevel(query, trackName, tags),
 
     tags,
     quality_score: qualityScore,
-    priority_score: qualityScore,
-    usage_count: 0,
 
-    is_loop: false,
     is_music: true,
     is_preview_only: true,
     is_active: true,
@@ -426,9 +363,6 @@ function mapToRow(item: FreesoundResult, query: string): MusicBankRow {
     },
 
     fetched_at: now,
-    last_checked_at: now,
-    approved_at: now,
-    rejected_at: null,
     updated_at: now,
   };
 }
@@ -466,6 +400,7 @@ export async function GET(req: NextRequest) {
     const authHeader = req.headers.get("authorization");
     const urlSecret = req.nextUrl.searchParams.get("secret");
     const headerSecret = req.headers.get("x-cron-secret");
+    const dryRun = req.nextUrl.searchParams.get("dryRun") === "1";
 
     const isAuthorized =
       (CRON_SECRET && authHeader === `Bearer ${CRON_SECRET}`) ||
@@ -491,30 +426,32 @@ export async function GET(req: NextRequest) {
     const debug: Array<Record<string, unknown>> = [];
 
     for (const query of SEARCH_QUERIES) {
-      const page1 = await fetchFreesoundPage(query, 1);
+      const [page1, page2] = await Promise.all([
+        fetchFreesoundPage(query, 1),
+        fetchFreesoundPage(query, 2),
+      ]);
 
-      const filtered = page1.filter(isAllowed);
+      const merged = [...page1, ...page2];
+      const filtered = merged.filter(isAllowed);
       const scored = filtered
         .map((item) => mapToRow(item, query))
         .filter((row) => row.quality_score >= 20)
         .sort((a, b) => b.quality_score - a.quality_score)
-        .slice(0, 8);
+        .slice(0, 12);
 
       allRows.push(...scored);
 
       debug.push({
         query,
-        fetched: page1.length,
+        fetched: merged.length,
         filtered: filtered.length,
         kept: scored.length,
       });
-
-      await sleep(1200);
     }
 
     const deduped = dedupeByExternalId(allRows)
       .sort((a, b) => b.quality_score - a.quality_score)
-      .slice(0, 80);
+      .slice(0, 150);
 
     if (!deduped.length) {
       return NextResponse.json(
@@ -525,6 +462,17 @@ export async function GET(req: NextRequest) {
         },
         { status: 500 }
       );
+    }
+
+    if (dryRun) {
+      return NextResponse.json({
+        ok: true,
+        dryRun: true,
+        count: deduped.length,
+        firstRow: deduped[0] ?? null,
+        sample: deduped.slice(0, 3),
+        debug,
+      });
     }
 
     const { error: upsertError } = await supabase
