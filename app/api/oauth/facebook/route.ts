@@ -1,33 +1,165 @@
 // app/api/oauth/facebook/route.ts
+import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
+
 import { authOptions } from "@/lib/authOptions";
 
-export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  const userId = session?.user?.id;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  if (!userId) {
-    return NextResponse.redirect(new URL("/login?error=unauthorized", req.url));
+type MetaPlatform = "facebook" | "instagram";
+
+type OAuthStatePayload = {
+  userId: string;
+  platform: MetaPlatform;
+  issuedAt: number;
+  nonce: string;
+};
+
+function getRequiredEnv(name: string): string {
+  const value = process.env[name]?.trim();
+
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
   }
 
-  const platformParam = (req.nextUrl.searchParams.get("platform") || "facebook").toLowerCase();
-  const platform = platformParam === "instagram" ? "instagram" : "facebook";
+  return value;
+}
 
-  const stateObj = { userId, platform, ts: Date.now() };
-  const state = Buffer.from(JSON.stringify(stateObj), "utf8").toString("base64url");
+function getGraphApiVersion(): string {
+  const configuredVersion =
+    process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
 
-  // Scopes: håll minimal för review-safe (utökar du senare när du går live med insights)
-  // För riktig IG insights krävs ofta pages/ig scopes + app review.
-  const scope = "public_profile,email";
+  return configuredVersion.startsWith("v")
+    ? configuredVersion
+    : `v${configuredVersion}`;
+}
 
-  const params = new URLSearchParams({
-    client_id: process.env.FACEBOOK_CLIENT_ID!,
-    redirect_uri: process.env.NEXT_PUBLIC_FACEBOOK_REDIRECT!,
-    response_type: "code",
-    scope,
-    state,
-  });
+function getStateSecret(): string {
+  return (
+    process.env.META_OAUTH_STATE_SECRET?.trim() ||
+    process.env.NEXTAUTH_SECRET?.trim() ||
+    ""
+  );
+}
 
-  return NextResponse.redirect(`https://www.facebook.com/v20.0/dialog/oauth?${params.toString()}`);
+function encodeBase64Url(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function signState(encodedPayload: string, secret: string): string {
+  return crypto
+    .createHmac("sha256", secret)
+    .update(encodedPayload)
+    .digest("base64url");
+}
+
+function createSignedState(
+  userId: string,
+  platform: MetaPlatform,
+  secret: string
+): string {
+  const payload: OAuthStatePayload = {
+    userId,
+    platform,
+    issuedAt: Date.now(),
+    nonce: crypto.randomBytes(24).toString("base64url"),
+  };
+
+  const encodedPayload = encodeBase64Url(JSON.stringify(payload));
+  const signature = signState(encodedPayload, secret);
+
+  return `${encodedPayload}.${signature}`;
+}
+
+function getScopes(platform: MetaPlatform): string[] {
+  const customScopes =
+    platform === "instagram"
+      ? process.env.META_INSTAGRAM_OAUTH_SCOPES
+      : process.env.META_FACEBOOK_OAUTH_SCOPES;
+
+  if (customScopes?.trim()) {
+    return customScopes
+      .split(",")
+      .map((scope) => scope.trim())
+      .filter(Boolean);
+  }
+
+  if (platform === "instagram") {
+    return [
+      "public_profile",
+      "pages_show_list",
+      "pages_read_engagement",
+      "instagram_basic",
+      "instagram_manage_insights",
+    ];
+  }
+
+  return [
+    "public_profile",
+    "pages_show_list",
+    "pages_read_engagement",
+  ];
+}
+
+function createErrorRedirect(req: NextRequest, error: string) {
+  const url = new URL("/dashboard/social-accounts", req.url);
+  url.searchParams.set("error", error);
+
+  return NextResponse.redirect(url);
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions);
+    const userId = session?.user?.id;
+
+    if (!userId) {
+      const loginUrl = new URL("/login", req.url);
+      loginUrl.searchParams.set("error", "unauthorized");
+
+      return NextResponse.redirect(loginUrl);
+    }
+
+    const platformParam = (
+      req.nextUrl.searchParams.get("platform") || "facebook"
+    ).toLowerCase();
+
+    const platform: MetaPlatform =
+      platformParam === "instagram" ? "instagram" : "facebook";
+
+    const clientId = getRequiredEnv("FACEBOOK_CLIENT_ID");
+    const redirectUri = getRequiredEnv("NEXT_PUBLIC_FACEBOOK_REDIRECT");
+    const stateSecret = getStateSecret();
+
+    if (!stateSecret) {
+      throw new Error(
+        "Missing META_OAUTH_STATE_SECRET or NEXTAUTH_SECRET"
+      );
+    }
+
+    const graphApiVersion = getGraphApiVersion();
+    const state = createSignedState(userId, platform, stateSecret);
+    const scope = getScopes(platform).join(",");
+
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope,
+      state,
+      auth_type: "rerequest",
+    });
+
+    const authorizationUrl =
+      `https://www.facebook.com/${graphApiVersion}/dialog/oauth?` +
+      params.toString();
+
+    return NextResponse.redirect(authorizationUrl);
+  } catch (error) {
+    console.error("[meta-oauth-start] Failed to start OAuth flow", error);
+
+    return createErrorRedirect(req, "meta_oauth_start_failed");
+  }
 }

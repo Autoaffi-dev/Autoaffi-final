@@ -793,14 +793,14 @@ export default function DashboardPage({ searchParams }: any) {
         <SectionBlock id="dashboard-data-learning" title="Data, Leads & Learning" subtitle="Track performance, leads and get smarter over time.">
           <div className="grid gap-4 md:grid-cols-3">
             <DashboardCard
-              plan={activePlan}
-              minPlan="basic"
-              title="Contact Manager"
-              badge="CRM"
-              href="/login/dashboard/contact"
-              description="Track warm leads from DMs, comments & funnels."
-              points={["Lead notes", "Tagging system", "Follow-up steps"]}
-            />
+  plan={activePlan}
+  minPlan="basic"
+  title="Contact Manager"
+  badge="CRM"
+  href="/login/dashboard/contact-manager"
+  description="Track warm leads from DMs, comments & funnels."
+  points={["Lead notes", "Tagging system", "Follow-up steps"]}
+/>
 
             <DashboardCard
   plan={activePlan}
@@ -817,14 +817,18 @@ export default function DashboardPage({ searchParams }: any) {
 />
 
             <DashboardCard
-              plan={activePlan}
-              minPlan="basic"
-              title="Leads Hub"
-              badge="Data"
-              href="/login/dashboard/leads"
-              description="Unified affiliate lead tracking."
-              points={["Cross-network tracking", "Intent scoring", "Centralized feed"]}
-            />
+  plan={activePlan}
+  minPlan="basic"
+  title="Leads Hub"
+  badge="Data"
+  href="/login/dashboard/leads-hub"
+  description="Collect lead sources, social candidates, click signals and opt-in activity in one clean overview."
+  points={[
+    "Lead source overview",
+    "Social + tracking signals",
+    "Contact Manager routing",
+  ]}
+/>
 
             <DashboardCard
               plan={activePlan}
