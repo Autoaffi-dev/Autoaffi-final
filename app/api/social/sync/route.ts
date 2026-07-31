@@ -756,7 +756,7 @@ async function upsertSocialPostMetrics(args: {
         plays: args.plays ?? null,
         reach: args.reach ?? null,
         impressions: args.impressions ?? null,
-        captured_at: new Date().toISOString(),
+        fetched_at: new Date().toISOString(),
       },
       {
         onConflict: "platform,post_id",
