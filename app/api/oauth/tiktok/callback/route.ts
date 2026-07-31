@@ -122,7 +122,7 @@ function createDashboardRedirect(
   req: NextRequest,
   values: Record<string, string>
 ): NextResponse {
-  const url = new URL("/dashboard/social-accounts", req.url);
+  const url = new URL("/login/dashboard/social-accounts", req.url);
 
   for (const [key, value] of Object.entries(values)) {
     url.searchParams.set(key, value);
