@@ -104,7 +104,7 @@ function getScopes(platform: MetaPlatform): string[] {
 }
 
 function createErrorRedirect(req: NextRequest, error: string) {
-  const url = new URL("/dashboard/social-accounts", req.url);
+  const url = new URL("/login/dashboard/social-accounts", req.url);
   url.searchParams.set("error", error);
 
   return NextResponse.redirect(url);
