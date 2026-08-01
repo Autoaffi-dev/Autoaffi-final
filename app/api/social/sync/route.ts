@@ -759,7 +759,7 @@ async function upsertSocialPostMetrics(args: {
         fetched_at: new Date().toISOString(),
       },
       {
-        onConflict: "platform,post_id",
+        onConflict: "user_id,platform,post_id",
       }
     );
 
