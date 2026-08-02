@@ -1180,19 +1180,54 @@ async function syncInstagram(
       skewSec: 24 * 60 * 60,
     });
 
-  const pages = await getMetaPages(
-    tokenResult.accessToken
+  let pages = await getMetaPages(
+  tokenResult.accessToken
+);
+
+let pageTokenSource: "instagram" | "facebook" = "instagram";
+
+if (pages.length === 0) {
+  console.info(
+    "[social-sync] Instagram token returned no Meta Pages. Trying Facebook token fallback."
   );
 
-  console.info("[social-sync] Instagram Page candidates", {
-    storedInstagramAccountId: account.account_id,
-    pages: pages.map((page) => ({
-      pageId: page.id,
-      pageName: page.name ?? null,
-      instagramAccountId:
-        page.instagram_business_account?.id ?? null,
-    })),
-  });
+  try {
+    const facebookTokenResult =
+      await getValidAccessToken({
+        userId,
+        platform: "facebook",
+        provider: "meta",
+        skewSec: 24 * 60 * 60,
+      });
+
+    pages = await getMetaPages(
+      facebookTokenResult.accessToken
+    );
+
+    pageTokenSource = "facebook";
+  } catch (error) {
+    console.warn(
+      "[social-sync] Facebook token fallback failed for Instagram sync",
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "unknown_error",
+      }
+    );
+  }
+}
+
+console.info("[social-sync] Instagram Page candidates", {
+  storedInstagramAccountId: account.account_id,
+  pageTokenSource,
+  pages: pages.map((page) => ({
+    pageId: page.id,
+    pageName: page.name ?? null,
+    instagramAccountId:
+      page.instagram_business_account?.id ?? null,
+  })),
+});
 
   const matchingPage =
     pages.find(
