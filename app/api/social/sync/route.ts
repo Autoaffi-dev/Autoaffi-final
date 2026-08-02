@@ -67,6 +67,14 @@ type MetaPagesResponse = MetaApiError & {
   paging?: MetaPaging;
 };
 
+type MetaPageInstagramResponse = MetaApiError & {
+  id?: string;
+  name?: string;
+  instagram_business_account?: {
+    id?: string;
+  };
+};
+
 type InstagramProfile = MetaApiError & {
   id?: string;
   username?: string;
@@ -864,11 +872,53 @@ async function getMetaPages(
 ): Promise<MetaPage[]> {
   const response =
     await metaGraph<MetaPagesResponse>(
-      "me/accounts?fields=id,name,category,access_token,instagram_business_account&limit=100",
+      "me/accounts?fields=id,name,category,access_token&limit=100",
       userAccessToken
     );
 
-  return response.data ?? [];
+  const pages = response.data ?? [];
+
+  return Promise.all(
+    pages.map(async (page): Promise<MetaPage> => {
+      const pageToken =
+        page.access_token || userAccessToken;
+
+      try {
+        const pageDetails =
+          await metaGraph<MetaPageInstagramResponse>(
+            `${page.id}?fields=id,name,instagram_business_account`,
+            pageToken
+          );
+
+        console.info("[social-sync] Meta Page inspected", {
+          pageId: page.id,
+          pageName: page.name ?? null,
+          instagramAccountId:
+            pageDetails.instagram_business_account?.id ?? null,
+        });
+
+        return {
+          ...page,
+          instagram_business_account:
+            pageDetails.instagram_business_account,
+        };
+      } catch (error) {
+        console.warn(
+          "[social-sync] Could not inspect Instagram account for Page",
+          {
+            pageId: page.id,
+            pageName: page.name ?? null,
+            error:
+              error instanceof Error
+                ? error.message
+                : "unknown_error",
+          }
+        );
+
+        return page;
+      }
+    })
+  );
 }
 
 async function getInstagramInsights(
@@ -1134,6 +1184,16 @@ async function syncInstagram(
     tokenResult.accessToken
   );
 
+  console.info("[social-sync] Instagram Page candidates", {
+    storedInstagramAccountId: account.account_id,
+    pages: pages.map((page) => ({
+      pageId: page.id,
+      pageName: page.name ?? null,
+      instagramAccountId:
+        page.instagram_business_account?.id ?? null,
+    })),
+  });
+
   const matchingPage =
     pages.find(
       (page) =>
@@ -1149,9 +1209,15 @@ async function syncInstagram(
     matchingPage?.instagram_business_account
       ?.id;
 
+  if (pages.length === 0) {
+    throw new Error(
+      "no_meta_pages_available_for_instagram"
+    );
+  }
+
   if (!matchingPage || !instagramId) {
     throw new Error(
-      "no_instagram_professional_account_linked"
+      "instagram_account_not_returned_for_available_pages"
     );
   }
 
