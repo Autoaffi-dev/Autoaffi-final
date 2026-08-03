@@ -84,6 +84,38 @@ function createSignedState(
   return `${encodedPayload}.${signature}`;
 }
 
+function getScopes(platform: MetaPlatform): string[] {
+  const customScopes =
+    platform === "instagram"
+      ? process.env.META_INSTAGRAM_OAUTH_SCOPES
+      : process.env.META_FACEBOOK_OAUTH_SCOPES;
+
+  if (customScopes?.trim()) {
+    return customScopes
+      .split(",")
+      .map((scope) => scope.trim())
+      .filter(Boolean);
+  }
+
+  if (platform === "instagram") {
+    return [
+      "public_profile",
+      "pages_show_list",
+      "pages_manage_metadata",
+      "pages_read_engagement",
+      "instagram_basic",
+      "instagram_manage_insights",
+    ];
+  }
+
+  return [
+    "public_profile",
+    "pages_show_list",
+    "pages_manage_metadata",
+    "pages_read_engagement",
+  ];
+}
+
 function createErrorRedirect(
   req: NextRequest,
   error: string
@@ -138,11 +170,6 @@ export async function GET(
         "NEXT_PUBLIC_FACEBOOK_REDIRECT"
       );
 
-    const configurationId =
-      getRequiredEnv(
-        "META_LOGIN_CONFIGURATION_ID"
-      );
-
     const stateSecret = getStateSecret();
 
     if (!stateSecret) {
@@ -160,19 +187,15 @@ export async function GET(
       stateSecret
     );
 
-    /*
-     * Facebook Login for Business:
-     *
-     * config_id ersätter scope-parametern.
-     * Behörigheterna styrs av konfigurationen som
-     * skapats i Meta Developer Dashboard.
-     */
+    const scopes = getScopes(platform);
+
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
       response_type: "code",
-      config_id: configurationId,
+      scope: scopes.join(","),
       state,
+      auth_type: "rerequest",
     });
 
     const authorizationUrl =
@@ -180,11 +203,11 @@ export async function GET(
       params.toString();
 
     console.info(
-      "[meta-oauth-start] Starting Facebook Login for Business",
+      "[meta-oauth-start] Starting scope-based Meta OAuth",
       {
         platform,
         graphApiVersion,
-        configurationId,
+        scopes,
         redirectUri,
       }
     );
