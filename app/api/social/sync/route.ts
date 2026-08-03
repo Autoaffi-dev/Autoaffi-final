@@ -870,24 +870,36 @@ async function metaGraph<T>(
 async function getMetaPages(
   userAccessToken: string
 ): Promise<MetaPage[]> {
+  const me = await metaGraph<{
+    id?: string;
+    name?: string;
+  }>(
+    "me?fields=id,name",
+    userAccessToken
+  );
+
+  console.info("[social-sync] Raw Meta /me response", {
+    id: me.id ?? null,
+    name: me.name ?? null,
+  });
+
   const response =
     await metaGraph<MetaPagesResponse>(
       "me/accounts?fields=id,name,category,access_token&limit=100",
       userAccessToken
     );
 
-console.info("[social-sync] Raw Meta /me/accounts response", {
-  count: response.data?.length ?? 0,
-  pages:
-    response.data?.map((page) => ({
-      id: page.id,
-      name: page.name ?? null,
-      category: page.category ?? null,
-      hasAccessToken: Boolean(page.access_token),
-    })) ?? [],
-  paging: response.paging ?? null,
-});
-
+  console.info("[social-sync] Raw Meta /me/accounts response", {
+    count: response.data?.length ?? 0,
+    pages:
+      response.data?.map((page) => ({
+        id: page.id,
+        name: page.name ?? null,
+        category: page.category ?? null,
+        hasAccessToken: Boolean(page.access_token),
+      })) ?? [],
+    paging: response.paging ?? null,
+  });
 
   const pages = response.data ?? [];
 
