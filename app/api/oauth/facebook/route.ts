@@ -84,38 +84,6 @@ function createSignedState(
   return `${encodedPayload}.${signature}`;
 }
 
-function getScopes(platform: MetaPlatform): string[] {
-  const customScopes =
-    platform === "instagram"
-      ? process.env.META_INSTAGRAM_OAUTH_SCOPES
-      : process.env.META_FACEBOOK_OAUTH_SCOPES;
-
-  if (customScopes?.trim()) {
-    return customScopes
-      .split(",")
-      .map((scope) => scope.trim())
-      .filter(Boolean);
-  }
-
-  if (platform === "instagram") {
-    return [
-      "public_profile",
-      "pages_show_list",
-      "pages_manage_metadata",
-      "pages_read_engagement",
-      "instagram_basic",
-      "instagram_manage_insights",
-    ];
-  }
-
-  return [
-    "public_profile",
-    "pages_show_list",
-    "pages_manage_metadata",
-    "pages_read_engagement",
-  ];
-}
-
 function createErrorRedirect(
   req: NextRequest,
   error: string
@@ -170,6 +138,11 @@ export async function GET(
         "NEXT_PUBLIC_FACEBOOK_REDIRECT"
       );
 
+    const configurationId =
+      getRequiredEnv(
+        "META_LOGIN_CONFIGURATION_ID"
+      );
+
     const stateSecret = getStateSecret();
 
     if (!stateSecret) {
@@ -187,15 +160,20 @@ export async function GET(
       stateSecret
     );
 
-    const scopes = getScopes(platform);
-
+    /*
+     * Facebook Login for Business:
+     *
+     * Behörigheterna styrs av Login Configuration
+     * i Meta Developer Dashboard.
+     *
+     * Skicka därför config_id och inte scope.
+     */
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
       response_type: "code",
-      scope: scopes.join(","),
+      config_id: configurationId,
       state,
-      auth_type: "rerequest",
     });
 
     const authorizationUrl =
@@ -203,12 +181,13 @@ export async function GET(
       params.toString();
 
     console.info(
-      "[meta-oauth-start] Starting scope-based Meta OAuth",
+      "[meta-oauth-start] Starting Facebook Login for Business",
       {
         platform,
         graphApiVersion,
-        scopes,
         redirectUri,
+        configurationIdPresent:
+          Boolean(configurationId),
       }
     );
 
