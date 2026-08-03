@@ -876,6 +876,19 @@ async function getMetaPages(
       userAccessToken
     );
 
+console.info("[social-sync] Raw Meta /me/accounts response", {
+  count: response.data?.length ?? 0,
+  pages:
+    response.data?.map((page) => ({
+      id: page.id,
+      name: page.name ?? null,
+      category: page.category ?? null,
+      hasAccessToken: Boolean(page.access_token),
+    })) ?? [],
+  paging: response.paging ?? null,
+});
+
+
   const pages = response.data ?? [];
 
   return Promise.all(
