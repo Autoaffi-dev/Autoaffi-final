@@ -883,66 +883,108 @@ async function getMetaPages(
     name: me.name ?? null,
   });
 
+  const permissions =
+    await metaGraph<{
+      data?: Array<{
+        permission?: string;
+        status?: string;
+      }>;
+    }>(
+      "me/permissions",
+      userAccessToken
+    );
+
+  console.info(
+    "[social-sync] Current Meta token permissions",
+    {
+      permissions:
+        permissions.data?.map((item) => ({
+          permission:
+            item.permission ?? null,
+          status:
+            item.status ?? null,
+        })) ?? [],
+    }
+  );
+
   const response =
     await metaGraph<MetaPagesResponse>(
       "me/accounts?fields=id,name,category,access_token&limit=100",
       userAccessToken
     );
 
-  console.info("[social-sync] Raw Meta /me/accounts response", {
-    count: response.data?.length ?? 0,
-    pages:
-      response.data?.map((page) => ({
-        id: page.id,
-        name: page.name ?? null,
-        category: page.category ?? null,
-        hasAccessToken: Boolean(page.access_token),
-      })) ?? [],
-    paging: response.paging ?? null,
-  });
+  console.info(
+    "[social-sync] Raw Meta /me/accounts response",
+    {
+      count: response.data?.length ?? 0,
+      pages:
+        response.data?.map((page) => ({
+          id: page.id,
+          name: page.name ?? null,
+          category:
+            page.category ?? null,
+          hasAccessToken:
+            Boolean(page.access_token),
+        })) ?? [],
+      paging:
+        response.paging ?? null,
+    }
+  );
 
   const pages = response.data ?? [];
 
   return Promise.all(
-    pages.map(async (page): Promise<MetaPage> => {
-      const pageToken =
-        page.access_token || userAccessToken;
+    pages.map(
+      async (
+        page
+      ): Promise<MetaPage> => {
+        const pageToken =
+          page.access_token ||
+          userAccessToken;
 
-      try {
-        const pageDetails =
-          await metaGraph<MetaPageInstagramResponse>(
-            `${page.id}?fields=id,name,instagram_business_account`,
-            pageToken
+        try {
+          const pageDetails =
+            await metaGraph<MetaPageInstagramResponse>(
+              `${page.id}?fields=id,name,instagram_business_account`,
+              pageToken
+            );
+
+          console.info(
+            "[social-sync] Meta Page inspected",
+            {
+              pageId: page.id,
+              pageName:
+                page.name ?? null,
+              instagramAccountId:
+                pageDetails
+                  .instagram_business_account
+                  ?.id ?? null,
+            }
           );
 
-        console.info("[social-sync] Meta Page inspected", {
-          pageId: page.id,
-          pageName: page.name ?? null,
-          instagramAccountId:
-            pageDetails.instagram_business_account?.id ?? null,
-        });
+          return {
+            ...page,
+            instagram_business_account:
+              pageDetails.instagram_business_account,
+          };
+        } catch (error) {
+          console.warn(
+            "[social-sync] Could not inspect Instagram account for Page",
+            {
+              pageId: page.id,
+              pageName:
+                page.name ?? null,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "unknown_error",
+            }
+          );
 
-        return {
-          ...page,
-          instagram_business_account:
-            pageDetails.instagram_business_account,
-        };
-      } catch (error) {
-        console.warn(
-          "[social-sync] Could not inspect Instagram account for Page",
-          {
-            pageId: page.id,
-            pageName: page.name ?? null,
-            error:
-              error instanceof Error
-                ? error.message
-                : "unknown_error",
-          }
-        );
-
-        return page;
+          return page;
+        }
       }
-    })
+    )
   );
 }
 
