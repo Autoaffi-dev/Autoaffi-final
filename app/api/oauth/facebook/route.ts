@@ -21,7 +21,9 @@ function getRequiredEnv(name: string): string {
   const value = process.env[name]?.trim();
 
   if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
+    throw new Error(
+      `Missing required environment variable: ${name}`
+    );
   }
 
   return value;
@@ -48,7 +50,10 @@ function encodeBase64Url(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
 }
 
-function signState(encodedPayload: string, secret: string): string {
+function signState(
+  encodedPayload: string,
+  secret: string
+): string {
   return crypto
     .createHmac("sha256", secret)
     .update(encodedPayload)
@@ -67,70 +72,77 @@ function createSignedState(
     nonce: crypto.randomBytes(24).toString("base64url"),
   };
 
-  const encodedPayload = encodeBase64Url(JSON.stringify(payload));
-  const signature = signState(encodedPayload, secret);
+  const encodedPayload = encodeBase64Url(
+    JSON.stringify(payload)
+  );
+
+  const signature = signState(
+    encodedPayload,
+    secret
+  );
 
   return `${encodedPayload}.${signature}`;
 }
 
-function getScopes(platform: MetaPlatform): string[] {
-  const customScopes =
-    platform === "instagram"
-      ? process.env.META_INSTAGRAM_OAUTH_SCOPES
-      : process.env.META_FACEBOOK_OAUTH_SCOPES;
+function createErrorRedirect(
+  req: NextRequest,
+  error: string
+): NextResponse {
+  const url = new URL(
+    "/login/dashboard/social-accounts",
+    req.url
+  );
 
-  if (customScopes?.trim()) {
-    return customScopes
-      .split(",")
-      .map((scope) => scope.trim())
-      .filter(Boolean);
-  }
-
-  if (platform === "instagram") {
-    return [
-      "public_profile",
-      "pages_show_list",
-      "pages_read_engagement",
-      "instagram_basic",
-      "instagram_manage_insights",
-    ];
-  }
-
-  return [
-    "public_profile",
-    "pages_show_list",
-    "pages_read_engagement",
-  ];
-}
-
-function createErrorRedirect(req: NextRequest, error: string) {
-  const url = new URL("/login/dashboard/social-accounts", req.url);
   url.searchParams.set("error", error);
 
   return NextResponse.redirect(url);
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(
+  req: NextRequest
+): Promise<NextResponse> {
   try {
-    const session = await getServerSession(authOptions);
+    const session =
+      await getServerSession(authOptions);
+
     const userId = session?.user?.id;
 
     if (!userId) {
       const loginUrl = new URL("/login", req.url);
-      loginUrl.searchParams.set("error", "unauthorized");
+
+      loginUrl.searchParams.set(
+        "error",
+        "unauthorized"
+      );
 
       return NextResponse.redirect(loginUrl);
     }
 
     const platformParam = (
-      req.nextUrl.searchParams.get("platform") || "facebook"
-    ).toLowerCase();
+      req.nextUrl.searchParams.get("platform") ||
+      "facebook"
+    )
+      .toLowerCase()
+      .trim();
 
     const platform: MetaPlatform =
-      platformParam === "instagram" ? "instagram" : "facebook";
+      platformParam === "instagram"
+        ? "instagram"
+        : "facebook";
 
-    const clientId = getRequiredEnv("FACEBOOK_CLIENT_ID");
-    const redirectUri = getRequiredEnv("NEXT_PUBLIC_FACEBOOK_REDIRECT");
+    const clientId =
+      getRequiredEnv("FACEBOOK_CLIENT_ID");
+
+    const redirectUri =
+      getRequiredEnv(
+        "NEXT_PUBLIC_FACEBOOK_REDIRECT"
+      );
+
+    const configurationId =
+      getRequiredEnv(
+        "META_LOGIN_CONFIGURATION_ID"
+      );
+
     const stateSecret = getStateSecret();
 
     if (!stateSecret) {
@@ -139,27 +151,63 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const graphApiVersion = getGraphApiVersion();
-    const state = createSignedState(userId, platform, stateSecret);
-    const scope = getScopes(platform).join(",");
+    const graphApiVersion =
+      getGraphApiVersion();
 
+    const state = createSignedState(
+      String(userId),
+      platform,
+      stateSecret
+    );
+
+    /*
+     * Facebook Login for Business:
+     *
+     * config_id ersätter scope-parametern.
+     * Behörigheterna styrs av konfigurationen som
+     * skapats i Meta Developer Dashboard.
+     */
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
       response_type: "code",
-      scope,
+      config_id: configurationId,
       state,
-      auth_type: "rerequest",
     });
 
     const authorizationUrl =
       `https://www.facebook.com/${graphApiVersion}/dialog/oauth?` +
       params.toString();
 
-    return NextResponse.redirect(authorizationUrl);
-  } catch (error) {
-    console.error("[meta-oauth-start] Failed to start OAuth flow", error);
+    console.info(
+      "[meta-oauth-start] Starting Facebook Login for Business",
+      {
+        platform,
+        graphApiVersion,
+        configurationId,
+        redirectUri,
+      }
+    );
 
-    return createErrorRedirect(req, "meta_oauth_start_failed");
+    return NextResponse.redirect(
+      authorizationUrl
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "unknown_error";
+
+    console.error(
+      "[meta-oauth-start] Failed to start OAuth flow",
+      {
+        error: message,
+      }
+    );
+
+    return createErrorRedirect(
+      req,
+      "meta_oauth_start_failed"
+    );
   }
 }
