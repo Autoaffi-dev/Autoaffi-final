@@ -84,6 +84,15 @@ function createSignedState(
   return `${encodedPayload}.${signature}`;
 }
 
+function getScopes(): string[] {
+  return [
+    "pages_show_list",
+    "pages_read_engagement",
+    "instagram_basic",
+    "instagram_manage_insights",
+  ];
+}
+
 function createErrorRedirect(
   req: NextRequest,
   error: string
@@ -160,22 +169,17 @@ export async function GET(
       stateSecret
     );
 
-    /*
-     * Facebook Login for Business:
-     *
-     * Behörigheterna styrs av Login Configuration
-     * i Meta Developer Dashboard.
-     *
-     * Skicka därför config_id och inte scope.
-     */
+    const scopes = getScopes();
+
     const params = new URLSearchParams({
-  client_id: clientId,
-  redirect_uri: redirectUri,
-  response_type: "code",
-  config_id: configurationId,
-  state,
-  auth_type: "rerequest",
-});
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      config_id: configurationId,
+      scope: scopes.join(","),
+      state,
+      auth_type: "rerequest",
+    });
 
     const authorizationUrl =
       `https://www.facebook.com/${graphApiVersion}/dialog/oauth?` +
@@ -189,6 +193,7 @@ export async function GET(
         redirectUri,
         configurationIdPresent:
           Boolean(configurationId),
+        requestedScopes: scopes,
       }
     );
 
