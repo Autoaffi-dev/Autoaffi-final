@@ -1,5 +1,9 @@
+// app/api/oauth/facebook/callback/route.ts
 import crypto from "node:crypto";
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/authOptions";
@@ -8,7 +12,9 @@ import { upsertSocialAccount } from "@/lib/socialStore";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type MetaPlatform = "facebook" | "instagram";
+type MetaPlatform =
+  | "facebook"
+  | "instagram";
 
 type OAuthStatePayload = {
   userId: string;
@@ -17,16 +23,19 @@ type OAuthStatePayload = {
   nonce: string;
 };
 
+type MetaApiError = {
+  message?: string;
+  type?: string;
+  code?: number;
+  error_subcode?: number;
+  fbtrace_id?: string;
+};
+
 type MetaTokenResponse = {
   access_token?: string;
   token_type?: string;
   expires_in?: number;
-  error?: {
-    message?: string;
-    type?: string;
-    code?: number;
-    error_subcode?: number;
-  };
+  error?: MetaApiError;
 };
 
 type MetaDebugTokenResponse = {
@@ -41,31 +50,81 @@ type MetaDebugTokenResponse = {
     scopes?: string[];
     user_id?: string;
   };
-  error?: {
-    message?: string;
-    type?: string;
-    code?: number;
-  };
+  error?: MetaApiError;
 };
 
 type MetaPermission = {
   permission: string;
-  status: "granted" | "declined" | "expired" | string;
+  status:
+    | "granted"
+    | "declined"
+    | "expired"
+    | string;
 };
 
 type MetaPermissionsResponse = {
   data?: MetaPermission[];
-  error?: {
-    message?: string;
-    type?: string;
-    code?: number;
+  error?: MetaApiError;
+};
+
+type MetaMeResponse = {
+  id?: string;
+  name?: string;
+  error?: MetaApiError;
+};
+
+type MetaPage = {
+  id: string;
+  name?: string;
+  category?: string;
+};
+
+type MetaPagesResponse = {
+  data?: MetaPage[];
+  paging?: {
+    cursors?: {
+      before?: string;
+      after?: string;
+    };
+    next?: string;
+    previous?: string;
+  };
+  error?: MetaApiError;
+};
+
+type MetaGraphDiagnostic = {
+  me: {
+    ok: boolean;
+    status: number;
+    id: string | null;
+    name: string | null;
+    errorMessage: string | null;
+    errorCode: number | null;
+    errorSubcode: number | null;
+  };
+  pages: {
+    ok: boolean;
+    status: number;
+    count: number;
+    pages: Array<{
+      id: string;
+      name: string | null;
+      category: string | null;
+    }>;
+    errorMessage: string | null;
+    errorCode: number | null;
+    errorSubcode: number | null;
   };
 };
 
-const STATE_MAX_AGE_MS = 10 * 60 * 1000;
+const STATE_MAX_AGE_MS =
+  10 * 60 * 1000;
 
-function getRequiredEnv(name: string): string {
-  const value = process.env[name]?.trim();
+function getRequiredEnv(
+  name: string
+): string {
+  const value =
+    process.env[name]?.trim();
 
   if (!value) {
     throw new Error(
@@ -78,7 +137,9 @@ function getRequiredEnv(name: string): string {
 
 function getStateSecret(): string {
   return (
-    process.env.META_OAUTH_STATE_SECRET?.trim() ||
+    process.env
+      .META_OAUTH_STATE_SECRET
+      ?.trim() ||
     process.env.NEXTAUTH_SECRET?.trim() ||
     ""
   );
@@ -86,9 +147,13 @@ function getStateSecret(): string {
 
 function getGraphApiVersion(): string {
   const configuredVersion =
-    process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
+    process.env
+      .META_GRAPH_API_VERSION
+      ?.trim() || "v25.0";
 
-  return configuredVersion.startsWith("v")
+  return configuredVersion.startsWith(
+    "v"
+  )
     ? configuredVersion
     : `v${configuredVersion}`;
 }
@@ -137,7 +202,9 @@ function verifyAndDecodeState(
   const parts = state.split(".");
 
   if (parts.length !== 2) {
-    throw new Error("invalid_state_format");
+    throw new Error(
+      "invalid_state_format"
+    );
   }
 
   const [
@@ -145,10 +212,11 @@ function verifyAndDecodeState(
     receivedSignature,
   ] = parts;
 
-  const expectedSignature = signState(
-    encodedPayload,
-    secret
-  );
+  const expectedSignature =
+    signState(
+      encodedPayload,
+      secret
+    );
 
   if (
     !safeSignatureMatch(
@@ -180,9 +248,10 @@ function verifyAndDecodeState(
     !payload?.userId ||
     !payload?.issuedAt ||
     !payload?.nonce ||
-    !["facebook", "instagram"].includes(
-      payload.platform
-    )
+    ![
+      "facebook",
+      "instagram",
+    ].includes(payload.platform)
   ) {
     throw new Error(
       "invalid_state_values"
@@ -196,7 +265,9 @@ function verifyAndDecodeState(
     age < 0 ||
     age > STATE_MAX_AGE_MS
   ) {
-    throw new Error("expired_state");
+    throw new Error(
+      "expired_state"
+    );
   }
 
   return payload;
@@ -205,34 +276,43 @@ function verifyAndDecodeState(
 function createDashboardRedirect(
   req: NextRequest,
   values: Record<string, string>
-) {
+): NextResponse {
   const url = new URL(
     "/login/dashboard/social-accounts",
     req.url
   );
 
-  for (const [key, value] of Object.entries(
-    values
-  )) {
-    url.searchParams.set(key, value);
+  for (const [
+    key,
+    value,
+  ] of Object.entries(values)) {
+    url.searchParams.set(
+      key,
+      value
+    );
   }
 
   return NextResponse.redirect(url);
 }
 
-async function exchangeCodeForToken(args: {
-  code: string;
-  clientId: string;
-  clientSecret: string;
-  redirectUri: string;
-  graphApiVersion: string;
-}): Promise<MetaTokenResponse> {
-  const params = new URLSearchParams({
-    client_id: args.clientId,
-    client_secret: args.clientSecret,
-    redirect_uri: args.redirectUri,
-    code: args.code,
-  });
+async function exchangeCodeForToken(
+  args: {
+    code: string;
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    graphApiVersion: string;
+  }
+): Promise<MetaTokenResponse> {
+  const params =
+    new URLSearchParams({
+      client_id: args.clientId,
+      client_secret:
+        args.clientSecret,
+      redirect_uri:
+        args.redirectUri,
+      code: args.code,
+    });
 
   const response = await fetch(
     `https://graph.facebook.com/${args.graphApiVersion}/oauth/access_token?${params.toString()}`,
@@ -243,7 +323,12 @@ async function exchangeCodeForToken(args: {
   );
 
   const body =
-    (await response.json()) as MetaTokenResponse;
+    (await response
+      .json()
+      .catch(
+        () =>
+          ({}) as MetaTokenResponse
+      )) as MetaTokenResponse;
 
   if (
     !response.ok ||
@@ -253,7 +338,16 @@ async function exchangeCodeForToken(args: {
       "[meta-oauth-callback] Code exchange failed",
       {
         status: response.status,
-        error: body.error,
+        errorMessage:
+          body.error?.message ??
+          null,
+        errorType:
+          body.error?.type ?? null,
+        errorCode:
+          body.error?.code ?? null,
+        errorSubcode:
+          body.error
+            ?.error_subcode ?? null,
       }
     );
 
@@ -265,19 +359,24 @@ async function exchangeCodeForToken(args: {
   return body;
 }
 
-async function exchangeForLongLivedToken(args: {
-  shortLivedToken: string;
-  clientId: string;
-  clientSecret: string;
-  graphApiVersion: string;
-}): Promise<MetaTokenResponse> {
-  const params = new URLSearchParams({
-    grant_type: "fb_exchange_token",
-    client_id: args.clientId,
-    client_secret: args.clientSecret,
-    fb_exchange_token:
-      args.shortLivedToken,
-  });
+async function exchangeForLongLivedToken(
+  args: {
+    shortLivedToken: string;
+    clientId: string;
+    clientSecret: string;
+    graphApiVersion: string;
+  }
+): Promise<MetaTokenResponse> {
+  const params =
+    new URLSearchParams({
+      grant_type:
+        "fb_exchange_token",
+      client_id: args.clientId,
+      client_secret:
+        args.clientSecret,
+      fb_exchange_token:
+        args.shortLivedToken,
+    });
 
   const response = await fetch(
     `https://graph.facebook.com/${args.graphApiVersion}/oauth/access_token?${params.toString()}`,
@@ -288,7 +387,12 @@ async function exchangeForLongLivedToken(args: {
   );
 
   const body =
-    (await response.json()) as MetaTokenResponse;
+    (await response
+      .json()
+      .catch(
+        () =>
+          ({}) as MetaTokenResponse
+      )) as MetaTokenResponse;
 
   if (
     !response.ok ||
@@ -298,7 +402,16 @@ async function exchangeForLongLivedToken(args: {
       "[meta-oauth-callback] Long-lived token exchange failed",
       {
         status: response.status,
-        error: body.error,
+        errorMessage:
+          body.error?.message ??
+          null,
+        errorType:
+          body.error?.type ?? null,
+        errorCode:
+          body.error?.code ?? null,
+        errorSubcode:
+          body.error
+            ?.error_subcode ?? null,
       }
     );
 
@@ -310,21 +423,26 @@ async function exchangeForLongLivedToken(args: {
   return body;
 }
 
-async function debugAccessToken(args: {
-  accessToken: string;
-  clientId: string;
-  clientSecret: string;
-  graphApiVersion: string;
-}): Promise<
+async function debugAccessToken(
+  args: {
+    accessToken: string;
+    clientId: string;
+    clientSecret: string;
+    graphApiVersion: string;
+  }
+): Promise<
   MetaDebugTokenResponse["data"]
 > {
   const appAccessToken =
     `${args.clientId}|${args.clientSecret}`;
 
-  const params = new URLSearchParams({
-    input_token: args.accessToken,
-    access_token: appAccessToken,
-  });
+  const params =
+    new URLSearchParams({
+      input_token:
+        args.accessToken,
+      access_token:
+        appAccessToken,
+    });
 
   const response = await fetch(
     `https://graph.facebook.com/${args.graphApiVersion}/debug_token?${params.toString()}`,
@@ -335,7 +453,12 @@ async function debugAccessToken(args: {
   );
 
   const body =
-    (await response.json()) as MetaDebugTokenResponse;
+    (await response
+      .json()
+      .catch(
+        () =>
+          ({}) as MetaDebugTokenResponse
+      )) as MetaDebugTokenResponse;
 
   const data = body.data;
 
@@ -349,11 +472,20 @@ async function debugAccessToken(args: {
       "[meta-oauth-callback] Token validation failed",
       {
         status: response.status,
-        error: body.error,
+        errorMessage:
+          body.error?.message ??
+          null,
+        errorCode:
+          body.error?.code ?? null,
         isValid:
-          data?.is_valid,
+          data?.is_valid ?? null,
+        tokenAppId:
+          data?.app_id ?? null,
+        expectedAppId:
+          args.clientId,
         appIdMatches:
-          data?.app_id === args.clientId,
+          data?.app_id ===
+          args.clientId,
       }
     );
 
@@ -365,17 +497,21 @@ async function debugAccessToken(args: {
   return data;
 }
 
-async function fetchGrantedPermissions(args: {
-  accessToken: string;
-  graphApiVersion: string;
-}): Promise<{
+async function fetchGrantedPermissions(
+  args: {
+    accessToken: string;
+    graphApiVersion: string;
+  }
+): Promise<{
   granted: string[];
   declined: string[];
   expired: string[];
 }> {
-  const params = new URLSearchParams({
-    access_token: args.accessToken,
-  });
+  const params =
+    new URLSearchParams({
+      access_token:
+        args.accessToken,
+    });
 
   const response = await fetch(
     `https://graph.facebook.com/${args.graphApiVersion}/me/permissions?${params.toString()}`,
@@ -386,7 +522,12 @@ async function fetchGrantedPermissions(args: {
   );
 
   const body =
-    (await response.json()) as MetaPermissionsResponse;
+    (await response
+      .json()
+      .catch(
+        () =>
+          ({}) as MetaPermissionsResponse
+      )) as MetaPermissionsResponse;
 
   if (
     !response.ok ||
@@ -396,7 +537,16 @@ async function fetchGrantedPermissions(args: {
       "[meta-oauth-callback] Permission lookup failed",
       {
         status: response.status,
-        error: body.error,
+        errorMessage:
+          body.error?.message ??
+          null,
+        errorType:
+          body.error?.type ?? null,
+        errorCode:
+          body.error?.code ?? null,
+        errorSubcode:
+          body.error
+            ?.error_subcode ?? null,
       }
     );
 
@@ -412,36 +562,200 @@ async function fetchGrantedPermissions(args: {
     granted: permissions
       .filter(
         (item) =>
-          item.status === "granted"
+          item.status ===
+          "granted"
       )
       .map(
-        (item) => item.permission
+        (item) =>
+          item.permission
       ),
 
     declined: permissions
       .filter(
         (item) =>
-          item.status === "declined"
+          item.status ===
+          "declined"
       )
       .map(
-        (item) => item.permission
+        (item) =>
+          item.permission
       ),
 
     expired: permissions
       .filter(
         (item) =>
-          item.status === "expired"
+          item.status ===
+          "expired"
       )
       .map(
-        (item) => item.permission
+        (item) =>
+          item.permission
       ),
   };
 }
 
-function calculateExpiresInSec(args: {
-  tokenExpiresIn?: number;
-  debugExpiresAt?: number;
-}): number | null {
+/**
+ * Testar tokenen direkt mot Graph API.
+ *
+ * Vi hämtar inte Page Access Tokens här.
+ * Därför loggas eller sparas inga sidtokens.
+ */
+async function testMetaGraphAccess(
+  args: {
+    accessToken: string;
+    graphApiVersion: string;
+  }
+): Promise<MetaGraphDiagnostic> {
+  const meUrl = new URL(
+    `https://graph.facebook.com/${args.graphApiVersion}/me`
+  );
+
+  meUrl.searchParams.set(
+    "fields",
+    "id,name"
+  );
+
+  meUrl.searchParams.set(
+    "access_token",
+    args.accessToken
+  );
+
+  const pagesUrl = new URL(
+    `https://graph.facebook.com/${args.graphApiVersion}/me/accounts`
+  );
+
+  pagesUrl.searchParams.set(
+    "fields",
+    "id,name,category"
+  );
+
+  pagesUrl.searchParams.set(
+    "limit",
+    "100"
+  );
+
+  pagesUrl.searchParams.set(
+    "access_token",
+    args.accessToken
+  );
+
+  const [
+    meResponse,
+    pagesResponse,
+  ] = await Promise.all([
+    fetch(meUrl.toString(), {
+      method: "GET",
+      cache: "no-store",
+    }),
+    fetch(pagesUrl.toString(), {
+      method: "GET",
+      cache: "no-store",
+    }),
+  ]);
+
+  const meBody =
+    (await meResponse
+      .json()
+      .catch(
+        () =>
+          ({}) as MetaMeResponse
+      )) as MetaMeResponse;
+
+  const pagesBody =
+    (await pagesResponse
+      .json()
+      .catch(
+        () =>
+          ({}) as MetaPagesResponse
+      )) as MetaPagesResponse;
+
+  const pages =
+    pagesBody.data ?? [];
+
+  const diagnostic: MetaGraphDiagnostic =
+    {
+      me: {
+        ok:
+          meResponse.ok &&
+          !meBody.error &&
+          Boolean(meBody.id),
+
+        status:
+          meResponse.status,
+
+        id:
+          meBody.id ?? null,
+
+        name:
+          meBody.name ?? null,
+
+        errorMessage:
+          meBody.error?.message ??
+          null,
+
+        errorCode:
+          meBody.error?.code ??
+          null,
+
+        errorSubcode:
+          meBody.error
+            ?.error_subcode ??
+          null,
+      },
+
+      pages: {
+        ok:
+          pagesResponse.ok &&
+          !pagesBody.error,
+
+        status:
+          pagesResponse.status,
+
+        count:
+          pages.length,
+
+        pages: pages.map(
+          (page) => ({
+            id: page.id,
+            name:
+              page.name ?? null,
+            category:
+              page.category ?? null,
+          })
+        ),
+
+        errorMessage:
+          pagesBody.error
+            ?.message ?? null,
+
+        errorCode:
+          pagesBody.error
+            ?.code ?? null,
+
+        errorSubcode:
+          pagesBody.error
+            ?.error_subcode ??
+          null,
+      },
+    };
+
+  console.info(
+    "[meta-oauth-callback] Direct Graph API token diagnostic",
+    {
+      me: diagnostic.me,
+      pages: diagnostic.pages,
+    }
+  );
+
+  return diagnostic;
+}
+
+function calculateExpiresInSec(
+  args: {
+    tokenExpiresIn?: number;
+    debugExpiresAt?: number;
+  }
+): number | null {
   if (
     typeof args.debugExpiresAt ===
       "number" &&
@@ -469,7 +783,7 @@ function calculateExpiresInSec(args: {
 
 export async function GET(
   req: NextRequest
-) {
+): Promise<NextResponse> {
   const metaError =
     req.nextUrl.searchParams.get(
       "error"
@@ -501,7 +815,8 @@ export async function GET(
       req,
       {
         error:
-          metaError === "access_denied"
+          metaError ===
+          "access_denied"
             ? "meta_access_denied"
             : "meta_oauth_failed",
       }
@@ -570,13 +885,16 @@ export async function GET(
     }
 
     if (
-      sessionUserId !==
+      String(sessionUserId) !==
       statePayload.userId
     ) {
       console.error(
         "[meta-oauth-callback] Session user mismatch",
         {
-          sessionUserId,
+          sessionUserId:
+            String(
+              sessionUserId
+            ),
           stateUserId:
             statePayload.userId,
         }
@@ -622,16 +940,20 @@ export async function GET(
     const longLivedToken =
       await exchangeForLongLivedToken({
         shortLivedToken:
-          shortLivedToken.access_token!,
+          shortLivedToken
+            .access_token!,
         clientId,
         clientSecret,
         graphApiVersion,
       });
 
+    const accessToken =
+      longLivedToken
+        .access_token!;
+
     const tokenData =
       await debugAccessToken({
-        accessToken:
-          longLivedToken.access_token!,
+        accessToken,
         clientId,
         clientSecret,
         graphApiVersion,
@@ -639,8 +961,19 @@ export async function GET(
 
     const permissions =
       await fetchGrantedPermissions({
-        accessToken:
-          longLivedToken.access_token!,
+        accessToken,
+        graphApiVersion,
+      });
+
+    /*
+     * Viktigt diagnostiktest:
+     *
+     * Kör tokenen direkt mot /me och
+     * /me/accounts innan den sparas.
+     */
+    const graphDiagnostic =
+      await testMetaGraphAccess({
+        accessToken,
         graphApiVersion,
       });
 
@@ -648,60 +981,98 @@ export async function GET(
       "[meta-oauth-callback] Meta token permissions after exchange",
       {
         platform,
+
         tokenAppId:
-          tokenData?.app_id ?? null,
-        tokenUserId:
-          tokenData?.user_id ?? null,
-        tokenType:
-          tokenData?.type ?? null,
-        tokenApplication:
-          tokenData?.application ??
+          tokenData?.app_id ??
           null,
+
+        tokenUserId:
+          tokenData?.user_id ??
+          null,
+
+        tokenType:
+          tokenData?.type ??
+          null,
+
+        tokenApplication:
+          tokenData
+            ?.application ??
+          null,
+
         debugTokenScopes:
-          tokenData?.scopes ?? [],
+          tokenData?.scopes ??
+          [],
+
         grantedPermissions:
           permissions.granted,
+
         declinedPermissions:
           permissions.declined,
+
         expiredPermissions:
           permissions.expired,
-        usedLongLivedToken: true,
+
+        graphMeOk:
+          graphDiagnostic.me.ok,
+
+        graphPagesOk:
+          graphDiagnostic
+            .pages.ok,
+
+        graphPageCount:
+          graphDiagnostic
+            .pages.count,
+
+        usedLongLivedToken:
+          true,
       }
     );
 
     const expiresInSec =
       calculateExpiresInSec({
         tokenExpiresIn:
-          longLivedToken.expires_in,
+          longLivedToken
+            .expires_in,
+
         debugExpiresAt:
-          tokenData?.expires_at,
+          tokenData
+            ?.expires_at,
       });
 
     await upsertSocialAccount({
       userId:
         statePayload.userId,
+
       platform,
+
       provider: "meta",
-      accessToken:
-        longLivedToken.access_token!,
+
+      accessToken,
+
       refreshToken: null,
+
       expiresInSec,
+
       meta: {
         oauth_connected_at:
-          new Date().toISOString(),
+          new Date()
+            .toISOString(),
 
         graph_api_version:
           graphApiVersion,
 
         token_type:
-          longLivedToken.token_type ??
+          longLivedToken
+            .token_type ??
           null,
 
         meta_user_id:
-          tokenData?.user_id ?? null,
+          tokenData?.user_id ??
+          null,
 
         debug_token_scopes:
-          tokenData?.scopes ?? [],
+          tokenData?.scopes ??
+          [],
 
         data_access_expires_at:
           tokenData
@@ -724,6 +1095,66 @@ export async function GET(
 
         expired_scopes:
           permissions.expired,
+
+        graph_diagnostic: {
+          tested_at:
+            new Date()
+              .toISOString(),
+
+          me_ok:
+            graphDiagnostic
+              .me.ok,
+
+          me_status:
+            graphDiagnostic
+              .me.status,
+
+          me_id:
+            graphDiagnostic
+              .me.id,
+
+          me_name:
+            graphDiagnostic
+              .me.name,
+
+          me_error:
+            graphDiagnostic
+              .me.errorMessage,
+
+          me_error_code:
+            graphDiagnostic
+              .me.errorCode,
+
+          pages_ok:
+            graphDiagnostic
+              .pages.ok,
+
+          pages_status:
+            graphDiagnostic
+              .pages.status,
+
+          page_count:
+            graphDiagnostic
+              .pages.count,
+
+          pages:
+            graphDiagnostic
+              .pages.pages,
+
+          pages_error:
+            graphDiagnostic
+              .pages
+              .errorMessage,
+
+          pages_error_code:
+            graphDiagnostic
+              .pages.errorCode,
+
+          pages_error_subcode:
+            graphDiagnostic
+              .pages
+              .errorSubcode,
+        },
       },
     });
 
@@ -748,22 +1179,26 @@ export async function GET(
     );
 
     const publicError =
-      message === "expired_state"
+      message ===
+      "expired_state"
         ? "oauth_state_expired"
         : message.startsWith(
               "invalid_state"
             )
           ? "bad_oauth_state"
           : message ===
-              "long_lived_exchange_failed"
-            ? "long_lived_token_failed"
+              "code_exchange_failed"
+            ? "code_exchange_failed"
             : message ===
-                "invalid_meta_token"
-              ? "token_validation_failed"
+                "long_lived_exchange_failed"
+              ? "long_lived_token_failed"
               : message ===
-                  "permission_lookup_failed"
-                ? "permission_check_failed"
-                : "token_failed";
+                  "invalid_meta_token"
+                ? "token_validation_failed"
+                : message ===
+                    "permission_lookup_failed"
+                  ? "permission_check_failed"
+                  : "token_failed";
 
     return createDashboardRedirect(
       req,
