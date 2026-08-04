@@ -169,12 +169,13 @@ export async function GET(
      * Skicka därför config_id och inte scope.
      */
     const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: "code",
-      config_id: configurationId,
-      state,
-    });
+  client_id: clientId,
+  redirect_uri: redirectUri,
+  response_type: "code",
+  config_id: configurationId,
+  state,
+  auth_type: "rerequest",
+});
 
     const authorizationUrl =
       `https://www.facebook.com/${graphApiVersion}/dialog/oauth?` +
