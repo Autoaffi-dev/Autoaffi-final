@@ -1,6 +1,9 @@
 // app/api/oauth/facebook/route.ts
 import crypto from "node:crypto";
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/authOptions";
@@ -8,7 +11,9 @@ import { authOptions } from "@/lib/authOptions";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type MetaPlatform = "facebook" | "instagram";
+type MetaPlatform =
+  | "facebook"
+  | "instagram";
 
 type OAuthStatePayload = {
   userId: string;
@@ -17,8 +22,11 @@ type OAuthStatePayload = {
   nonce: string;
 };
 
-function getRequiredEnv(name: string): string {
-  const value = process.env[name]?.trim();
+function getRequiredEnv(
+  name: string
+): string {
+  const value =
+    process.env[name]?.trim();
 
   if (!value) {
     throw new Error(
@@ -31,23 +39,34 @@ function getRequiredEnv(name: string): string {
 
 function getGraphApiVersion(): string {
   const configuredVersion =
-    process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
+    process.env
+      .META_GRAPH_API_VERSION
+      ?.trim() || "v25.0";
 
-  return configuredVersion.startsWith("v")
+  return configuredVersion.startsWith(
+    "v"
+  )
     ? configuredVersion
     : `v${configuredVersion}`;
 }
 
 function getStateSecret(): string {
   return (
-    process.env.META_OAUTH_STATE_SECRET?.trim() ||
+    process.env
+      .META_OAUTH_STATE_SECRET
+      ?.trim() ||
     process.env.NEXTAUTH_SECRET?.trim() ||
     ""
   );
 }
 
-function encodeBase64Url(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64url");
+function encodeBase64Url(
+  value: string
+): string {
+  return Buffer.from(
+    value,
+    "utf8"
+  ).toString("base64url");
 }
 
 function signState(
@@ -69,12 +88,15 @@ function createSignedState(
     userId,
     platform,
     issuedAt: Date.now(),
-    nonce: crypto.randomBytes(24).toString("base64url"),
+    nonce: crypto
+      .randomBytes(24)
+      .toString("base64url"),
   };
 
-  const encodedPayload = encodeBase64Url(
-    JSON.stringify(payload)
-  );
+  const encodedPayload =
+    encodeBase64Url(
+      JSON.stringify(payload)
+    );
 
   const signature = signState(
     encodedPayload,
@@ -84,12 +106,21 @@ function createSignedState(
   return `${encodedPayload}.${signature}`;
 }
 
-function getScopes(): string[] {
+function getScopes(
+  platform: MetaPlatform
+): string[] {
+  if (platform === "instagram") {
+    return [
+      "pages_show_list",
+      "pages_read_engagement",
+      "instagram_basic",
+      "instagram_manage_insights",
+    ];
+  }
+
   return [
     "pages_show_list",
     "pages_read_engagement",
-    "instagram_basic",
-    "instagram_manage_insights",
   ];
 }
 
@@ -102,7 +133,10 @@ function createErrorRedirect(
     req.url
   );
 
-  url.searchParams.set("error", error);
+  url.searchParams.set(
+    "error",
+    error
+  );
 
   return NextResponse.redirect(url);
 }
@@ -112,24 +146,33 @@ export async function GET(
 ): Promise<NextResponse> {
   try {
     const session =
-      await getServerSession(authOptions);
+      await getServerSession(
+        authOptions
+      );
 
-    const userId = session?.user?.id;
+    const userId =
+      session?.user?.id;
 
     if (!userId) {
-      const loginUrl = new URL("/login", req.url);
+      const loginUrl = new URL(
+        "/login",
+        req.url
+      );
 
       loginUrl.searchParams.set(
         "error",
         "unauthorized"
       );
 
-      return NextResponse.redirect(loginUrl);
+      return NextResponse.redirect(
+        loginUrl
+      );
     }
 
     const platformParam = (
-      req.nextUrl.searchParams.get("platform") ||
-      "facebook"
+      req.nextUrl.searchParams.get(
+        "platform"
+      ) || "facebook"
     )
       .toLowerCase()
       .trim();
@@ -140,19 +183,17 @@ export async function GET(
         : "facebook";
 
     const clientId =
-      getRequiredEnv("FACEBOOK_CLIENT_ID");
+      getRequiredEnv(
+        "FACEBOOK_CLIENT_ID"
+      );
 
     const redirectUri =
       getRequiredEnv(
         "NEXT_PUBLIC_FACEBOOK_REDIRECT"
       );
 
-    const configurationId =
-      getRequiredEnv(
-        "META_LOGIN_CONFIGURATION_ID"
-      );
-
-    const stateSecret = getStateSecret();
+    const stateSecret =
+      getStateSecret();
 
     if (!stateSecret) {
       throw new Error(
@@ -163,37 +204,51 @@ export async function GET(
     const graphApiVersion =
       getGraphApiVersion();
 
-    const state = createSignedState(
-      String(userId),
-      platform,
-      stateSecret
-    );
+    const state =
+      createSignedState(
+        String(userId),
+        platform,
+        stateSecret
+      );
 
-    const scopes = getScopes();
+    const scopes =
+      getScopes(platform);
 
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: "code",
-      config_id: configurationId,
-      scope: scopes.join(","),
-      state,
-      auth_type: "rerequest",
-    });
+    /*
+     * Scope-based Meta OAuth.
+     *
+     * META_LOGIN_CONFIGURATION_ID och config_id
+     * används inte i detta flöde.
+     *
+     * Behörigheterna skickas direkt via scope.
+     */
+    const params =
+      new URLSearchParams({
+        client_id: clientId,
+        redirect_uri:
+          redirectUri,
+        response_type: "code",
+        scope:
+          scopes.join(","),
+        state,
+        auth_type:
+          "rerequest",
+      });
 
     const authorizationUrl =
       `https://www.facebook.com/${graphApiVersion}/dialog/oauth?` +
       params.toString();
 
     console.info(
-      "[meta-oauth-start] Starting Facebook Login for Business",
+      "[meta-oauth-start] Starting scope-based Meta OAuth",
       {
         platform,
         graphApiVersion,
         redirectUri,
-        configurationIdPresent:
-          Boolean(configurationId),
-        requestedScopes: scopes,
+        requestedScopes:
+          scopes,
+        usesConfigurationId:
+          false,
       }
     );
 
