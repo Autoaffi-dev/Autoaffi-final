@@ -106,24 +106,6 @@ function createSignedState(
   return `${encodedPayload}.${signature}`;
 }
 
-function getScopes(
-  platform: MetaPlatform
-): string[] {
-  if (platform === "instagram") {
-    return [
-      "pages_show_list",
-      "pages_read_engagement",
-      "instagram_basic",
-      "instagram_manage_insights",
-    ];
-  }
-
-  return [
-    "pages_show_list",
-    "pages_read_engagement",
-  ];
-}
-
 function createErrorRedirect(
   req: NextRequest,
   error: string
@@ -192,6 +174,11 @@ export async function GET(
         "NEXT_PUBLIC_FACEBOOK_REDIRECT"
       );
 
+    const configurationId =
+      getRequiredEnv(
+        "META_LOGIN_CONFIGURATION_ID"
+      );
+
     const stateSecret =
       getStateSecret();
 
@@ -211,16 +198,14 @@ export async function GET(
         stateSecret
       );
 
-    const scopes =
-      getScopes(platform);
-
     /*
-     * Scope-based Meta OAuth.
+     * Facebook Login for Business.
      *
-     * META_LOGIN_CONFIGURATION_ID och config_id
-     * används inte i detta flöde.
+     * Behörigheterna styrs av Login Configuration
+     * i Meta Developer Dashboard.
      *
-     * Behörigheterna skickas direkt via scope.
+     * Vi skickar därför config_id och ingen
+     * separat scope-parameter.
      */
     const params =
       new URLSearchParams({
@@ -228,8 +213,8 @@ export async function GET(
         redirect_uri:
           redirectUri,
         response_type: "code",
-        scope:
-          scopes.join(","),
+        config_id:
+          configurationId,
         state,
         auth_type:
           "rerequest",
@@ -240,15 +225,14 @@ export async function GET(
       params.toString();
 
     console.info(
-      "[meta-oauth-start] Starting scope-based Meta OAuth",
+      "[meta-oauth-start] Starting Facebook Login for Business",
       {
         platform,
         graphApiVersion,
         redirectUri,
-        requestedScopes:
-          scopes,
+        configurationId,
         usesConfigurationId:
-          false,
+          true,
       }
     );
 
