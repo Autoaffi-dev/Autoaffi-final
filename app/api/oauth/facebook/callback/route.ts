@@ -960,22 +960,61 @@ export async function GET(
       });
 
     const permissions =
-      await fetchGrantedPermissions({
-        accessToken,
-        graphApiVersion,
-      });
+  await fetchGrantedPermissions({
+    accessToken,
+    graphApiVersion,
+  });
 
-    /*
-     * Viktigt diagnostiktest:
-     *
-     * Kör tokenen direkt mot /me och
-     * /me/accounts innan den sparas.
-     */
-    const graphDiagnostic =
-      await testMetaGraphAccess({
-        accessToken,
-        graphApiVersion,
-      });
+/*
+ * Både Facebook- och Instagram-anslutningen
+ * behöver kunna läsa användarens Facebook-sidor.
+ *
+ * Instagram Business-kontot hämtas senare via
+ * den Facebook-sida som Instagram-kontot är länkat till.
+ */
+const requiredPagePermissions = [
+  "pages_show_list",
+  "pages_read_engagement",
+  "pages_manage_metadata",
+];
+
+const missingPagePermissions =
+  requiredPagePermissions.filter(
+    (permission) =>
+      !permissions.granted.includes(
+        permission
+      )
+  );
+
+if (
+  missingPagePermissions.length > 0
+) {
+  console.error(
+    "[meta-oauth-callback] Required Meta Page permissions are missing",
+    {
+      platform,
+      grantedPermissions:
+        permissions.granted,
+      missingPagePermissions,
+    }
+  );
+
+  throw new Error(
+    "missing_page_permissions"
+  );
+}
+
+/*
+ * Viktigt diagnostiktest:
+ *
+ * Kör tokenen direkt mot /me och
+ * /me/accounts innan den sparas.
+ */
+const graphDiagnostic =
+  await testMetaGraphAccess({
+    accessToken,
+    graphApiVersion,
+  });
 
     console.info(
       "[meta-oauth-callback] Meta token permissions after exchange",
@@ -1179,26 +1218,29 @@ export async function GET(
     );
 
     const publicError =
-      message ===
-      "expired_state"
-        ? "oauth_state_expired"
-        : message.startsWith(
-              "invalid_state"
-            )
-          ? "bad_oauth_state"
+  message ===
+  "expired_state"
+    ? "oauth_state_expired"
+    : message.startsWith(
+          "invalid_state"
+        )
+      ? "bad_oauth_state"
+      : message ===
+          "code_exchange_failed"
+        ? "code_exchange_failed"
+        : message ===
+            "long_lived_exchange_failed"
+          ? "long_lived_token_failed"
           : message ===
-              "code_exchange_failed"
-            ? "code_exchange_failed"
+              "invalid_meta_token"
+            ? "token_validation_failed"
             : message ===
-                "long_lived_exchange_failed"
-              ? "long_lived_token_failed"
+                "permission_lookup_failed"
+              ? "permission_check_failed"
               : message ===
-                  "invalid_meta_token"
-                ? "token_validation_failed"
-                : message ===
-                    "permission_lookup_failed"
-                  ? "permission_check_failed"
-                  : "token_failed";
+                  "missing_page_permissions"
+                ? "missing_page_permissions"
+                : "token_failed";
 
     return createDashboardRedirect(
       req,
