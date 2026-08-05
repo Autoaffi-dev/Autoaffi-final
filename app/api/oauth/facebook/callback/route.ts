@@ -149,7 +149,7 @@ function getGraphApiVersion(): string {
   const configuredVersion =
     process.env
       .META_GRAPH_API_VERSION
-      ?.trim() || "v25.0";
+      ?.trim() || "v26.0";
 
   return configuredVersion.startsWith(
     "v"
