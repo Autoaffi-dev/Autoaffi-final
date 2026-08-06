@@ -38,18 +38,28 @@ type MetaTokenResponse = {
   error?: MetaApiError;
 };
 
+type MetaGranularScope = {
+  scope?: string;
+  target_ids?: Array<
+    string | number
+  >;
+};
+
+type MetaDebugTokenData = {
+  app_id?: string;
+  type?: string;
+  application?: string;
+  data_access_expires_at?: number;
+  expires_at?: number;
+  is_valid?: boolean;
+  issued_at?: number;
+  scopes?: string[];
+  granular_scopes?: MetaGranularScope[];
+  user_id?: string;
+};
+
 type MetaDebugTokenResponse = {
-  data?: {
-    app_id?: string;
-    type?: string;
-    application?: string;
-    data_access_expires_at?: number;
-    expires_at?: number;
-    is_valid?: boolean;
-    issued_at?: number;
-    scopes?: string[];
-    user_id?: string;
-  };
+  data?: MetaDebugTokenData;
   error?: MetaApiError;
 };
 
@@ -73,10 +83,19 @@ type MetaMeResponse = {
   error?: MetaApiError;
 };
 
+type MetaInstagramAccount = {
+  id?: string;
+  username?: string;
+  name?: string;
+};
+
 type MetaPage = {
   id: string;
   name?: string;
   category?: string;
+  access_token?: string;
+  instagram_business_account?:
+    MetaInstagramAccount;
 };
 
 type MetaPagesResponse = {
@@ -92,6 +111,22 @@ type MetaPagesResponse = {
   error?: MetaApiError;
 };
 
+type MetaSinglePageResponse =
+  MetaPage & {
+    error?: MetaApiError;
+  };
+
+type NormalizedMetaPage = {
+  id: string;
+  name: string | null;
+  category: string | null;
+  instagramBusinessAccount: {
+    id: string;
+    username: string | null;
+    name: string | null;
+  } | null;
+};
+
 type MetaGraphDiagnostic = {
   me: {
     ok: boolean;
@@ -102,23 +137,37 @@ type MetaGraphDiagnostic = {
     errorCode: number | null;
     errorSubcode: number | null;
   };
+
   pages: {
     ok: boolean;
     status: number;
+    discoveryMethod:
+      | "granular_scopes"
+      | "me_accounts"
+      | "none";
+    targetIds: string[];
     count: number;
-    pages: Array<{
-      id: string;
-      name: string | null;
-      category: string | null;
-    }>;
+    pages: NormalizedMetaPage[];
     errorMessage: string | null;
     errorCode: number | null;
     errorSubcode: number | null;
   };
 };
 
+type PermissionGroups = {
+  granted: string[];
+  declined: string[];
+  expired: string[];
+};
+
 const STATE_MAX_AGE_MS =
   10 * 60 * 1000;
+
+const REQUIRED_PAGE_PERMISSIONS = [
+  "pages_show_list",
+  "pages_read_engagement",
+  "pages_manage_metadata",
+] as const;
 
 function getRequiredEnv(
   name: string
@@ -140,7 +189,9 @@ function getStateSecret(): string {
     process.env
       .META_OAUTH_STATE_SECRET
       ?.trim() ||
-    process.env.NEXTAUTH_SECRET?.trim() ||
+    process.env
+      .NEXTAUTH_SECRET
+      ?.trim() ||
     ""
   );
 }
@@ -163,7 +214,10 @@ function signState(
   secret: string
 ): string {
   return crypto
-    .createHmac("sha256", secret)
+    .createHmac(
+      "sha256",
+      secret
+    )
     .update(encodedPayload)
     .digest("base64url");
 }
@@ -172,15 +226,17 @@ function safeSignatureMatch(
   received: string,
   expected: string
 ): boolean {
-  const receivedBuffer = Buffer.from(
-    received,
-    "utf8"
-  );
+  const receivedBuffer =
+    Buffer.from(
+      received,
+      "utf8"
+    );
 
-  const expectedBuffer = Buffer.from(
-    expected,
-    "utf8"
-  );
+  const expectedBuffer =
+    Buffer.from(
+      expected,
+      "utf8"
+    );
 
   if (
     receivedBuffer.length !==
@@ -199,7 +255,8 @@ function verifyAndDecodeState(
   state: string,
   secret: string
 ): OAuthStatePayload {
-  const parts = state.split(".");
+  const parts =
+    state.split(".");
 
   if (parts.length !== 2) {
     throw new Error(
@@ -229,7 +286,8 @@ function verifyAndDecodeState(
     );
   }
 
-  let payload: OAuthStatePayload;
+  let payload:
+    OAuthStatePayload;
 
   try {
     payload = JSON.parse(
@@ -259,7 +317,8 @@ function verifyAndDecodeState(
   }
 
   const age =
-    Date.now() - payload.issuedAt;
+    Date.now() -
+    payload.issuedAt;
 
   if (
     age < 0 ||
@@ -275,24 +334,31 @@ function verifyAndDecodeState(
 
 function createDashboardRedirect(
   req: NextRequest,
-  values: Record<string, string>
+  values: Record<
+    string,
+    string
+  >
 ): NextResponse {
   const url = new URL(
     "/login/dashboard/social-accounts",
     req.url
   );
 
-  for (const [
-    key,
-    value,
-  ] of Object.entries(values)) {
+  for (
+    const [
+      key,
+      value,
+    ] of Object.entries(values)
+  ) {
     url.searchParams.set(
       key,
       value
     );
   }
 
-  return NextResponse.redirect(url);
+  return NextResponse.redirect(
+    url
+  );
 }
 
 async function exchangeCodeForToken(
@@ -306,21 +372,24 @@ async function exchangeCodeForToken(
 ): Promise<MetaTokenResponse> {
   const params =
     new URLSearchParams({
-      client_id: args.clientId,
+      client_id:
+        args.clientId,
       client_secret:
         args.clientSecret,
       redirect_uri:
         args.redirectUri,
-      code: args.code,
+      code:
+        args.code,
     });
 
-  const response = await fetch(
-    `https://graph.facebook.com/${args.graphApiVersion}/oauth/access_token?${params.toString()}`,
-    {
-      method: "GET",
-      cache: "no-store",
-    }
-  );
+  const response =
+    await fetch(
+      `https://graph.facebook.com/${args.graphApiVersion}/oauth/access_token?${params.toString()}`,
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
 
   const body =
     (await response
@@ -332,22 +401,28 @@ async function exchangeCodeForToken(
 
   if (
     !response.ok ||
+    body.error ||
     !body.access_token
   ) {
     console.error(
       "[meta-oauth-callback] Code exchange failed",
       {
-        status: response.status,
+        status:
+          response.status,
         errorMessage:
-          body.error?.message ??
+          body.error
+            ?.message ??
           null,
         errorType:
-          body.error?.type ?? null,
+          body.error?.type ??
+          null,
         errorCode:
-          body.error?.code ?? null,
+          body.error?.code ??
+          null,
         errorSubcode:
           body.error
-            ?.error_subcode ?? null,
+            ?.error_subcode ??
+          null,
       }
     );
 
@@ -371,20 +446,22 @@ async function exchangeForLongLivedToken(
     new URLSearchParams({
       grant_type:
         "fb_exchange_token",
-      client_id: args.clientId,
+      client_id:
+        args.clientId,
       client_secret:
         args.clientSecret,
       fb_exchange_token:
         args.shortLivedToken,
     });
 
-  const response = await fetch(
-    `https://graph.facebook.com/${args.graphApiVersion}/oauth/access_token?${params.toString()}`,
-    {
-      method: "GET",
-      cache: "no-store",
-    }
-  );
+  const response =
+    await fetch(
+      `https://graph.facebook.com/${args.graphApiVersion}/oauth/access_token?${params.toString()}`,
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
 
   const body =
     (await response
@@ -396,22 +473,28 @@ async function exchangeForLongLivedToken(
 
   if (
     !response.ok ||
+    body.error ||
     !body.access_token
   ) {
     console.error(
-      "[meta-oauth-callback] Long-lived token exchange failed",
+      "[meta-oauth-callback] Long-lived USER token exchange failed",
       {
-        status: response.status,
+        status:
+          response.status,
         errorMessage:
-          body.error?.message ??
+          body.error
+            ?.message ??
           null,
         errorType:
-          body.error?.type ?? null,
+          body.error?.type ??
+          null,
         errorCode:
-          body.error?.code ?? null,
+          body.error?.code ??
+          null,
         errorSubcode:
           body.error
-            ?.error_subcode ?? null,
+            ?.error_subcode ??
+          null,
       }
     );
 
@@ -430,9 +513,7 @@ async function debugAccessToken(
     clientSecret: string;
     graphApiVersion: string;
   }
-): Promise<
-  MetaDebugTokenResponse["data"]
-> {
+): Promise<MetaDebugTokenData> {
   const appAccessToken =
     `${args.clientId}|${args.clientSecret}`;
 
@@ -444,13 +525,14 @@ async function debugAccessToken(
         appAccessToken,
     });
 
-  const response = await fetch(
-    `https://graph.facebook.com/${args.graphApiVersion}/debug_token?${params.toString()}`,
-    {
-      method: "GET",
-      cache: "no-store",
-    }
-  );
+  const response =
+    await fetch(
+      `https://graph.facebook.com/${args.graphApiVersion}/debug_token?${params.toString()}`,
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
 
   const body =
     (await response
@@ -460,32 +542,50 @@ async function debugAccessToken(
           ({}) as MetaDebugTokenResponse
       )) as MetaDebugTokenResponse;
 
-  const data = body.data;
+  const data =
+    body.data;
 
   if (
     !response.ok ||
     body.error ||
     !data?.is_valid ||
-    data.app_id !== args.clientId
+    String(data.app_id) !==
+      String(args.clientId)
   ) {
     console.error(
       "[meta-oauth-callback] Token validation failed",
       {
-        status: response.status,
+        status:
+          response.status,
         errorMessage:
-          body.error?.message ??
+          body.error
+            ?.message ??
           null,
         errorCode:
-          body.error?.code ?? null,
+          body.error?.code ??
+          null,
+        errorSubcode:
+          body.error
+            ?.error_subcode ??
+          null,
         isValid:
-          data?.is_valid ?? null,
+          data?.is_valid ??
+          null,
         tokenAppId:
-          data?.app_id ?? null,
+          data?.app_id ??
+          null,
         expectedAppId:
           args.clientId,
         appIdMatches:
-          data?.app_id ===
-          args.clientId,
+          String(
+            data?.app_id ?? ""
+          ) ===
+          String(
+            args.clientId
+          ),
+        tokenType:
+          data?.type ??
+          null,
       }
     );
 
@@ -501,25 +601,28 @@ async function fetchGrantedPermissions(
   args: {
     accessToken: string;
     graphApiVersion: string;
+    debugTokenData:
+      MetaDebugTokenData;
   }
-): Promise<{
-  granted: string[];
-  declined: string[];
-  expired: string[];
-}> {
+): Promise<PermissionGroups> {
+  const debugScopes =
+    args.debugTokenData
+      .scopes ?? [];
+
   const params =
     new URLSearchParams({
       access_token:
         args.accessToken,
     });
 
-  const response = await fetch(
-    `https://graph.facebook.com/${args.graphApiVersion}/me/permissions?${params.toString()}`,
-    {
-      method: "GET",
-      cache: "no-store",
-    }
-  );
+  const response =
+    await fetch(
+      `https://graph.facebook.com/${args.graphApiVersion}/me/permissions?${params.toString()}`,
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
 
   const body =
     (await response
@@ -529,24 +632,65 @@ async function fetchGrantedPermissions(
           ({}) as MetaPermissionsResponse
       )) as MetaPermissionsResponse;
 
+  /*
+   * SYSTEM_USER-token kan i vissa Meta-flöden
+   * inte returnera /me/permissions på samma sätt
+   * som en vanlig USER-token.
+   *
+   * Då använder vi verifierade scopes från
+   * debug_token som fallback.
+   */
   if (
     !response.ok ||
     body.error
   ) {
+    if (
+      debugScopes.length > 0
+    ) {
+      console.warn(
+        "[meta-oauth-callback] /me/permissions unavailable; using debug_token scopes",
+        {
+          status:
+            response.status,
+          tokenType:
+            args.debugTokenData
+              .type ??
+            null,
+          errorMessage:
+            body.error
+              ?.message ??
+            null,
+          debugScopes,
+        }
+      );
+
+      return {
+        granted:
+          debugScopes,
+        declined: [],
+        expired: [],
+      };
+    }
+
     console.error(
       "[meta-oauth-callback] Permission lookup failed",
       {
-        status: response.status,
+        status:
+          response.status,
         errorMessage:
-          body.error?.message ??
+          body.error
+            ?.message ??
           null,
         errorType:
-          body.error?.type ?? null,
+          body.error?.type ??
+          null,
         errorCode:
-          body.error?.code ?? null,
+          body.error?.code ??
+          null,
         errorSubcode:
           body.error
-            ?.error_subcode ?? null,
+            ?.error_subcode ??
+          null,
       }
     );
 
@@ -558,8 +702,8 @@ async function fetchGrantedPermissions(
   const permissions =
     body.data ?? [];
 
-  return {
-    granted: permissions
+  const granted =
+    permissions
       .filter(
         (item) =>
           item.status ===
@@ -568,42 +712,343 @@ async function fetchGrantedPermissions(
       .map(
         (item) =>
           item.permission
-      ),
+      );
 
-    declined: permissions
-      .filter(
-        (item) =>
-          item.status ===
-          "declined"
-      )
-      .map(
-        (item) =>
-          item.permission
-      ),
+  /*
+   * Lägg även till debug_token-scopes.
+   * Detta gör kontrollen stabil för både
+   * USER och SYSTEM_USER.
+   */
+  const combinedGranted =
+    Array.from(
+      new Set([
+        ...granted,
+        ...debugScopes,
+      ])
+    );
 
-    expired: permissions
-      .filter(
-        (item) =>
-          item.status ===
-          "expired"
-      )
-      .map(
-        (item) =>
-          item.permission
-      ),
+  return {
+    granted:
+      combinedGranted,
+
+    declined:
+      permissions
+        .filter(
+          (item) =>
+            item.status ===
+            "declined"
+        )
+        .map(
+          (item) =>
+            item.permission
+        ),
+
+    expired:
+      permissions
+        .filter(
+          (item) =>
+            item.status ===
+            "expired"
+        )
+        .map(
+          (item) =>
+            item.permission
+        ),
   };
 }
 
-/**
- * Testar tokenen direkt mot Graph API.
- *
- * Vi hämtar inte Page Access Tokens här.
- * Därför loggas eller sparas inga sidtokens.
- */
+function extractPageTargetIds(
+  tokenData:
+    MetaDebugTokenData
+): string[] {
+  const granularScopes =
+    tokenData
+      .granular_scopes ??
+    [];
+
+  const pageScopes =
+    new Set([
+      "pages_show_list",
+      "pages_read_engagement",
+      "pages_manage_metadata",
+      "pages_manage_posts",
+      "pages_read_user_content",
+    ]);
+
+  const targetIds =
+    granularScopes
+      .filter(
+        (item) =>
+          Boolean(
+            item.scope &&
+            pageScopes.has(
+              item.scope
+            )
+          )
+      )
+      .flatMap(
+        (item) =>
+          item.target_ids ??
+          []
+      )
+      .map(
+        (id) =>
+          String(id).trim()
+      )
+      .filter(Boolean);
+
+  return Array.from(
+    new Set(targetIds)
+  );
+}
+
+function normalizePage(
+  page: MetaPage
+): NormalizedMetaPage {
+  const instagramAccount =
+    page
+      .instagram_business_account;
+
+  return {
+    id:
+      String(page.id),
+
+    name:
+      page.name ??
+      null,
+
+    category:
+      page.category ??
+      null,
+
+    instagramBusinessAccount:
+      instagramAccount?.id
+        ? {
+            id:
+              String(
+                instagramAccount.id
+              ),
+
+            username:
+              instagramAccount
+                .username ??
+              null,
+
+            name:
+              instagramAccount
+                .name ??
+              null,
+          }
+        : null,
+  };
+}
+
+async function fetchPageById(
+  args: {
+    pageId: string;
+    accessToken: string;
+    graphApiVersion: string;
+  }
+): Promise<
+  NormalizedMetaPage | null
+> {
+  const url = new URL(
+    `https://graph.facebook.com/${args.graphApiVersion}/${encodeURIComponent(args.pageId)}`
+  );
+
+  url.searchParams.set(
+    "fields",
+    [
+      "id",
+      "name",
+      "category",
+      "instagram_business_account{id,username,name}",
+    ].join(",")
+  );
+
+  url.searchParams.set(
+    "access_token",
+    args.accessToken
+  );
+
+  const response =
+    await fetch(
+      url.toString(),
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
+
+  const body =
+    (await response
+      .json()
+      .catch(
+        () =>
+          ({}) as MetaSinglePageResponse
+      )) as MetaSinglePageResponse;
+
+  if (
+    !response.ok ||
+    body.error ||
+    !body.id
+  ) {
+    console.warn(
+      "[meta-oauth-callback] Assigned Page target could not be loaded",
+      {
+        pageId:
+          args.pageId,
+        status:
+          response.status,
+        errorMessage:
+          body.error
+            ?.message ??
+          null,
+        errorCode:
+          body.error?.code ??
+          null,
+        errorSubcode:
+          body.error
+            ?.error_subcode ??
+          null,
+      }
+    );
+
+    return null;
+  }
+
+  return normalizePage(
+    body
+  );
+}
+
+async function fetchPagesFromTargetIds(
+  args: {
+    targetIds: string[];
+    accessToken: string;
+    graphApiVersion: string;
+  }
+): Promise<
+  NormalizedMetaPage[]
+> {
+  if (
+    args.targetIds.length ===
+    0
+  ) {
+    return [];
+  }
+
+  const results =
+    await Promise.all(
+      args.targetIds.map(
+        (pageId) =>
+          fetchPageById({
+            pageId,
+            accessToken:
+              args.accessToken,
+            graphApiVersion:
+              args.graphApiVersion,
+          })
+      )
+    );
+
+  const pages =
+    results.filter(
+      (
+        page
+      ): page is NormalizedMetaPage =>
+        page !== null
+    );
+
+  return Array.from(
+    new Map(
+      pages.map(
+        (page) => [
+          page.id,
+          page,
+        ]
+      )
+    ).values()
+  );
+}
+
+async function fetchPagesFromMeAccounts(
+  args: {
+    accessToken: string;
+    graphApiVersion: string;
+  }
+): Promise<{
+  status: number;
+  pages: NormalizedMetaPage[];
+  error:
+    | MetaApiError
+    | null;
+}> {
+  const url = new URL(
+    `https://graph.facebook.com/${args.graphApiVersion}/me/accounts`
+  );
+
+  url.searchParams.set(
+    "fields",
+    [
+      "id",
+      "name",
+      "category",
+      "instagram_business_account{id,username,name}",
+    ].join(",")
+  );
+
+  url.searchParams.set(
+    "limit",
+    "100"
+  );
+
+  url.searchParams.set(
+    "access_token",
+    args.accessToken
+  );
+
+  const response =
+    await fetch(
+      url.toString(),
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
+
+  const body =
+    (await response
+      .json()
+      .catch(
+        () =>
+          ({}) as MetaPagesResponse
+      )) as MetaPagesResponse;
+
+  return {
+    status:
+      response.status,
+
+    pages:
+      (body.data ?? [])
+        .filter(
+          (page) =>
+            Boolean(page.id)
+        )
+        .map(normalizePage),
+
+    error:
+      body.error ??
+      null,
+  };
+}
+
 async function testMetaGraphAccess(
   args: {
     accessToken: string;
     graphApiVersion: string;
+    tokenData:
+      MetaDebugTokenData;
   }
 ): Promise<MetaGraphDiagnostic> {
   const meUrl = new URL(
@@ -620,38 +1065,14 @@ async function testMetaGraphAccess(
     args.accessToken
   );
 
-  const pagesUrl = new URL(
-    `https://graph.facebook.com/${args.graphApiVersion}/me/accounts`
-  );
-
-  pagesUrl.searchParams.set(
-    "fields",
-    "id,name,category"
-  );
-
-  pagesUrl.searchParams.set(
-    "limit",
-    "100"
-  );
-
-  pagesUrl.searchParams.set(
-    "access_token",
-    args.accessToken
-  );
-
-  const [
-    meResponse,
-    pagesResponse,
-  ] = await Promise.all([
-    fetch(meUrl.toString(), {
-      method: "GET",
-      cache: "no-store",
-    }),
-    fetch(pagesUrl.toString(), {
-      method: "GET",
-      cache: "no-store",
-    }),
-  ]);
+  const meResponse =
+    await fetch(
+      meUrl.toString(),
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
 
   const meBody =
     (await meResponse
@@ -661,19 +1082,33 @@ async function testMetaGraphAccess(
           ({}) as MetaMeResponse
       )) as MetaMeResponse;
 
-  const pagesBody =
-    (await pagesResponse
-      .json()
-      .catch(
-        () =>
-          ({}) as MetaPagesResponse
-      )) as MetaPagesResponse;
+  /*
+   * Först använder vi tillgångarnas target_ids
+   * från debug_token.
+   *
+   * Detta är rätt väg för konfigurationsstyrda
+   * Facebook Login for Business-token där
+   * specifika Pages har valts som assets.
+   */
+  const targetIds =
+    extractPageTargetIds(
+      args.tokenData
+    );
 
-  const pages =
-    pagesBody.data ?? [];
+  const targetedPages =
+    await fetchPagesFromTargetIds({
+      targetIds,
+      accessToken:
+        args.accessToken,
+      graphApiVersion:
+        args.graphApiVersion,
+    });
 
-  const diagnostic: MetaGraphDiagnostic =
-    {
+  if (
+    targetedPages.length > 0
+  ) {
+    const diagnostic:
+      MetaGraphDiagnostic = {
       me: {
         ok:
           meResponse.ok &&
@@ -684,17 +1119,23 @@ async function testMetaGraphAccess(
           meResponse.status,
 
         id:
-          meBody.id ?? null,
+          meBody.id ??
+          args.tokenData
+            .user_id ??
+          null,
 
         name:
-          meBody.name ?? null,
+          meBody.name ??
+          null,
 
         errorMessage:
-          meBody.error?.message ??
+          meBody.error
+            ?.message ??
           null,
 
         errorCode:
-          meBody.error?.code ??
+          meBody.error
+            ?.code ??
           null,
 
         errorSubcode:
@@ -704,46 +1145,136 @@ async function testMetaGraphAccess(
       },
 
       pages: {
-        ok:
-          pagesResponse.ok &&
-          !pagesBody.error,
-
-        status:
-          pagesResponse.status,
-
+        ok: true,
+        status: 200,
+        discoveryMethod:
+          "granular_scopes",
+        targetIds,
         count:
-          pages.length,
-
-        pages: pages.map(
-          (page) => ({
-            id: page.id,
-            name:
-              page.name ?? null,
-            category:
-              page.category ?? null,
-          })
-        ),
-
-        errorMessage:
-          pagesBody.error
-            ?.message ?? null,
-
-        errorCode:
-          pagesBody.error
-            ?.code ?? null,
-
-        errorSubcode:
-          pagesBody.error
-            ?.error_subcode ??
-          null,
+          targetedPages.length,
+        pages:
+          targetedPages,
+        errorMessage: null,
+        errorCode: null,
+        errorSubcode: null,
       },
     };
+
+    console.info(
+      "[meta-oauth-callback] Direct Graph API token diagnostic",
+      {
+        tokenType:
+          args.tokenData
+            .type ??
+          null,
+        me:
+          diagnostic.me,
+        pages:
+          diagnostic.pages,
+      }
+    );
+
+    return diagnostic;
+  }
+
+  /*
+   * Fallback för vanlig USER-token.
+   */
+  const meAccounts =
+    await fetchPagesFromMeAccounts({
+      accessToken:
+        args.accessToken,
+      graphApiVersion:
+        args.graphApiVersion,
+    });
+
+  const diagnostic:
+    MetaGraphDiagnostic = {
+    me: {
+      ok:
+        meResponse.ok &&
+        !meBody.error &&
+        Boolean(meBody.id),
+
+      status:
+        meResponse.status,
+
+      id:
+        meBody.id ??
+        args.tokenData
+          .user_id ??
+        null,
+
+      name:
+        meBody.name ??
+        null,
+
+      errorMessage:
+        meBody.error
+          ?.message ??
+        null,
+
+      errorCode:
+        meBody.error
+          ?.code ??
+        null,
+
+      errorSubcode:
+        meBody.error
+          ?.error_subcode ??
+        null,
+    },
+
+    pages: {
+      ok:
+        !meAccounts.error,
+
+      status:
+        meAccounts.status,
+
+      discoveryMethod:
+        meAccounts.pages
+          .length > 0
+          ? "me_accounts"
+          : "none",
+
+      targetIds,
+
+      count:
+        meAccounts.pages
+          .length,
+
+      pages:
+        meAccounts.pages,
+
+      errorMessage:
+        meAccounts.error
+          ?.message ??
+        null,
+
+      errorCode:
+        meAccounts.error
+          ?.code ??
+        null,
+
+      errorSubcode:
+        meAccounts.error
+          ?.error_subcode ??
+        null,
+    },
+  };
 
   console.info(
     "[meta-oauth-callback] Direct Graph API token diagnostic",
     {
-      me: diagnostic.me,
-      pages: diagnostic.pages,
+      tokenType:
+        args.tokenData
+          .type ??
+        null,
+      me:
+        diagnostic.me,
+      pages:
+        diagnostic.pages,
     }
   );
 
@@ -752,10 +1283,36 @@ async function testMetaGraphAccess(
 
 function calculateExpiresInSec(
   args: {
-    tokenExpiresIn?: number;
-    debugExpiresAt?: number;
+    tokenType:
+      string | undefined;
+    tokenExpiresIn:
+      number | undefined;
+    debugExpiresAt:
+      number | undefined;
   }
 ): number | null {
+  const normalizedType =
+    args.tokenType
+      ?.toUpperCase()
+      .trim();
+
+  /*
+   * Den valda Facebook Login for Business-
+   * konfigurationen använder en System User-token
+   * med "Never expire".
+   */
+  if (
+    normalizedType ===
+    "SYSTEM_USER"
+  ) {
+    if (
+      !args.debugExpiresAt ||
+      args.debugExpiresAt === 0
+    ) {
+      return null;
+    }
+  }
+
   if (
     typeof args.debugExpiresAt ===
       "number" &&
@@ -765,7 +1322,7 @@ function calculateExpiresInSec(
       0,
       Math.floor(
         args.debugExpiresAt -
-          Date.now() / 1000
+        Date.now() / 1000
       )
     );
   }
@@ -779,6 +1336,69 @@ function calculateExpiresInSec(
   }
 
   return null;
+}
+
+function getPublicError(
+  message: string
+): string {
+  if (
+    message ===
+    "expired_state"
+  ) {
+    return "oauth_state_expired";
+  }
+
+  if (
+    message.startsWith(
+      "invalid_state"
+    )
+  ) {
+    return "bad_oauth_state";
+  }
+
+  if (
+    message ===
+    "code_exchange_failed"
+  ) {
+    return "code_exchange_failed";
+  }
+
+  if (
+    message ===
+    "long_lived_exchange_failed"
+  ) {
+    return "long_lived_token_failed";
+  }
+
+  if (
+    message ===
+    "invalid_meta_token"
+  ) {
+    return "token_validation_failed";
+  }
+
+  if (
+    message ===
+    "permission_lookup_failed"
+  ) {
+    return "permission_check_failed";
+  }
+
+  if (
+    message ===
+    "missing_page_permissions"
+  ) {
+    return "missing_page_permissions";
+  }
+
+  if (
+    message ===
+    "no_assigned_meta_assets"
+  ) {
+    return "no_assigned_meta_assets";
+  }
+
+  return "token_failed";
 }
 
 export async function GET(
@@ -803,7 +1423,8 @@ export async function GET(
     console.warn(
       "[meta-oauth-callback] User or Meta rejected OAuth",
       {
-        error: metaError,
+        error:
+          metaError,
         reason:
           metaErrorReason,
         description:
@@ -833,7 +1454,10 @@ export async function GET(
       "state"
     );
 
-  if (!code || !state) {
+  if (
+    !code ||
+    !state
+  ) {
     return createDashboardRedirect(
       req,
       {
@@ -843,7 +1467,8 @@ export async function GET(
     );
   }
 
-  let platform: MetaPlatform =
+  let platform:
+    MetaPlatform =
     "facebook";
 
   try {
@@ -928,7 +1553,12 @@ export async function GET(
     const graphApiVersion =
       getGraphApiVersion();
 
-    const shortLivedToken =
+    /*
+     * Steg 1:
+     * Växla authorization code mot den token
+     * som valts i Login Configuration.
+     */
+    const issuedToken =
       await exchangeCodeForToken({
         code,
         clientId,
@@ -937,109 +1567,206 @@ export async function GET(
         graphApiVersion,
       });
 
-    const longLivedToken =
-      await exchangeForLongLivedToken({
-        shortLivedToken:
-          shortLivedToken
-            .access_token!,
-        clientId,
-        clientSecret,
-        graphApiVersion,
-      });
-
-    const accessToken =
-      longLivedToken
+    const issuedAccessToken =
+      issuedToken
         .access_token!;
 
-    const tokenData =
+    /*
+     * Steg 2:
+     * Kontrollera tokenens riktiga typ innan
+     * vi beslutar om long-lived-växling.
+     */
+    const issuedTokenData =
       await debugAccessToken({
-        accessToken,
+        accessToken:
+          issuedAccessToken,
         clientId,
         clientSecret,
         graphApiVersion,
       });
 
-    const permissions =
-  await fetchGrantedPermissions({
-    accessToken,
-    graphApiVersion,
-  });
+    const issuedTokenType =
+      issuedTokenData
+        .type
+        ?.toUpperCase()
+        .trim() ||
+      "UNKNOWN";
 
-/*
- * Både Facebook- och Instagram-anslutningen
- * behöver kunna läsa användarens Facebook-sidor.
- *
- * Instagram Business-kontot hämtas senare via
- * den Facebook-sida som Instagram-kontot är länkat till.
- */
-const requiredPagePermissions = [
-  "pages_show_list",
-  "pages_read_engagement",
-  "pages_manage_metadata",
-];
+    let accessToken =
+      issuedAccessToken;
 
-const missingPagePermissions =
-  requiredPagePermissions.filter(
-    (permission) =>
-      !permissions.granted.includes(
-        permission
-      )
-  );
+    let finalTokenResponse =
+      issuedToken;
 
-if (
-  missingPagePermissions.length > 0
-) {
-  console.error(
-    "[meta-oauth-callback] Required Meta Page permissions are missing",
-    {
-      platform,
-      grantedPermissions:
-        permissions.granted,
-      missingPagePermissions,
+    let tokenData =
+      issuedTokenData;
+
+    let usedLongLivedExchange =
+      false;
+
+    /*
+     * SYSTEM_USER:
+     * Använd tokenen direkt.
+     *
+     * USER:
+     * Växla till long-lived User token.
+     */
+    if (
+      issuedTokenType ===
+      "USER"
+    ) {
+      finalTokenResponse =
+        await exchangeForLongLivedToken({
+          shortLivedToken:
+            issuedAccessToken,
+          clientId,
+          clientSecret,
+          graphApiVersion,
+        });
+
+      accessToken =
+        finalTokenResponse
+          .access_token!;
+
+      tokenData =
+        await debugAccessToken({
+          accessToken,
+          clientId,
+          clientSecret,
+          graphApiVersion,
+        });
+
+      usedLongLivedExchange =
+        true;
     }
-  );
 
-  throw new Error(
-    "missing_page_permissions"
-  );
-}
+    const finalTokenType =
+      tokenData
+        .type
+        ?.toUpperCase()
+        .trim() ||
+      issuedTokenType;
 
-/*
- * Viktigt diagnostiktest:
- *
- * Kör tokenen direkt mot /me och
- * /me/accounts innan den sparas.
- */
-const graphDiagnostic =
-  await testMetaGraphAccess({
-    accessToken,
-    graphApiVersion,
-  });
+    const permissions =
+      await fetchGrantedPermissions({
+        accessToken,
+        graphApiVersion,
+        debugTokenData:
+          tokenData,
+      });
+
+    const missingPagePermissions =
+      REQUIRED_PAGE_PERMISSIONS
+        .filter(
+          (permission) =>
+            !permissions
+              .granted
+              .includes(
+                permission
+              )
+        );
+
+    if (
+      missingPagePermissions
+        .length > 0
+    ) {
+      console.error(
+        "[meta-oauth-callback] Required Meta Page permissions are missing",
+        {
+          platform,
+          tokenType:
+            finalTokenType,
+          grantedPermissions:
+            permissions.granted,
+          missingPagePermissions,
+        }
+      );
+
+      throw new Error(
+        "missing_page_permissions"
+      );
+    }
+
+    /*
+     * Hämta valda tillgångar.
+     *
+     * SYSTEM_USER använder i första hand
+     * granular_scopes.target_ids.
+     *
+     * USER använder /me/accounts som fallback.
+     */
+    const graphDiagnostic =
+      await testMetaGraphAccess({
+        accessToken,
+        graphApiVersion,
+        tokenData,
+      });
+
+    /*
+     * Eftersom den nya konfigurationen kräver
+     * Pages och Instagram accounts ska minst
+     * en Facebook-sida hittas.
+     */
+    if (
+      graphDiagnostic
+        .pages.count === 0
+    ) {
+      console.error(
+        "[meta-oauth-callback] No assigned Meta Page assets were returned",
+        {
+          platform,
+          tokenType:
+            finalTokenType,
+          discoveryMethod:
+            graphDiagnostic
+              .pages
+              .discoveryMethod,
+          targetIds:
+            graphDiagnostic
+              .pages
+              .targetIds,
+          granularScopes:
+            tokenData
+              .granular_scopes ??
+            [],
+          grantedPermissions:
+            permissions.granted,
+        }
+      );
+
+      throw new Error(
+        "no_assigned_meta_assets"
+      );
+    }
 
     console.info(
-      "[meta-oauth-callback] Meta token permissions after exchange",
+      "[meta-oauth-callback] Meta token and assigned assets after exchange",
       {
         platform,
 
         tokenAppId:
-          tokenData?.app_id ??
+          tokenData.app_id ??
           null,
 
         tokenUserId:
-          tokenData?.user_id ??
+          tokenData.user_id ??
           null,
 
         tokenType:
-          tokenData?.type ??
-          null,
+          finalTokenType,
 
         tokenApplication:
           tokenData
-            ?.application ??
+            .application ??
           null,
 
         debugTokenScopes:
-          tokenData?.scopes ??
+          tokenData.scopes ??
+          [],
+
+        granularScopes:
+          tokenData
+            .granular_scopes ??
           [],
 
         grantedPermissions:
@@ -1052,7 +1779,8 @@ const graphDiagnostic =
           permissions.expired,
 
         graphMeOk:
-          graphDiagnostic.me.ok,
+          graphDiagnostic
+            .me.ok,
 
         graphPagesOk:
           graphDiagnostic
@@ -1062,20 +1790,49 @@ const graphDiagnostic =
           graphDiagnostic
             .pages.count,
 
-        usedLongLivedToken:
-          true,
+        pageDiscoveryMethod:
+          graphDiagnostic
+            .pages
+            .discoveryMethod,
+
+        assignedPageIds:
+          graphDiagnostic
+            .pages
+            .pages
+            .map(
+              (page) =>
+                page.id
+            ),
+
+        assignedInstagramIds:
+          graphDiagnostic
+            .pages
+            .pages
+            .map(
+              (page) =>
+                page
+                  .instagramBusinessAccount
+                  ?.id ??
+                null
+            )
+            .filter(Boolean),
+
+        usedLongLivedExchange,
       }
     );
 
     const expiresInSec =
       calculateExpiresInSec({
+        tokenType:
+          finalTokenType,
+
         tokenExpiresIn:
-          longLivedToken
+          finalTokenResponse
             .expires_in,
 
         debugExpiresAt:
           tokenData
-            ?.expires_at,
+            .expires_at,
       });
 
     await upsertSocialAccount({
@@ -1101,27 +1858,66 @@ const graphDiagnostic =
           graphApiVersion,
 
         token_type:
-          longLivedToken
+          finalTokenType,
+
+        token_response_type:
+          finalTokenResponse
             .token_type ??
           null,
 
         meta_user_id:
-          tokenData?.user_id ??
+          tokenData
+            .user_id ??
           null,
 
+        token_app_id:
+          tokenData
+            .app_id ??
+          null,
+
+        token_application:
+          tokenData
+            .application ??
+          null,
+
+        is_system_user_token:
+          finalTokenType ===
+          "SYSTEM_USER",
+
+        used_long_lived_exchange:
+          usedLongLivedExchange,
+
         debug_token_scopes:
-          tokenData?.scopes ??
+          tokenData
+            .scopes ??
+          [],
+
+        granular_scopes:
+          tokenData
+            .granular_scopes ??
           [],
 
         data_access_expires_at:
           tokenData
-            ?.data_access_expires_at &&
+            .data_access_expires_at &&
           tokenData
             .data_access_expires_at >
             0
             ? new Date(
                 tokenData
                   .data_access_expires_at *
+                  1000
+              ).toISOString()
+            : null,
+
+        token_expires_at:
+          tokenData
+            .expires_at &&
+          tokenData
+            .expires_at > 0
+            ? new Date(
+                tokenData
+                  .expires_at *
                   1000
               ).toISOString()
             : null,
@@ -1134,6 +1930,34 @@ const graphDiagnostic =
 
         expired_scopes:
           permissions.expired,
+
+        assigned_pages:
+          graphDiagnostic
+            .pages.pages,
+
+        assigned_page_ids:
+          graphDiagnostic
+            .pages.pages.map(
+              (page) =>
+                page.id
+            ),
+
+        assigned_instagram_ids:
+          graphDiagnostic
+            .pages.pages
+            .map(
+              (page) =>
+                page
+                  .instagramBusinessAccount
+                  ?.id ??
+                null
+            )
+            .filter(
+              (
+                id
+              ): id is string =>
+                Boolean(id)
+            ),
 
         graph_diagnostic: {
           tested_at:
@@ -1158,11 +1982,18 @@ const graphDiagnostic =
 
           me_error:
             graphDiagnostic
-              .me.errorMessage,
+              .me
+              .errorMessage,
 
           me_error_code:
             graphDiagnostic
-              .me.errorCode,
+              .me
+              .errorCode,
+
+          me_error_subcode:
+            graphDiagnostic
+              .me
+              .errorSubcode,
 
           pages_ok:
             graphDiagnostic
@@ -1171,6 +2002,16 @@ const graphDiagnostic =
           pages_status:
             graphDiagnostic
               .pages.status,
+
+          page_discovery_method:
+            graphDiagnostic
+              .pages
+              .discoveryMethod,
+
+          page_target_ids:
+            graphDiagnostic
+              .pages
+              .targetIds,
 
           page_count:
             graphDiagnostic
@@ -1187,7 +2028,8 @@ const graphDiagnostic =
 
           pages_error_code:
             graphDiagnostic
-              .pages.errorCode,
+              .pages
+              .errorCode,
 
           pages_error_subcode:
             graphDiagnostic
@@ -1200,7 +2042,8 @@ const graphDiagnostic =
     return createDashboardRedirect(
       req,
       {
-        connected: platform,
+        connected:
+          platform,
       }
     );
   } catch (error) {
@@ -1213,39 +2056,18 @@ const graphDiagnostic =
       "[meta-oauth-callback] OAuth callback failed",
       {
         platform,
-        error: message,
+        error:
+          message,
       }
     );
-
-    const publicError =
-  message ===
-  "expired_state"
-    ? "oauth_state_expired"
-    : message.startsWith(
-          "invalid_state"
-        )
-      ? "bad_oauth_state"
-      : message ===
-          "code_exchange_failed"
-        ? "code_exchange_failed"
-        : message ===
-            "long_lived_exchange_failed"
-          ? "long_lived_token_failed"
-          : message ===
-              "invalid_meta_token"
-            ? "token_validation_failed"
-            : message ===
-                "permission_lookup_failed"
-              ? "permission_check_failed"
-              : message ===
-                  "missing_page_permissions"
-                ? "missing_page_permissions"
-                : "token_failed";
 
     return createDashboardRedirect(
       req,
       {
-        error: publicError,
+        error:
+          getPublicError(
+            message
+          ),
         platform,
       }
     );
