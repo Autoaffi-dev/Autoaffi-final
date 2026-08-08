@@ -1,4 +1,5 @@
 // app/api/oauth/facebook/route.ts
+
 import crypto from "node:crypto";
 import {
   NextRequest,
@@ -159,10 +160,46 @@ export async function GET(
       .toLowerCase()
       .trim();
 
+    /*
+     * IMPORTANT:
+     *
+     * Instagram ska INTE längre använda
+     * Facebook Login for Business.
+     *
+     * Instagram använder istället sitt
+     * separata direkta Instagram Business
+     * Login-flöde via:
+     *
+     * /api/oauth/instagram
+     *
+     * Detta fungerar även som ett skydd för
+     * äldre frontend-kod som fortfarande
+     * anropar:
+     *
+     * /api/oauth/facebook?platform=instagram
+     */
+    if (platformParam === "instagram") {
+      const instagramOAuthUrl =
+        new URL(
+          "/api/oauth/instagram",
+          req.url
+        );
+
+      console.info(
+        "[meta-oauth-start] Redirecting Instagram to direct Instagram Business Login"
+      );
+
+      return NextResponse.redirect(
+        instagramOAuthUrl
+      );
+    }
+
+    /*
+     * Den här routen hanterar från och med
+     * nu endast Facebook.
+     */
     const platform: MetaPlatform =
-      platformParam === "instagram"
-        ? "instagram"
-        : "facebook";
+      "facebook";
 
     const clientId =
       getRequiredEnv(
