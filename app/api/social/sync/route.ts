@@ -77,8 +77,10 @@ type MetaPageInstagramResponse = MetaApiError & {
 
 type InstagramProfile = MetaApiError & {
   id?: string;
+  user_id?: string;
   username?: string;
   name?: string;
+  account_type?: string;
   biography?: string;
   website?: string;
   profile_picture_url?: string;
@@ -377,7 +379,9 @@ function normalizePlatform(value: unknown): Platform {
     return platform;
   }
 
-  throw new Error(`invalid_platform:${platform || "missing"}`);
+  throw new Error(
+    `invalid_platform:${platform || "missing"}`
+  );
 }
 
 function isUuid(value: string): boolean {
@@ -386,37 +390,64 @@ function isUuid(value: string): boolean {
   );
 }
 
-function withTimeout(ms = 20_000): {
+function withTimeout(
+  ms = 20_000
+): {
   signal: AbortSignal;
   done: () => void;
 } {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ms);
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(
+      () =>
+        controller.abort(),
+      ms
+    );
 
   return {
-    signal: controller.signal,
-    done: () => clearTimeout(timeout),
+    signal:
+      controller.signal,
+
+    done:
+      () =>
+        clearTimeout(
+          timeout
+        ),
   };
 }
 
 function getMetaGraphVersion(): string {
   const configured =
-    process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
+    process.env
+      .META_GRAPH_API_VERSION
+      ?.trim() ||
+    "v26.0";
 
-  return configured.startsWith("v")
+  return configured.startsWith(
+    "v"
+  )
     ? configured
     : `v${configured}`;
 }
 
-function safeNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
+function safeNumber(
+  value: unknown
+): number | null {
+  if (
+    typeof value === "number" &&
+    Number.isFinite(value)
+  ) {
     return value;
   }
 
   if (
     typeof value === "string" &&
     value.trim() &&
-    Number.isFinite(Number(value))
+    Number.isFinite(
+      Number(value)
+    )
   ) {
     return Number(value);
   }
@@ -424,28 +455,48 @@ function safeNumber(value: unknown): number | null {
   return null;
 }
 
-function safeIsoDate(value: unknown): string | null {
-  if (typeof value !== "string" || !value.trim()) {
+function safeIsoDate(
+  value: unknown
+): string | null {
+  if (
+    typeof value !== "string" ||
+    !value.trim()
+  ) {
     return null;
   }
 
-  const timestamp = Date.parse(value);
+  const timestamp =
+    Date.parse(value);
 
-  if (!Number.isFinite(timestamp)) {
+  if (
+    !Number.isFinite(
+      timestamp
+    )
+  ) {
     return null;
   }
 
-  return new Date(timestamp).toISOString();
+  return new Date(
+    timestamp
+  ).toISOString();
 }
 
-function unixSecondsToIso(value: unknown): string | null {
-  const seconds = safeNumber(value);
+function unixSecondsToIso(
+  value: unknown
+): string | null {
+  const seconds =
+    safeNumber(value);
 
-  if (seconds === null || seconds <= 0) {
+  if (
+    seconds === null ||
+    seconds <= 0
+  ) {
     return null;
   }
 
-  return new Date(seconds * 1000).toISOString();
+  return new Date(
+    seconds * 1000
+  ).toISOString();
 }
 
 function getObject(
@@ -456,7 +507,10 @@ function getObject(
     value !== null &&
     !Array.isArray(value)
   ) {
-    return value as Record<string, unknown>;
+    return value as Record<
+      string,
+      unknown
+    >;
   }
 
   return {};
@@ -472,7 +526,9 @@ function providerForPlatform(
     return "meta";
   }
 
-  if (platform === "youtube") {
+  if (
+    platform === "youtube"
+  ) {
     return "google";
   }
 
@@ -486,8 +542,11 @@ function publicSyncError(
   error: string;
 } {
   if (
-    message === "no_connected_account" ||
-    message.startsWith("no_connected_")
+    message ===
+      "no_connected_account" ||
+    message.startsWith(
+      "no_connected_"
+    )
   ) {
     return {
       status: 400,
@@ -496,21 +555,36 @@ function publicSyncError(
   }
 
   if (
-    message.includes("missing_refresh_token") ||
-    message.includes("reconnect") ||
-    message.includes("invalid_grant") ||
-    message.includes("invalid_token") ||
-    message.includes("refresh_not_implemented")
+    message.includes(
+      "missing_refresh_token"
+    ) ||
+    message.includes(
+      "reconnect"
+    ) ||
+    message.includes(
+      "invalid_grant"
+    ) ||
+    message.includes(
+      "invalid_token"
+    ) ||
+    message.includes(
+      "refresh_not_implemented"
+    )
   ) {
     return {
       status: 409,
-      error: "reconnect_required",
+      error:
+        "reconnect_required",
     };
   }
 
   if (
-    message.startsWith("wrong_provider") ||
-    message.includes("provider_must_be")
+    message.startsWith(
+      "wrong_provider"
+    ) ||
+    message.includes(
+      "provider_must_be"
+    )
   ) {
     return {
       status: 409,
@@ -519,30 +593,46 @@ function publicSyncError(
   }
 
   if (
-    message.includes("permission") ||
-    message.includes("scope") ||
-    message.includes("insufficient")
+    message.includes(
+      "permission"
+    ) ||
+    message.includes(
+      "scope"
+    ) ||
+    message.includes(
+      "insufficient"
+    )
   ) {
     return {
       status: 403,
-      error: "platform_permission_missing",
+      error:
+        "platform_permission_missing",
     };
   }
 
   if (
-    message.includes("AbortError") ||
-    message.includes("aborted") ||
-    message.includes("timeout")
+    message.includes(
+      "AbortError"
+    ) ||
+    message.includes(
+      "aborted"
+    ) ||
+    message.includes(
+      "timeout"
+    )
   ) {
     return {
       status: 504,
-      error: "platform_request_timeout",
+      error:
+        "platform_request_timeout",
     };
   }
 
   return {
     status: 500,
-    error: message || "sync_failed",
+    error:
+      message ||
+      "sync_failed",
   };
 }
 
@@ -552,24 +642,39 @@ async function createRun(
   userId: string,
   platform: Platform
 ): Promise<string> {
-  const { data, error } = await supabaseAdmin
-    .from("social_sync_runs")
-    .insert({
-      user_id: userId,
-      platform,
-      status: "running",
-      message: "Sync started",
-    })
-    .select("id")
-    .single();
+  const {
+    data,
+    error,
+  } =
+    await supabaseAdmin
+      .from(
+        "social_sync_runs"
+      )
+      .insert({
+        user_id:
+          userId,
+        platform,
+        status:
+          "running",
+        message:
+          "Sync started",
+      })
+      .select("id")
+      .single();
 
-  if (error || !data?.id) {
+  if (
+    error ||
+    !data?.id
+  ) {
     throw new Error(
-      error?.message || "sync_run_create_failed"
+      error?.message ||
+        "sync_run_create_failed"
     );
   }
 
-  return String(data.id);
+  return String(
+    data.id
+  );
 }
 
 async function finishRunOk(
@@ -577,21 +682,34 @@ async function finishRunOk(
   message: string,
   meta?: JsonObject
 ): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from("social_sync_runs")
-    .update({
-      status: "ok",
-      message,
-      meta: meta ?? null,
-      finished_at: new Date().toISOString(),
-    })
-    .eq("id", runId);
+  const { error } =
+    await supabaseAdmin
+      .from(
+        "social_sync_runs"
+      )
+      .update({
+        status: "ok",
+        message,
+        meta:
+          meta ?? null,
+        finished_at:
+          new Date()
+            .toISOString(),
+      })
+      .eq(
+        "id",
+        runId
+      );
 
   if (error) {
-    console.error("[social-sync] Failed to finish successful run", {
-      runId,
-      error: error.message,
-    });
+    console.error(
+      "[social-sync] Failed to finish successful run",
+      {
+        runId,
+        error:
+          error.message,
+      }
+    );
   }
 }
 
@@ -600,21 +718,35 @@ async function finishRunError(
   message: string,
   meta?: JsonObject
 ): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from("social_sync_runs")
-    .update({
-      status: "error",
-      message,
-      meta: meta ?? null,
-      finished_at: new Date().toISOString(),
-    })
-    .eq("id", runId);
+  const { error } =
+    await supabaseAdmin
+      .from(
+        "social_sync_runs"
+      )
+      .update({
+        status:
+          "error",
+        message,
+        meta:
+          meta ?? null,
+        finished_at:
+          new Date()
+            .toISOString(),
+      })
+      .eq(
+        "id",
+        runId
+      );
 
   if (error) {
-    console.error("[social-sync] Failed to finish failed run", {
-      runId,
-      error: error.message,
-    });
+    console.error(
+      "[social-sync] Failed to finish failed run",
+      {
+        runId,
+        error:
+          error.message,
+      }
+    );
   }
 }
 
@@ -624,25 +756,40 @@ async function getConnectedAccount(
   userId: string,
   platform: Platform
 ): Promise<ConnectedAccountRow> {
-  const { data, error } = await supabaseAdmin
-    .from("user_social_accounts")
-    .select(
-      [
-        "id",
+  const {
+    data,
+    error,
+  } =
+    await supabaseAdmin
+      .from(
+        "user_social_accounts"
+      )
+      .select(
+        [
+          "id",
+          "user_id",
+          "platform",
+          "provider",
+          "status",
+          "account_id",
+          "username",
+          "token_expires_at",
+          "meta",
+        ].join(",")
+      )
+      .eq(
         "user_id",
+        userId
+      )
+      .eq(
         "platform",
-        "provider",
+        platform
+      )
+      .eq(
         "status",
-        "account_id",
-        "username",
-        "token_expires_at",
-        "meta",
-      ].join(",")
-    )
-    .eq("user_id", userId)
-    .eq("platform", platform)
-    .eq("status", "connected")
-    .maybeSingle();
+        "connected"
+      )
+      .maybeSingle();
 
   if (error) {
     throw new Error(
@@ -659,33 +806,69 @@ async function getConnectedAccount(
   return data as unknown as ConnectedAccountRow;
 }
 
-async function updateConnectedAccount(args: {
-  rowId: string;
-  accountId?: string | null;
-  username?: string | null;
-  existingMeta?: JsonObject | null;
-  metaPatch?: JsonObject;
-}): Promise<void> {
-  const payload: Record<string, unknown> = {
-    updated_at: new Date().toISOString(),
+async function updateConnectedAccount(
+  args: {
+    rowId: string;
+    accountId?:
+      | string
+      | null;
+    username?:
+      | string
+      | null;
+    existingMeta?:
+      | JsonObject
+      | null;
+    metaPatch?: JsonObject;
+  }
+): Promise<void> {
+  const payload:
+    Record<
+      string,
+      unknown
+    > = {
+    updated_at:
+      new Date()
+        .toISOString(),
+
     meta: {
-      ...getObject(args.existingMeta),
-      ...(args.metaPatch ?? {}),
+      ...getObject(
+        args.existingMeta
+      ),
+      ...(
+        args.metaPatch ??
+        {}
+      ),
     },
   };
 
-  if (args.accountId !== undefined) {
-    payload.account_id = args.accountId;
+  if (
+    args.accountId !==
+    undefined
+  ) {
+    payload.account_id =
+      args.accountId;
   }
 
-  if (args.username !== undefined) {
-    payload.username = args.username;
+  if (
+    args.username !==
+    undefined
+  ) {
+    payload.username =
+      args.username;
   }
 
-  const { error } = await supabaseAdmin
-    .from("user_social_accounts")
-    .update(payload)
-    .eq("id", args.rowId);
+  const { error } =
+    await supabaseAdmin
+      .from(
+        "user_social_accounts"
+      )
+      .update(
+        payload
+      )
+      .eq(
+        "id",
+        args.rowId
+      );
 
   if (error) {
     throw new Error(
@@ -698,40 +881,80 @@ async function markAccountSynced(
   account: ConnectedAccountRow,
   patchMeta: JsonObject
 ): Promise<void> {
-  await updateConnectedAccount({
-    rowId: account.id,
-    existingMeta: account.meta,
-    metaPatch: patchMeta,
-  });
+  await updateConnectedAccount(
+    {
+      rowId:
+        account.id,
+
+      existingMeta:
+        account.meta,
+
+      metaPatch:
+        patchMeta,
+    }
+  );
 }
 
-async function upsertSocialPost(args: {
-  userId: string;
-  platform: Platform;
-  accountId: string;
-  postId: string;
-  permalink?: string | null;
-  caption?: string | null;
-  mediaType?: string | null;
-  postedAt?: string | null;
-}): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from("social_posts")
-    .upsert(
-      {
-        user_id: args.userId,
-        platform: args.platform,
-        account_id: args.accountId,
-        post_id: args.postId,
-        permalink: args.permalink ?? null,
-        caption: args.caption ?? null,
-        media_type: args.mediaType ?? null,
-        posted_at: args.postedAt ?? null,
-      },
-      {
-        onConflict: "platform,post_id",
-      }
-    );
+async function upsertSocialPost(
+  args: {
+    userId: string;
+    platform: Platform;
+    accountId: string;
+    postId: string;
+    permalink?:
+      | string
+      | null;
+    caption?:
+      | string
+      | null;
+    mediaType?:
+      | string
+      | null;
+    postedAt?:
+      | string
+      | null;
+  }
+): Promise<void> {
+  const { error } =
+    await supabaseAdmin
+      .from(
+        "social_posts"
+      )
+      .upsert(
+        {
+          user_id:
+            args.userId,
+
+          platform:
+            args.platform,
+
+          account_id:
+            args.accountId,
+
+          post_id:
+            args.postId,
+
+          permalink:
+            args.permalink ??
+            null,
+
+          caption:
+            args.caption ??
+            null,
+
+          media_type:
+            args.mediaType ??
+            null,
+
+          posted_at:
+            args.postedAt ??
+            null,
+        },
+        {
+          onConflict:
+            "platform,post_id",
+        }
+      );
 
   if (error) {
     throw new Error(
@@ -740,36 +963,80 @@ async function upsertSocialPost(args: {
   }
 }
 
-async function upsertSocialPostMetrics(args: {
-  userId: string;
-  platform: Platform;
-  postId: string;
-  likes?: number | null;
-  comments?: number | null;
-  views?: number | null;
-  plays?: number | null;
-  reach?: number | null;
-  impressions?: number | null;
-}): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from("social_post_metrics")
-    .upsert(
-      {
-        user_id: args.userId,
-        platform: args.platform,
-        post_id: args.postId,
-        likes: args.likes ?? null,
-        comments: args.comments ?? null,
-        views: args.views ?? null,
-        plays: args.plays ?? null,
-        reach: args.reach ?? null,
-        impressions: args.impressions ?? null,
-        fetched_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "user_id,platform,post_id",
-      }
-    );
+async function upsertSocialPostMetrics(
+  args: {
+    userId: string;
+    platform: Platform;
+    postId: string;
+    likes?:
+      | number
+      | null;
+    comments?:
+      | number
+      | null;
+    views?:
+      | number
+      | null;
+    plays?:
+      | number
+      | null;
+    reach?:
+      | number
+      | null;
+    impressions?:
+      | number
+      | null;
+  }
+): Promise<void> {
+  const { error } =
+    await supabaseAdmin
+      .from(
+        "social_post_metrics"
+      )
+      .upsert(
+        {
+          user_id:
+            args.userId,
+
+          platform:
+            args.platform,
+
+          post_id:
+            args.postId,
+
+          likes:
+            args.likes ??
+            null,
+
+          comments:
+            args.comments ??
+            null,
+
+          views:
+            args.views ??
+            null,
+
+          plays:
+            args.plays ??
+            null,
+
+          reach:
+            args.reach ??
+            null,
+
+          impressions:
+            args.impressions ??
+            null,
+
+          fetched_at:
+            new Date()
+              .toISOString(),
+        },
+        {
+          onConflict:
+            "user_id,platform,post_id",
+        }
+      );
 
   if (error) {
     throw new Error(
@@ -785,32 +1052,56 @@ async function fetchJson<T>(
   init: RequestInit = {},
   timeoutMs = 20_000
 ): Promise<T> {
-  const { signal, done } = withTimeout(timeoutMs);
+  const {
+    signal,
+    done,
+  } =
+    withTimeout(
+      timeoutMs
+    );
 
   try {
-    const response = await fetch(url, {
-      ...init,
-      cache: "no-store",
-      signal,
-      headers: {
-        Accept: "application/json",
-        ...(init.headers ?? {}),
-      },
-    });
-
-    const body = (await response
-      .json()
-      .catch(() => ({}))) as T & {
-      error?: unknown;
-      errors?: unknown;
-    };
-
-    if (!response.ok) {
-      const bodyObject = getObject(body);
-
-      const nestedError = getObject(
-        bodyObject.error
+    const response =
+      await fetch(
+        url,
+        {
+          ...init,
+          cache:
+            "no-store",
+          signal,
+          headers: {
+            Accept:
+              "application/json",
+            ...(
+              init.headers ??
+              {}
+            ),
+          },
+        }
       );
+
+    const body =
+      (await response
+        .json()
+        .catch(
+          () => ({})
+        )) as T & {
+        error?: unknown;
+        errors?: unknown;
+      };
+
+    if (
+      !response.ok
+    ) {
+      const bodyObject =
+        getObject(
+          body
+        );
+
+      const nestedError =
+        getObject(
+          bodyObject.error
+        );
 
       const message =
         String(
@@ -819,9 +1110,12 @@ async function fetchJson<T>(
             bodyObject.error_description ??
             bodyObject.message ??
             `platform_http_${response.status}`
-        ) || `platform_http_${response.status}`;
+        ) ||
+        `platform_http_${response.status}`;
 
-      throw new Error(message);
+      throw new Error(
+        message
+      );
     }
 
     return body;
@@ -836,11 +1130,16 @@ function createMetaUrl(
   path: string,
   accessToken: string
 ): string {
-  const normalizedPath = path.replace(/^\/+/, "");
+  const normalizedPath =
+    path.replace(
+      /^\/+/,
+      ""
+    );
 
-  const url = new URL(
-    `https://graph.facebook.com/${getMetaGraphVersion()}/${normalizedPath}`
-  );
+  const url =
+    new URL(
+      `https://graph.facebook.com/${getMetaGraphVersion()}/${normalizedPath}`
+    );
 
   url.searchParams.set(
     "access_token",
@@ -854,13 +1153,83 @@ async function metaGraph<T>(
   path: string,
   accessToken: string
 ): Promise<T> {
-  const body = await fetchJson<T & MetaApiError>(
-    createMetaUrl(path, accessToken)
-  );
+  const body =
+    await fetchJson<
+      T &
+        MetaApiError
+    >(
+      createMetaUrl(
+        path,
+        accessToken
+      )
+    );
 
-  if (body.error?.message) {
+  if (
+    body.error?.message
+  ) {
     throw new Error(
       `meta_api_error:${body.error.message}`
+    );
+  }
+
+  return body;
+}
+
+/*
+ * -------------------- Instagram Graph API --------------------
+ *
+ * Instagram API with Instagram Login använder
+ * graph.instagram.com direkt.
+ *
+ * Instagram-tokenen ska aldrig skickas till
+ * graph.facebook.com.
+ *
+ * Ingen Facebook Page krävs.
+ */
+
+function createInstagramGraphUrl(
+  path: string,
+  accessToken: string
+): string {
+  const normalizedPath =
+    path.replace(
+      /^\/+/,
+      ""
+    );
+
+  const url =
+    new URL(
+      `https://graph.instagram.com/${getMetaGraphVersion()}/${normalizedPath}`
+    );
+
+  url.searchParams.set(
+    "access_token",
+    accessToken
+  );
+
+  return url.toString();
+}
+
+async function instagramGraph<T>(
+  path: string,
+  accessToken: string
+): Promise<T> {
+  const body =
+    await fetchJson<
+      T &
+        MetaApiError
+    >(
+      createInstagramGraphUrl(
+        path,
+        accessToken
+      )
+    );
+
+  if (
+    body.error?.message
+  ) {
+    throw new Error(
+      `instagram_api_error:${body.error.message}`
     );
   }
 
@@ -870,18 +1239,27 @@ async function metaGraph<T>(
 async function getMetaPages(
   userAccessToken: string
 ): Promise<MetaPage[]> {
-  const me = await metaGraph<{
-    id?: string;
-    name?: string;
-  }>(
-    "me?fields=id,name",
-    userAccessToken
-  );
+  const me =
+    await metaGraph<{
+      id?: string;
+      name?: string;
+    }>(
+      "me?fields=id,name",
+      userAccessToken
+    );
 
-  console.info("[social-sync] Raw Meta /me response", {
-    id: me.id ?? null,
-    name: me.name ?? null,
-  });
+  console.info(
+    "[social-sync] Raw Meta /me response",
+    {
+      id:
+        me.id ??
+        null,
+
+      name:
+        me.name ??
+        null,
+    }
+  );
 
   const permissions =
     await metaGraph<{
@@ -898,17 +1276,24 @@ async function getMetaPages(
     "[social-sync] Current Meta token permissions",
     {
       permissions:
-        permissions.data?.map((item) => ({
-          permission:
-            item.permission ?? null,
-          status:
-            item.status ?? null,
-        })) ?? [],
+        permissions.data?.map(
+          (item) => ({
+            permission:
+              item.permission ??
+              null,
+
+            status:
+              item.status ??
+              null,
+          })
+        ) ?? [],
     }
   );
 
   const response =
-    await metaGraph<MetaPagesResponse>(
+    await metaGraph<
+      MetaPagesResponse
+    >(
       "me/accounts?fields=id,name,category,access_token&limit=100",
       userAccessToken
     );
@@ -916,22 +1301,41 @@ async function getMetaPages(
   console.info(
     "[social-sync] Raw Meta /me/accounts response",
     {
-      count: response.data?.length ?? 0,
+      count:
+        response.data
+          ?.length ??
+        0,
+
       pages:
-        response.data?.map((page) => ({
-          id: page.id,
-          name: page.name ?? null,
-          category:
-            page.category ?? null,
-          hasAccessToken:
-            Boolean(page.access_token),
-        })) ?? [],
+        response.data?.map(
+          (page) => ({
+            id:
+              page.id,
+
+            name:
+              page.name ??
+              null,
+
+            category:
+              page.category ??
+              null,
+
+            hasAccessToken:
+              Boolean(
+                page.access_token
+              ),
+          })
+        ) ?? [],
+
       paging:
-        response.paging ?? null,
+        response.paging ??
+        null,
     }
   );
 
-  const pages = response.data ?? [];
+  const pages =
+    response.data ??
+    [];
 
   return Promise.all(
     pages.map(
@@ -944,7 +1348,9 @@ async function getMetaPages(
 
         try {
           const pageDetails =
-            await metaGraph<MetaPageInstagramResponse>(
+            await metaGraph<
+              MetaPageInstagramResponse
+            >(
               `${page.id}?fields=id,name,instagram_business_account`,
               pageToken
             );
@@ -952,30 +1358,42 @@ async function getMetaPages(
           console.info(
             "[social-sync] Meta Page inspected",
             {
-              pageId: page.id,
+              pageId:
+                page.id,
+
               pageName:
-                page.name ?? null,
+                page.name ??
+                null,
+
               instagramAccountId:
                 pageDetails
                   .instagram_business_account
-                  ?.id ?? null,
+                  ?.id ??
+                null,
             }
           );
 
           return {
             ...page,
+
             instagram_business_account:
-              pageDetails.instagram_business_account,
+              pageDetails
+                .instagram_business_account,
           };
         } catch (error) {
           console.warn(
             "[social-sync] Could not inspect Instagram account for Page",
             {
-              pageId: page.id,
+              pageId:
+                page.id,
+
               pageName:
-                page.name ?? null,
+                page.name ??
+                null,
+
               error:
-                error instanceof Error
+                error instanceof
+                Error
                   ? error.message
                   : "unknown_error",
             }
@@ -998,74 +1416,137 @@ async function getInstagramInsights(
   impressions: number | null;
 }> {
   const result = {
-    views: null as number | null,
-    plays: null as number | null,
-    reach: null as number | null,
-    impressions: null as number | null,
+    views:
+      null as
+        | number
+        | null,
+
+    plays:
+      null as
+        | number
+        | null,
+
+    reach:
+      null as
+        | number
+        | null,
+
+    impressions:
+      null as
+        | number
+        | null,
   };
 
-  const metricGroups = [
-    ["views", "reach", "total_interactions"],
-    ["plays", "reach", "impressions"],
-    ["video_views", "reach", "impressions"],
+  /*
+   * Tillgängliga Instagram metrics varierar
+   * beroende på mediatyp och API-version.
+   *
+   * Därför testar vi en metric i taget.
+   * En unsupported metric får inte krascha
+   * hela synken.
+   */
+  const metrics = [
+    "views",
+    "reach",
+    "plays",
+    "impressions",
+    "video_views",
   ];
 
-  for (const metrics of metricGroups) {
+  for (
+    const metric of
+    metrics
+  ) {
     try {
       const response =
-        await metaGraph<InstagramInsightsResponse>(
+        await instagramGraph<
+          InstagramInsightsResponse
+        >(
           `${mediaId}/insights?metric=${encodeURIComponent(
-            metrics.join(",")
+            metric
           )}`,
           accessToken
         );
 
-      for (const insight of response.data ?? []) {
-        const firstValue =
-          insight.total_value?.value ??
-          insight.values?.[0]?.value;
+      for (
+        const insight of
+        response.data ??
+        []
+      ) {
+        const rawValue =
+          insight
+            .total_value
+            ?.value ??
+          insight
+            .values?.[0]
+            ?.value;
 
         const numericValue =
-          safeNumber(firstValue);
+          safeNumber(
+            rawValue
+          );
 
-        if (numericValue === null) {
+        if (
+          numericValue ===
+          null
+        ) {
           continue;
         }
 
-        if (insight.name === "views") {
-          result.views = numericValue;
+        if (
+          insight.name ===
+          "views"
+        ) {
+          result.views =
+            numericValue;
         }
 
-        if (insight.name === "video_views") {
-          result.views = numericValue;
+        if (
+          insight.name ===
+          "video_views"
+        ) {
+          result.views =
+            numericValue;
         }
 
-        if (insight.name === "plays") {
-          result.plays = numericValue;
+        if (
+          insight.name ===
+          "plays"
+        ) {
+          result.plays =
+            numericValue;
         }
 
-        if (insight.name === "reach") {
-          result.reach = numericValue;
+        if (
+          insight.name ===
+          "reach"
+        ) {
+          result.reach =
+            numericValue;
         }
 
-        if (insight.name === "impressions") {
-          result.impressions = numericValue;
+        if (
+          insight.name ===
+          "impressions"
+        ) {
+          result.impressions =
+            numericValue;
         }
       }
+    } catch (error) {
+      console.info(
+        "[social-sync] Instagram insight metric unavailable",
+        {
+          mediaId,
+          metric,
 
-      if (
-        result.views !== null ||
-        result.plays !== null ||
-        result.reach !== null ||
-        result.impressions !== null
-      ) {
-        break;
-      }
-    } catch {
-      /*
-       * Meta tillåter olika insight-metrics beroende på
-       * mediatyp, konto och beviljade rättigheter.
-       */
+          error:
+            error instanceof
+            Error
+              ? error.message
+              : "unknown_error",
+        }
+      );
     }
   }
 
@@ -1081,42 +1562,71 @@ async function getFacebookPostInsights(
   impressions: number | null;
 }> {
   const result = {
-    views: null as number | null,
-    reach: null as number | null,
-    impressions: null as number | null,
+    views:
+      null as
+        | number
+        | null,
+
+    reach:
+      null as
+        | number
+        | null,
+
+    impressions:
+      null as
+        | number
+        | null,
   };
 
   try {
     const response =
-      await metaGraph<FacebookInsightsResponse>(
+      await metaGraph<
+        FacebookInsightsResponse
+      >(
         `${postId}/insights?metric=post_impressions,post_impressions_unique,post_video_views`,
         pageAccessToken
       );
 
-    for (const insight of response.data ?? []) {
-      const numericValue = safeNumber(
-        insight.values?.[0]?.value
-      );
+    for (
+      const insight of
+      response.data ??
+      []
+    ) {
+      const numericValue =
+        safeNumber(
+          insight.values?.[0]
+            ?.value
+        );
 
-      if (numericValue === null) {
+      if (
+        numericValue ===
+        null
+      ) {
         continue;
       }
 
-      if (insight.name === "post_impressions") {
-        result.impressions = numericValue;
+      if (
+        insight.name ===
+        "post_impressions"
+      ) {
+        result.impressions =
+          numericValue;
       }
 
       if (
         insight.name ===
         "post_impressions_unique"
       ) {
-        result.reach = numericValue;
+        result.reach =
+          numericValue;
       }
 
       if (
-        insight.name === "post_video_views"
+        insight.name ===
+        "post_video_views"
       ) {
-        result.views = numericValue;
+        result.views =
+          numericValue;
       }
     }
   } catch {
@@ -1135,11 +1645,15 @@ async function youtubeApi<T>(
   url: string,
   accessToken: string
 ): Promise<T> {
-  return fetchJson<T>(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+  return fetchJson<T>(
+    url,
+    {
+      headers: {
+        Authorization:
+          `Bearer ${accessToken}`,
+      },
+    }
+  );
 }
 
 // -------------------- TikTok API --------------------
@@ -1149,24 +1663,36 @@ async function tiktokApi<T>(
   accessToken: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const body = await fetchJson<T & TikTokApiError>(
-    url,
-    {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        ...(init.headers ?? {}),
-      },
-    }
-  );
+  const body =
+    await fetchJson<
+      T &
+        TikTokApiError
+    >(
+      url,
+      {
+        ...init,
+
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+
+          ...(
+            init.headers ??
+            {}
+          ),
+        },
+      }
+    );
 
   if (
     body.error?.code &&
-    body.error.code !== "ok"
+    body.error.code !==
+      "ok"
   ) {
     throw new Error(
       `tiktok_api_error:${
-        body.error.message ||
+        body.error
+          .message ||
         body.error.code
       }`
     );
@@ -1181,12 +1707,18 @@ async function linkedinApi<T>(
   url: string,
   accessToken: string
 ): Promise<T> {
-  return fetchJson<T>(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "X-Restli-Protocol-Version": "2.0.0",
-    },
-  });
+  return fetchJson<T>(
+    url,
+    {
+      headers: {
+        Authorization:
+          `Bearer ${accessToken}`,
+
+        "X-Restli-Protocol-Version":
+          "2.0.0",
+      },
+    }
+  );
 }
 
 // -------------------- X API --------------------
@@ -1195,20 +1727,29 @@ async function xApi<T>(
   url: string,
   accessToken: string
 ): Promise<T> {
-  const body = await fetchJson<T & XApiError>(
-    url,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    }
-  );
+  const body =
+    await fetchJson<
+      T &
+        XApiError
+    >(
+      url,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+        },
+      }
+    );
 
   if (
-    Array.isArray(body.errors) &&
-    body.errors.length > 0
+    Array.isArray(
+      body.errors
+    ) &&
+    body.errors.length >
+      0
   ) {
-    const first = body.errors[0];
+    const first =
+      body.errors[0];
 
     throw new Error(
       `x_api_error:${
@@ -1228,222 +1769,427 @@ async function syncInstagram(
   userId: string,
   runId: string
 ): Promise<NextResponse> {
-  const account = await getConnectedAccount(
-    userId,
-    "instagram"
-  );
+  /*
+   * Instagram använder nu:
+   *
+   * Instagram API with Instagram Login
+   *
+   * Ingen Facebook Page krävs.
+   * Ingen /me/accounts används.
+   * Ingen Facebook-token fallback används.
+   */
 
-  if (account.provider !== "meta") {
+  const account =
+    await getConnectedAccount(
+      userId,
+      "instagram"
+    );
+
+  if (
+    account.provider !==
+    "meta"
+  ) {
     throw new Error(
       "instagram_provider_must_be_meta"
     );
   }
 
+  /*
+   * Läs den sparade Instagram User Access Token.
+   *
+   * Vi granskar token-refresh separat i
+   * lib/socialTokens.ts efter detta test.
+   */
+
   const tokenResult =
     await getValidAccessToken({
       userId,
-      platform: "instagram",
-      provider: "meta",
-      skewSec: 24 * 60 * 60,
+
+      platform:
+        "instagram",
+
+      provider:
+        "meta",
+
+      skewSec:
+        24 * 60 * 60,
     });
 
-  let pages = await getMetaPages(
-  tokenResult.accessToken
-);
-
-let pageTokenSource: "instagram" | "facebook" = "instagram";
-
-if (pages.length === 0) {
-  console.info(
-    "[social-sync] Instagram token returned no Meta Pages. Trying Facebook token fallback."
-  );
-
-  try {
-    const facebookTokenResult =
-      await getValidAccessToken({
-        userId,
-        platform: "facebook",
-        provider: "meta",
-        skewSec: 24 * 60 * 60,
-      });
-
-    pages = await getMetaPages(
-      facebookTokenResult.accessToken
-    );
-
-    pageTokenSource = "facebook";
-  } catch (error) {
-    console.warn(
-      "[social-sync] Facebook token fallback failed for Instagram sync",
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "unknown_error",
-      }
-    );
-  }
-}
-
-console.info("[social-sync] Instagram Page candidates", {
-  storedInstagramAccountId: account.account_id,
-  pageTokenSource,
-  pages: pages.map((page) => ({
-    pageId: page.id,
-    pageName: page.name ?? null,
-    instagramAccountId:
-      page.instagram_business_account?.id ?? null,
-  })),
-});
-
-  const matchingPage =
-    pages.find(
-      (page) =>
-        page.instagram_business_account?.id ===
-        account.account_id
-    ) ??
-    pages.find(
-      (page) =>
-        page.instagram_business_account?.id
-    );
-
-  const instagramId =
-    matchingPage?.instagram_business_account
-      ?.id;
-
-  if (pages.length === 0) {
-    throw new Error(
-      "no_meta_pages_available_for_instagram"
-    );
-  }
-
-  if (!matchingPage || !instagramId) {
-    throw new Error(
-      "instagram_account_not_returned_for_available_pages"
-    );
-  }
-
-  const pageAccessToken =
-    matchingPage.access_token ||
+  const accessToken =
     tokenResult.accessToken;
 
+  /*
+   * Hämta Instagram Professional Account direkt.
+   */
+
   const profile =
-    await metaGraph<InstagramProfile>(
-      `${instagramId}?fields=id,username,name,biography,website,profile_picture_url,followers_count,follows_count,media_count`,
-      pageAccessToken
+    await instagramGraph<
+      InstagramProfile
+    >(
+      [
+        "me?fields=",
+        encodeURIComponent(
+          [
+            "id",
+            "user_id",
+            "username",
+            "name",
+            "account_type",
+            "biography",
+            "website",
+            "profile_picture_url",
+            "followers_count",
+            "follows_count",
+            "media_count",
+          ].join(",")
+        ),
+      ].join(""),
+      accessToken
     );
+
+  if (
+    !profile.id
+  ) {
+    throw new Error(
+      "instagram_profile_not_found"
+    );
+  }
+
+  const instagramId =
+    String(
+      profile.id
+    );
+
+  console.info(
+    "[social-sync] Direct Instagram profile resolved",
+    {
+      instagramId,
+
+      instagramUserId:
+        profile.user_id ??
+        null,
+
+      username:
+        profile.username ??
+        null,
+
+      accountType:
+        profile.account_type ??
+        null,
+
+      followersCount:
+        profile.followers_count ??
+        null,
+
+      mediaCount:
+        profile.media_count ??
+        null,
+
+      oauthFlow:
+        "instagram_business_login",
+
+      requiresFacebookPage:
+        false,
+    }
+  );
+
+  /*
+   * Hämta senaste Instagram media direkt.
+   */
 
   const mediaResponse =
-    await metaGraph<InstagramMediaResponse>(
-      `${instagramId}/media?fields=id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=25`,
-      pageAccessToken
+    await instagramGraph<
+      InstagramMediaResponse
+    >(
+      [
+        `${instagramId}/media?fields=`,
+        encodeURIComponent(
+          [
+            "id",
+            "caption",
+            "media_type",
+            "media_product_type",
+            "media_url",
+            "thumbnail_url",
+            "permalink",
+            "timestamp",
+            "like_count",
+            "comments_count",
+          ].join(",")
+        ),
+        "&limit=25",
+      ].join(""),
+      accessToken
     );
 
-  const media = mediaResponse.data ?? [];
+  const media =
+    mediaResponse.data ??
+    [];
 
-  for (const item of media) {
-    await upsertSocialPost({
-      userId,
-      platform: "instagram",
-      accountId: instagramId,
-      postId: item.id,
-      permalink: item.permalink ?? null,
-      caption: item.caption ?? null,
-      mediaType:
-        item.media_product_type ||
-        item.media_type ||
+  console.info(
+    "[social-sync] Direct Instagram media loaded",
+    {
+      instagramId,
+
+      username:
+        profile.username ??
         null,
-      postedAt:
-        safeIsoDate(item.timestamp),
-    });
+
+      count:
+        media.length,
+    }
+  );
+
+  /*
+   * Spara media + metrics.
+   */
+
+  for (
+    const item of
+    media
+  ) {
+    await upsertSocialPost(
+      {
+        userId,
+
+        platform:
+          "instagram",
+
+        accountId:
+          instagramId,
+
+        postId:
+          item.id,
+
+        permalink:
+          item.permalink ??
+          null,
+
+        caption:
+          item.caption ??
+          null,
+
+        mediaType:
+          item
+            .media_product_type ||
+          item.media_type ||
+          null,
+
+        postedAt:
+          safeIsoDate(
+            item.timestamp
+          ),
+      }
+    );
 
     const insights =
       await getInstagramInsights(
         item.id,
-        pageAccessToken
+        accessToken
       );
 
-    await upsertSocialPostMetrics({
-      userId,
-      platform: "instagram",
-      postId: item.id,
-      likes:
-        safeNumber(item.like_count),
-      comments:
-        safeNumber(item.comments_count),
-      views: insights.views,
-      plays: insights.plays,
-      reach: insights.reach,
-      impressions:
-        insights.impressions,
-    });
+    await upsertSocialPostMetrics(
+      {
+        userId,
+
+        platform:
+          "instagram",
+
+        postId:
+          item.id,
+
+        likes:
+          safeNumber(
+            item.like_count
+          ),
+
+        comments:
+          safeNumber(
+            item.comments_count
+          ),
+
+        views:
+          insights.views,
+
+        plays:
+          insights.plays,
+
+        reach:
+          insights.reach,
+
+        impressions:
+          insights.impressions,
+      }
+    );
   }
 
-  const now = new Date().toISOString();
+  const now =
+    new Date()
+      .toISOString();
 
-  await updateConnectedAccount({
-    rowId: account.id,
-    accountId: instagramId,
-    username:
-      profile.username ??
-      account.username,
-    existingMeta: account.meta,
-    metaPatch: {
-      page_id: matchingPage.id,
-      page_name:
-        matchingPage.name ?? null,
-      instagram_profile: {
-        id: instagramId,
-        username:
-          profile.username ?? null,
-        name: profile.name ?? null,
-        biography:
-          profile.biography ?? null,
-        website:
-          profile.website ?? null,
-        profile_picture_url:
-          profile.profile_picture_url ??
+  /*
+   * Uppdatera den anslutna Instagram-raden.
+   */
+
+  await updateConnectedAccount(
+    {
+      rowId:
+        account.id,
+
+      accountId:
+        instagramId,
+
+      username:
+        profile.username ??
+        account.username,
+
+      existingMeta:
+        account.meta,
+
+      metaPatch: {
+        oauth_flow:
+          "instagram_business_login",
+
+        requires_facebook_page:
+          false,
+
+        instagram_id:
+          instagramId,
+
+        instagram_user_id:
+          profile.user_id ??
           null,
-        followers_count:
-          profile.followers_count ?? null,
-        follows_count:
-          profile.follows_count ?? null,
-        media_count:
-          profile.media_count ?? null,
+
+        instagram_profile: {
+          id:
+            instagramId,
+
+          user_id:
+            profile.user_id ??
+            null,
+
+          username:
+            profile.username ??
+            null,
+
+          account_type:
+            profile.account_type ??
+            null,
+
+          name:
+            profile.name ??
+            null,
+
+          biography:
+            profile.biography ??
+            null,
+
+          website:
+            profile.website ??
+            null,
+
+          profile_picture_url:
+            profile
+              .profile_picture_url ??
+            null,
+
+          followers_count:
+            profile
+              .followers_count ??
+            null,
+
+          follows_count:
+            profile
+              .follows_count ??
+            null,
+
+          media_count:
+            profile.media_count ??
+            null,
+        },
+
+        last_sync: {
+          platform:
+            "instagram",
+
+          mode:
+            "full",
+
+          api:
+            "instagram_login",
+
+          at:
+            now,
+
+          items:
+            media.length,
+        },
+
+        token: {
+          refreshed:
+            tokenResult
+              .refreshed,
+
+          expires_at:
+            tokenResult
+              .expiresAt,
+        },
       },
-      last_sync: {
-        platform: "instagram",
-        mode: "full",
-        at: now,
-        items: media.length,
-      },
-      token: {
-        refreshed:
-          tokenResult.refreshed,
-        expires_at:
-          tokenResult.expiresAt,
-      },
-    },
-  });
+    }
+  );
 
   await finishRunOk(
     runId,
     "Instagram sync complete",
     {
-      platform: "instagram",
-      mode: "full",
-      synced: media.length,
+      platform:
+        "instagram",
+
+      mode:
+        "full",
+
+      api:
+        "instagram_login",
+
+      instagram_account_id:
+        instagramId,
+
+      synced:
+        media.length,
+
       token_refreshed:
-        tokenResult.refreshed,
+        tokenResult
+          .refreshed,
+
+      requires_facebook_page:
+        false,
     }
   );
 
-  return NextResponse.json({
-    ok: true,
-    platform: "instagram",
-    mode: "full",
-    synced: media.length,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+
+      platform:
+        "instagram",
+
+      mode:
+        "full",
+
+      api:
+        "instagram_login",
+
+      accountId:
+        instagramId,
+
+      username:
+        profile.username ??
+        null,
+
+      synced:
+        media.length,
+    }
+  );
 }
 
 // -------------------- Facebook sync --------------------
@@ -1452,12 +2198,16 @@ async function syncFacebook(
   userId: string,
   runId: string
 ): Promise<NextResponse> {
-  const account = await getConnectedAccount(
-    userId,
-    "facebook"
-  );
+  const account =
+    await getConnectedAccount(
+      userId,
+      "facebook"
+    );
 
-  if (account.provider !== "meta") {
+  if (
+    account.provider !==
+    "meta"
+  ) {
     throw new Error(
       "facebook_provider_must_be_meta"
     );
@@ -1466,22 +2216,30 @@ async function syncFacebook(
   const tokenResult =
     await getValidAccessToken({
       userId,
-      platform: "facebook",
-      provider: "meta",
-      skewSec: 24 * 60 * 60,
+      platform:
+        "facebook",
+      provider:
+        "meta",
+      skewSec:
+        24 * 60 * 60,
     });
 
-  const pages = await getMetaPages(
-    tokenResult.accessToken
-  );
+  const pages =
+    await getMetaPages(
+      tokenResult.accessToken
+    );
 
   const page =
     pages.find(
       (item) =>
-        item.id === account.account_id
-    ) ?? pages[0];
+        item.id ===
+        account.account_id
+    ) ??
+    pages[0];
 
-  if (!page?.id) {
+  if (
+    !page?.id
+  ) {
     throw new Error(
       "no_facebook_page_found"
     );
@@ -1492,34 +2250,56 @@ async function syncFacebook(
     tokenResult.accessToken;
 
   const postsResponse =
-    await metaGraph<FacebookPostsResponse>(
+    await metaGraph<
+      FacebookPostsResponse
+    >(
       `${page.id}/posts?fields=id,message,story,created_time,permalink_url,full_picture,shares,reactions.limit(0).summary(true),comments.limit(0).summary(true)&limit=25`,
       pageAccessToken
     );
 
-  const posts = postsResponse.data ?? [];
+  const posts =
+    postsResponse.data ??
+    [];
 
-  for (const post of posts) {
-    await upsertSocialPost({
-      userId,
-      platform: "facebook",
-      accountId: page.id,
-      postId: post.id,
-      permalink:
-        post.permalink_url ?? null,
-      caption:
-        post.message ??
-        post.story ??
-        null,
-      mediaType:
-        post.full_picture
-          ? "media"
-          : "post",
-      postedAt:
-        safeIsoDate(
-          post.created_time
-        ),
-    });
+  for (
+    const post of
+    posts
+  ) {
+    await upsertSocialPost(
+      {
+        userId,
+
+        platform:
+          "facebook",
+
+        accountId:
+          page.id,
+
+        postId:
+          post.id,
+
+        permalink:
+          post
+            .permalink_url ??
+          null,
+
+        caption:
+          post.message ??
+          post.story ??
+          null,
+
+        mediaType:
+          post.full_picture
+            ? "media"
+            : "post",
+
+        postedAt:
+          safeIsoDate(
+            post
+              .created_time
+          ),
+      }
+    );
 
     const insights =
       await getFacebookPostInsights(
@@ -1527,76 +2307,141 @@ async function syncFacebook(
         pageAccessToken
       );
 
-    await upsertSocialPostMetrics({
-      userId,
-      platform: "facebook",
-      postId: post.id,
-      likes:
-        safeNumber(
-          post.reactions?.summary
-            ?.total_count
-        ),
-      comments:
-        safeNumber(
-          post.comments?.summary
-            ?.total_count
-        ),
-      views: insights.views,
-      reach: insights.reach,
-      impressions:
-        insights.impressions,
-      plays: null,
-    });
+    await upsertSocialPostMetrics(
+      {
+        userId,
+
+        platform:
+          "facebook",
+
+        postId:
+          post.id,
+
+        likes:
+          safeNumber(
+            post
+              .reactions
+              ?.summary
+              ?.total_count
+          ),
+
+        comments:
+          safeNumber(
+            post
+              .comments
+              ?.summary
+              ?.total_count
+          ),
+
+        views:
+          insights.views,
+
+        reach:
+          insights.reach,
+
+        impressions:
+          insights
+            .impressions,
+
+        plays:
+          null,
+      }
+    );
   }
 
-  const now = new Date().toISOString();
+  const now =
+    new Date()
+      .toISOString();
 
-  await updateConnectedAccount({
-    rowId: account.id,
-    accountId: page.id,
-    username:
-      page.name ?? account.username,
-    existingMeta: account.meta,
-    metaPatch: {
-      facebook_page: {
-        id: page.id,
-        name: page.name ?? null,
-        category:
-          page.category ?? null,
+  await updateConnectedAccount(
+    {
+      rowId:
+        account.id,
+
+      accountId:
+        page.id,
+
+      username:
+        page.name ??
+        account.username,
+
+      existingMeta:
+        account.meta,
+
+      metaPatch: {
+        facebook_page: {
+          id:
+            page.id,
+
+          name:
+            page.name ??
+            null,
+
+          category:
+            page.category ??
+            null,
+        },
+
+        last_sync: {
+          platform:
+            "facebook",
+
+          mode:
+            "full",
+
+          at:
+            now,
+
+          items:
+            posts.length,
+        },
+
+        token: {
+          refreshed:
+            tokenResult
+              .refreshed,
+
+          expires_at:
+            tokenResult
+              .expiresAt,
+        },
       },
-      last_sync: {
-        platform: "facebook",
-        mode: "full",
-        at: now,
-        items: posts.length,
-      },
-      token: {
-        refreshed:
-          tokenResult.refreshed,
-        expires_at:
-          tokenResult.expiresAt,
-      },
-    },
-  });
+    }
+  );
 
   await finishRunOk(
     runId,
     "Facebook sync complete",
     {
-      platform: "facebook",
-      mode: "full",
-      synced: posts.length,
+      platform:
+        "facebook",
+
+      mode:
+        "full",
+
+      synced:
+        posts.length,
+
       token_refreshed:
-        tokenResult.refreshed,
+        tokenResult
+          .refreshed,
     }
   );
 
-  return NextResponse.json({
-    ok: true,
-    platform: "facebook",
-    mode: "full",
-    synced: posts.length,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+
+      platform:
+        "facebook",
+
+      mode:
+        "full",
+
+      synced:
+        posts.length,
+    }
+  );
 }
 
 // -------------------- TikTok sync --------------------
@@ -1605,12 +2450,16 @@ async function syncTikTok(
   userId: string,
   runId: string
 ): Promise<NextResponse> {
-  const account = await getConnectedAccount(
-    userId,
-    "tiktok"
-  );
+  const account =
+    await getConnectedAccount(
+      userId,
+      "tiktok"
+    );
 
-  if (account.provider !== "tiktok") {
+  if (
+    account.provider !==
+    "tiktok"
+  ) {
     throw new Error(
       "tiktok_provider_must_be_tiktok"
     );
@@ -1619,9 +2468,12 @@ async function syncTikTok(
   const tokenResult =
     await getValidAccessToken({
       userId,
-      platform: "tiktok",
-      provider: "tiktok",
-      skewSec: 10 * 60,
+      platform:
+        "tiktok",
+      provider:
+        "tiktok",
+      skewSec:
+        10 * 60,
     });
 
   const userFields = [
@@ -1642,17 +2494,24 @@ async function syncTikTok(
   ].join(",");
 
   const userResponse =
-    await tiktokApi<TikTokUserResponse>(
+    await tiktokApi<
+      TikTokUserResponse
+    >(
       `https://open.tiktokapis.com/v2/user/info/?fields=${encodeURIComponent(
         userFields
       )}`,
-      tokenResult.accessToken
+      tokenResult
+        .accessToken
     );
 
   const profile =
-    userResponse.data?.user;
+    userResponse.data
+      ?.user;
 
-  if (!profile?.open_id) {
+  if (
+    !profile
+      ?.open_id
+  ) {
     throw new Error(
       "tiktok_profile_not_found"
     );
@@ -1674,151 +2533,267 @@ async function syncTikTok(
   ].join(",");
 
   const videoResponse =
-    await tiktokApi<TikTokVideoListResponse>(
+    await tiktokApi<
+      TikTokVideoListResponse
+    >(
       `https://open.tiktokapis.com/v2/video/list/?fields=${encodeURIComponent(
         videoFields
       )}`,
-      tokenResult.accessToken,
+      tokenResult
+        .accessToken,
       {
         method: "POST",
+
         headers: {
           "Content-Type":
             "application/json",
         },
-        body: JSON.stringify({
-          max_count: 20,
-        }),
+
+        body:
+          JSON.stringify({
+            max_count:
+              20,
+          }),
       }
     );
 
   const videos =
-    videoResponse.data?.videos ?? [];
+    videoResponse.data
+      ?.videos ??
+    [];
 
-  for (const video of videos) {
-    await upsertSocialPost({
-      userId,
-      platform: "tiktok",
-      accountId: profile.open_id,
-      postId: video.id,
-      permalink:
-        video.share_url ??
-        video.embed_link ??
-        null,
-      caption:
-        video.video_description ??
-        video.title ??
-        null,
-      mediaType: "video",
-      postedAt:
-        unixSecondsToIso(
-          video.create_time
-        ),
-    });
+  for (
+    const video of
+    videos
+  ) {
+    await upsertSocialPost(
+      {
+        userId,
 
-    await upsertSocialPostMetrics({
-      userId,
-      platform: "tiktok",
-      postId: video.id,
-      likes:
-        safeNumber(
-          video.like_count
-        ),
-      comments:
-        safeNumber(
-          video.comment_count
-        ),
-      views:
-        safeNumber(
-          video.view_count
-        ),
-      plays:
-        safeNumber(
-          video.view_count
-        ),
-      reach: null,
-      impressions: null,
-    });
+        platform:
+          "tiktok",
+
+        accountId:
+          profile.open_id,
+
+        postId:
+          video.id,
+
+        permalink:
+          video.share_url ??
+          video.embed_link ??
+          null,
+
+        caption:
+          video
+            .video_description ??
+          video.title ??
+          null,
+
+        mediaType:
+          "video",
+
+        postedAt:
+          unixSecondsToIso(
+            video
+              .create_time
+          ),
+      }
+    );
+
+    await upsertSocialPostMetrics(
+      {
+        userId,
+
+        platform:
+          "tiktok",
+
+        postId:
+          video.id,
+
+        likes:
+          safeNumber(
+            video
+              .like_count
+          ),
+
+        comments:
+          safeNumber(
+            video
+              .comment_count
+          ),
+
+        views:
+          safeNumber(
+            video
+              .view_count
+          ),
+
+        plays:
+          safeNumber(
+            video
+              .view_count
+          ),
+
+        reach:
+          null,
+
+        impressions:
+          null,
+      }
+    );
   }
 
-  const now = new Date().toISOString();
+  const now =
+    new Date()
+      .toISOString();
 
-  await updateConnectedAccount({
-    rowId: account.id,
-    accountId: profile.open_id,
-    username:
-      profile.username ??
-      profile.display_name ??
-      account.username,
-    existingMeta: account.meta,
-    metaPatch: {
-      open_id: profile.open_id,
-      union_id:
-        profile.union_id ?? null,
-      tiktok_profile: {
-        display_name:
-          profile.display_name ?? null,
-        username:
-          profile.username ?? null,
-        bio_description:
-          profile.bio_description ??
+  await updateConnectedAccount(
+    {
+      rowId:
+        account.id,
+
+      accountId:
+        profile.open_id,
+
+      username:
+        profile.username ??
+        profile
+          .display_name ??
+        account.username,
+
+      existingMeta:
+        account.meta,
+
+      metaPatch: {
+        open_id:
+          profile.open_id,
+
+        union_id:
+          profile.union_id ??
           null,
-        avatar_url:
-          profile.avatar_large_url ??
-          profile.avatar_url ??
-          profile.avatar_url_100 ??
-          null,
-        profile_deep_link:
-          profile.profile_deep_link ??
-          null,
-        is_verified:
-          profile.is_verified ?? null,
-        follower_count:
-          profile.follower_count ??
-          null,
-        following_count:
-          profile.following_count ??
-          null,
-        likes_count:
-          profile.likes_count ?? null,
-        video_count:
-          profile.video_count ?? null,
+
+        tiktok_profile: {
+          display_name:
+            profile
+              .display_name ??
+            null,
+
+          username:
+            profile.username ??
+            null,
+
+          bio_description:
+            profile
+              .bio_description ??
+            null,
+
+          avatar_url:
+            profile
+              .avatar_large_url ??
+            profile
+              .avatar_url ??
+            profile
+              .avatar_url_100 ??
+            null,
+
+          profile_deep_link:
+            profile
+              .profile_deep_link ??
+            null,
+
+          is_verified:
+            profile
+              .is_verified ??
+            null,
+
+          follower_count:
+            profile
+              .follower_count ??
+            null,
+
+          following_count:
+            profile
+              .following_count ??
+            null,
+
+          likes_count:
+            profile
+              .likes_count ??
+            null,
+
+          video_count:
+            profile
+              .video_count ??
+            null,
+        },
+
+        last_sync: {
+          platform:
+            "tiktok",
+
+          mode:
+            "full",
+
+          at:
+            now,
+
+          items:
+            videos.length,
+
+          has_more:
+            videoResponse
+              .data
+              ?.has_more ??
+            false,
+        },
+
+        token: {
+          refreshed:
+            tokenResult
+              .refreshed,
+
+          expires_at:
+            tokenResult
+              .expiresAt,
+        },
       },
-      last_sync: {
-        platform: "tiktok",
-        mode: "full",
-        at: now,
-        items: videos.length,
-        has_more:
-          videoResponse.data?.has_more ??
-          false,
-      },
-      token: {
-        refreshed:
-          tokenResult.refreshed,
-        expires_at:
-          tokenResult.expiresAt,
-      },
-    },
-  });
+    }
+  );
 
   await finishRunOk(
     runId,
     "TikTok sync complete",
     {
-      platform: "tiktok",
-      mode: "full",
-      synced: videos.length,
+      platform:
+        "tiktok",
+
+      mode:
+        "full",
+
+      synced:
+        videos.length,
+
       token_refreshed:
-        tokenResult.refreshed,
+        tokenResult
+          .refreshed,
     }
   );
 
-  return NextResponse.json({
-    ok: true,
-    platform: "tiktok",
-    mode: "full",
-    synced: videos.length,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+
+      platform:
+        "tiktok",
+
+      mode:
+        "full",
+
+      synced:
+        videos.length,
+    }
+  );
 }
 
 // -------------------- YouTube sync --------------------
@@ -1827,12 +2802,16 @@ async function syncYouTube(
   userId: string,
   runId: string
 ): Promise<NextResponse> {
-  const account = await getConnectedAccount(
-    userId,
-    "youtube"
-  );
+  const account =
+    await getConnectedAccount(
+      userId,
+      "youtube"
+    );
 
-  if (account.provider !== "google") {
+  if (
+    account.provider !==
+    "google"
+  ) {
     throw new Error(
       "youtube_provider_must_be_google"
     );
@@ -1841,210 +2820,361 @@ async function syncYouTube(
   const tokenResult =
     await getValidAccessToken({
       userId,
-      platform: "youtube",
-      provider: "google",
-      skewSec: 10 * 60,
+      platform:
+        "youtube",
+      provider:
+        "google",
+      skewSec:
+        10 * 60,
     });
 
   const channelResponse =
-    await youtubeApi<YouTubeChannelResponse>(
+    await youtubeApi<
+      YouTubeChannelResponse
+    >(
       "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true",
-      tokenResult.accessToken
+      tokenResult
+        .accessToken
     );
 
   const channel =
-    channelResponse.items?.[0];
+    channelResponse
+      .items?.[0];
 
-  if (!channel?.id) {
+  if (
+    !channel?.id
+  ) {
     throw new Error(
       "youtube_no_channel_found"
     );
   }
 
   const searchResponse =
-    await youtubeApi<YouTubeSearchResponse>(
+    await youtubeApi<
+      YouTubeSearchResponse
+    >(
       "https://www.googleapis.com/youtube/v3/search?part=snippet&forMine=true&type=video&maxResults=25&order=date",
-      tokenResult.accessToken
+      tokenResult
+        .accessToken
     );
 
   const videoIds = (
-    searchResponse.items ?? []
+    searchResponse.items ??
+    []
   )
     .map(
-      (item) => item.id?.videoId
+      (item) =>
+        item.id
+          ?.videoId
     )
     .filter(
-      (videoId): videoId is string =>
-        Boolean(videoId)
+      (
+        videoId
+      ): videoId is string =>
+        Boolean(
+          videoId
+        )
     );
 
-  let videos: NonNullable<
-    YouTubeVideosResponse["items"]
-  > = [];
+  let videos:
+    NonNullable<
+      YouTubeVideosResponse["items"]
+    > = [];
 
-  if (videoIds.length > 0) {
+  if (
+    videoIds.length >
+    0
+  ) {
     const videoResponse =
-      await youtubeApi<YouTubeVideosResponse>(
+      await youtubeApi<
+        YouTubeVideosResponse
+      >(
         `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${encodeURIComponent(
-          videoIds.join(",")
+          videoIds.join(
+            ","
+          )
         )}`,
-        tokenResult.accessToken
+        tokenResult
+          .accessToken
       );
 
-    videos = videoResponse.items ?? [];
+    videos =
+      videoResponse.items ??
+      [];
   }
 
-  for (const video of videos) {
+  for (
+    const video of
+    videos
+  ) {
     const caption =
-      video.snippet?.title
-        ? video.snippet.description
+      video.snippet
+        ?.title
+        ? video.snippet
+            .description
           ? `${video.snippet.title}\n\n${video.snippet.description}`
-          : video.snippet.title
-        : video.snippet?.description ??
+          : video.snippet
+              .title
+        : video.snippet
+            ?.description ??
           null;
 
-    await upsertSocialPost({
-      userId,
-      platform: "youtube",
-      accountId: channel.id,
-      postId: video.id,
-      permalink:
-        `https://www.youtube.com/watch?v=${encodeURIComponent(
-          video.id
-        )}`,
-      caption,
-      mediaType: "video",
-      postedAt:
-        safeIsoDate(
-          video.snippet?.publishedAt
-        ),
-    });
+    await upsertSocialPost(
+      {
+        userId,
 
-    await upsertSocialPostMetrics({
-      userId,
-      platform: "youtube",
-      postId: video.id,
-      likes:
-        safeNumber(
-          video.statistics?.likeCount
-        ),
-      comments:
-        safeNumber(
-          video.statistics?.commentCount
-        ),
-      views:
-        safeNumber(
-          video.statistics?.viewCount
-        ),
-      plays: null,
-      reach: null,
-      impressions: null,
-    });
+        platform:
+          "youtube",
+
+        accountId:
+          channel.id,
+
+        postId:
+          video.id,
+
+        permalink:
+          `https://www.youtube.com/watch?v=${encodeURIComponent(
+            video.id
+          )}`,
+
+        caption,
+
+        mediaType:
+          "video",
+
+        postedAt:
+          safeIsoDate(
+            video
+              .snippet
+              ?.publishedAt
+          ),
+      }
+    );
+
+    await upsertSocialPostMetrics(
+      {
+        userId,
+
+        platform:
+          "youtube",
+
+        postId:
+          video.id,
+
+        likes:
+          safeNumber(
+            video
+              .statistics
+              ?.likeCount
+          ),
+
+        comments:
+          safeNumber(
+            video
+              .statistics
+              ?.commentCount
+          ),
+
+        views:
+          safeNumber(
+            video
+              .statistics
+              ?.viewCount
+          ),
+
+        plays:
+          null,
+
+        reach:
+          null,
+
+        impressions:
+          null,
+      }
+    );
   }
 
   const channelTitle =
-    channel.snippet?.title ||
+    channel.snippet
+      ?.title ||
     "YouTube channel";
 
-  const now = new Date().toISOString();
+  const now =
+    new Date()
+      .toISOString();
 
-  await updateConnectedAccount({
-    rowId: account.id,
-    accountId: channel.id,
-    username: channelTitle,
-    existingMeta: account.meta,
-    metaPatch: {
-      channel: {
-        id: channel.id,
-        title: channelTitle,
-        description:
-          channel.snippet?.description ??
-          null,
-        custom_url:
-          channel.snippet?.customUrl ??
-          null,
-        profile_picture_url:
-          channel.snippet?.thumbnails
-            ?.high?.url ??
-          channel.snippet?.thumbnails
-            ?.medium?.url ??
-          channel.snippet?.thumbnails
-            ?.default?.url ??
-          null,
-        statistics:
-          channel.statistics ?? null,
+  await updateConnectedAccount(
+    {
+      rowId:
+        account.id,
+
+      accountId:
+        channel.id,
+
+      username:
+        channelTitle,
+
+      existingMeta:
+        account.meta,
+
+      metaPatch: {
+        channel: {
+          id:
+            channel.id,
+
+          title:
+            channelTitle,
+
+          description:
+            channel
+              .snippet
+              ?.description ??
+            null,
+
+          custom_url:
+            channel
+              .snippet
+              ?.customUrl ??
+            null,
+
+          profile_picture_url:
+            channel
+              .snippet
+              ?.thumbnails
+              ?.high
+              ?.url ??
+            channel
+              .snippet
+              ?.thumbnails
+              ?.medium
+              ?.url ??
+            channel
+              .snippet
+              ?.thumbnails
+              ?.default
+              ?.url ??
+            null,
+
+          statistics:
+            channel.statistics ??
+            null,
+        },
+
+        last_sync: {
+          platform:
+            "youtube",
+
+          mode:
+            "full",
+
+          at:
+            now,
+
+          items:
+            videos.length,
+        },
+
+        token: {
+          refreshed:
+            tokenResult
+              .refreshed,
+
+          expires_at:
+            tokenResult
+              .expiresAt,
+        },
       },
-      last_sync: {
-        platform: "youtube",
-        mode: "full",
-        at: now,
-        items: videos.length,
-      },
-      token: {
-        refreshed:
-          tokenResult.refreshed,
-        expires_at:
-          tokenResult.expiresAt,
-      },
-    },
-  });
+    }
+  );
 
   await finishRunOk(
     runId,
     "YouTube sync complete",
     {
-      platform: "youtube",
-      mode: "full",
-      synced: videos.length,
+      platform:
+        "youtube",
+
+      mode:
+        "full",
+
+      synced:
+        videos.length,
+
       token_refreshed:
-        tokenResult.refreshed,
+        tokenResult
+          .refreshed,
     }
   );
 
-  return NextResponse.json({
-    ok: true,
-    platform: "youtube",
-    mode: "full",
-    synced: videos.length,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+
+      platform:
+        "youtube",
+
+      mode:
+        "full",
+
+      synced:
+        videos.length,
+    }
+  );
 }
 
 // -------------------- LinkedIn sync --------------------
 
 function normalizeLinkedInLocale(
-  locale: LinkedInUserInfo["locale"]
+  locale:
+    LinkedInUserInfo["locale"]
 ): string | null {
   if (!locale) {
     return null;
   }
 
-  if (typeof locale === "string") {
+  if (
+    typeof locale ===
+    "string"
+  ) {
     return locale;
   }
 
   const language =
-    locale.language?.trim();
+    locale.language
+      ?.trim();
 
   const country =
-    locale.country?.trim();
+    locale.country
+      ?.trim();
 
-  if (language && country) {
+  if (
+    language &&
+    country
+  ) {
     return `${language}-${country}`;
   }
 
-  return language || country || null;
+  return (
+    language ||
+    country ||
+    null
+  );
 }
 
 async function syncLinkedIn(
   userId: string,
   runId: string
 ): Promise<NextResponse> {
-  const account = await getConnectedAccount(
-    userId,
-    "linkedin"
-  );
+  const account =
+    await getConnectedAccount(
+      userId,
+      "linkedin"
+    );
 
-  if (account.provider !== "linkedin") {
+  if (
+    account.provider !==
+    "linkedin"
+  ) {
     throw new Error(
       "linkedin_provider_must_be_linkedin"
     );
@@ -2053,94 +3183,155 @@ async function syncLinkedIn(
   const tokenResult =
     await getValidAccessToken({
       userId,
-      platform: "linkedin",
-      provider: "linkedin",
-      skewSec: 10 * 60,
+      platform:
+        "linkedin",
+      provider:
+        "linkedin",
+      skewSec:
+        10 * 60,
     });
 
   const profile =
-    await linkedinApi<LinkedInUserInfo>(
+    await linkedinApi<
+      LinkedInUserInfo
+    >(
       "https://api.linkedin.com/v2/userinfo",
-      tokenResult.accessToken
+      tokenResult
+        .accessToken
     );
 
-  if (!profile.sub) {
+  if (
+    !profile.sub
+  ) {
     throw new Error(
       "linkedin_profile_not_found"
     );
   }
 
-  const now = new Date().toISOString();
+  const now =
+    new Date()
+      .toISOString();
 
-  await updateConnectedAccount({
-    rowId: account.id,
-    accountId: profile.sub,
-    username:
-      profile.name ??
-      profile.email ??
-      account.username,
-    existingMeta: account.meta,
-    metaPatch: {
-      linkedin_member_id:
+  await updateConnectedAccount(
+    {
+      rowId:
+        account.id,
+
+      accountId:
         profile.sub,
-      linkedin_profile: {
-        display_name:
-          profile.name ?? null,
-        given_name:
-          profile.given_name ??
-          null,
-        family_name:
-          profile.family_name ??
-          null,
-        profile_picture_url:
-          profile.picture ?? null,
-        email:
-          profile.email ?? null,
-        email_verified:
-          profile.email_verified ??
-          null,
-        locale:
-          normalizeLinkedInLocale(
-            profile.locale
-          ),
+
+      username:
+        profile.name ??
+        profile.email ??
+        account.username,
+
+      existingMeta:
+        account.meta,
+
+      metaPatch: {
+        linkedin_member_id:
+          profile.sub,
+
+        linkedin_profile: {
+          display_name:
+            profile.name ??
+            null,
+
+          given_name:
+            profile
+              .given_name ??
+            null,
+
+          family_name:
+            profile
+              .family_name ??
+            null,
+
+          profile_picture_url:
+            profile.picture ??
+            null,
+
+          email:
+            profile.email ??
+            null,
+
+          email_verified:
+            profile
+              .email_verified ??
+            null,
+
+          locale:
+            normalizeLinkedInLocale(
+              profile.locale
+            ),
+        },
+
+        last_sync: {
+          platform:
+            "linkedin",
+
+          mode:
+            "profile",
+
+          at:
+            now,
+
+          items:
+            0,
+
+          note:
+            "Profile synced. Member post analytics require additional LinkedIn product approval.",
+        },
+
+        token: {
+          refreshed:
+            tokenResult
+              .refreshed,
+
+          expires_at:
+            tokenResult
+              .expiresAt,
+        },
       },
-      last_sync: {
-        platform: "linkedin",
-        mode: "profile",
-        at: now,
-        items: 0,
-        note:
-          "Profile synced. Member post analytics require additional LinkedIn product approval.",
-      },
-      token: {
-        refreshed:
-          tokenResult.refreshed,
-        expires_at:
-          tokenResult.expiresAt,
-      },
-    },
-  });
+    }
+  );
 
   await finishRunOk(
     runId,
     "LinkedIn profile sync complete",
     {
-      platform: "linkedin",
-      mode: "profile",
-      synced: 0,
+      platform:
+        "linkedin",
+
+      mode:
+        "profile",
+
+      synced:
+        0,
+
       token_refreshed:
-        tokenResult.refreshed,
+        tokenResult
+          .refreshed,
     }
   );
 
-  return NextResponse.json({
-    ok: true,
-    platform: "linkedin",
-    mode: "profile",
-    synced: 0,
-    note:
-      "LinkedIn profile synced. Post analytics require additional LinkedIn approval.",
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+
+      platform:
+        "linkedin",
+
+      mode:
+        "profile",
+
+      synced:
+        0,
+
+      note:
+        "LinkedIn profile synced. Post analytics require additional LinkedIn approval.",
+    }
+  );
 }
 
 // -------------------- X sync --------------------
@@ -2149,12 +3340,16 @@ async function syncX(
   userId: string,
   runId: string
 ): Promise<NextResponse> {
-  const account = await getConnectedAccount(
-    userId,
-    "x"
-  );
+  const account =
+    await getConnectedAccount(
+      userId,
+      "x"
+    );
 
-  if (account.provider !== "x") {
+  if (
+    account.provider !==
+    "x"
+  ) {
     throw new Error(
       "x_provider_must_be_x"
     );
@@ -2165,7 +3360,8 @@ async function syncX(
       userId,
       platform: "x",
       provider: "x",
-      skewSec: 10 * 60,
+      skewSec:
+        10 * 60,
     });
 
   const userFields = [
@@ -2181,17 +3377,22 @@ async function syncX(
   ].join(",");
 
   const userResponse =
-    await xApi<XUserResponse>(
+    await xApi<
+      XUserResponse
+    >(
       `https://api.x.com/2/users/me?user.fields=${encodeURIComponent(
         userFields
       )}`,
-      tokenResult.accessToken
+      tokenResult
+        .accessToken
     );
 
   const profile =
     userResponse.data;
 
-  if (!profile?.id) {
+  if (
+    !profile?.id
+  ) {
     throw new Error(
       "x_profile_not_found"
     );
@@ -2208,141 +3409,250 @@ async function syncX(
   ].join(",");
 
   const postsResponse =
-    await xApi<XPostsResponse>(
+    await xApi<
+      XPostsResponse
+    >(
       `https://api.x.com/2/users/${encodeURIComponent(
         profile.id
       )}/tweets?max_results=25&exclude=retweets,replies&tweet.fields=${encodeURIComponent(
         tweetFields
       )}`,
-      tokenResult.accessToken
+      tokenResult
+        .accessToken
     );
 
   const posts =
-    postsResponse.data ?? [];
+    postsResponse.data ??
+    [];
 
-  for (const post of posts) {
-    await upsertSocialPost({
-      userId,
-      platform: "x",
-      accountId: profile.id,
-      postId: post.id,
-      permalink:
-        profile.username
-          ? `https://x.com/${encodeURIComponent(
-              profile.username
-            )}/status/${encodeURIComponent(
-              post.id
-            )}`
-          : null,
-      caption: post.text ?? null,
-      mediaType: "post",
-      postedAt:
-        safeIsoDate(
-          post.created_at
-        ),
-    });
+  for (
+    const post of
+    posts
+  ) {
+    await upsertSocialPost(
+      {
+        userId,
+
+        platform:
+          "x",
+
+        accountId:
+          profile.id,
+
+        postId:
+          post.id,
+
+        permalink:
+          profile.username
+            ? `https://x.com/${encodeURIComponent(
+                profile.username
+              )}/status/${encodeURIComponent(
+                post.id
+              )}`
+            : null,
+
+        caption:
+          post.text ??
+          null,
+
+        mediaType:
+          "post",
+
+        postedAt:
+          safeIsoDate(
+            post
+              .created_at
+          ),
+      }
+    );
 
     const impressions =
       safeNumber(
-        post.public_metrics
+        post
+          .public_metrics
           ?.impression_count
       );
 
-    await upsertSocialPostMetrics({
-      userId,
-      platform: "x",
-      postId: post.id,
-      likes:
-        safeNumber(
-          post.public_metrics
-            ?.like_count
-        ),
-      comments:
-        safeNumber(
-          post.public_metrics
-            ?.reply_count
-        ),
-      views: impressions,
-      plays: null,
-      reach: null,
-      impressions,
-    });
+    await upsertSocialPostMetrics(
+      {
+        userId,
+
+        platform:
+          "x",
+
+        postId:
+          post.id,
+
+        likes:
+          safeNumber(
+            post
+              .public_metrics
+              ?.like_count
+          ),
+
+        comments:
+          safeNumber(
+            post
+              .public_metrics
+              ?.reply_count
+          ),
+
+        views:
+          impressions,
+
+        plays:
+          null,
+
+        reach:
+          null,
+
+        impressions,
+      }
+    );
   }
 
-  const now = new Date().toISOString();
+  const now =
+    new Date()
+      .toISOString();
 
-  await updateConnectedAccount({
-    rowId: account.id,
-    accountId: profile.id,
-    username:
-      profile.username ??
-      account.username,
-    existingMeta: account.meta,
-    metaPatch: {
-      x_user_id: profile.id,
-      x_profile: {
-        display_name:
-          profile.name ?? null,
-        username:
-          profile.username ?? null,
-        description:
-          profile.description ?? null,
-        location:
-          profile.location ?? null,
-        profile_image_url:
-          profile.profile_image_url ??
-          null,
-        profile_url:
-          profile.url ?? null,
-        account_created_at:
-          profile.created_at ?? null,
-        protected:
-          profile.protected ?? null,
-        verified:
-          profile.verified ?? null,
-        verified_type:
-          profile.verified_type ??
-          null,
-        public_metrics:
-          profile.public_metrics ??
-          null,
+  await updateConnectedAccount(
+    {
+      rowId:
+        account.id,
+
+      accountId:
+        profile.id,
+
+      username:
+        profile.username ??
+        account.username,
+
+      existingMeta:
+        account.meta,
+
+      metaPatch: {
+        x_user_id:
+          profile.id,
+
+        x_profile: {
+          display_name:
+            profile.name ??
+            null,
+
+          username:
+            profile.username ??
+            null,
+
+          description:
+            profile
+              .description ??
+            null,
+
+          location:
+            profile.location ??
+            null,
+
+          profile_image_url:
+            profile
+              .profile_image_url ??
+            null,
+
+          profile_url:
+            profile.url ??
+            null,
+
+          account_created_at:
+            profile
+              .created_at ??
+            null,
+
+          protected:
+            profile
+              .protected ??
+            null,
+
+          verified:
+            profile
+              .verified ??
+            null,
+
+          verified_type:
+            profile
+              .verified_type ??
+            null,
+
+          public_metrics:
+            profile
+              .public_metrics ??
+            null,
+        },
+
+        last_sync: {
+          platform:
+            "x",
+
+          mode:
+            "full",
+
+          at:
+            now,
+
+          items:
+            posts.length,
+
+          next_token:
+            postsResponse
+              .meta
+              ?.next_token ??
+            null,
+        },
+
+        token: {
+          refreshed:
+            tokenResult
+              .refreshed,
+
+          expires_at:
+            tokenResult
+              .expiresAt,
+        },
       },
-      last_sync: {
-        platform: "x",
-        mode: "full",
-        at: now,
-        items: posts.length,
-        next_token:
-          postsResponse.meta
-            ?.next_token ?? null,
-      },
-      token: {
-        refreshed:
-          tokenResult.refreshed,
-        expires_at:
-          tokenResult.expiresAt,
-      },
-    },
-  });
+    }
+  );
 
   await finishRunOk(
     runId,
     "X sync complete",
     {
-      platform: "x",
-      mode: "full",
-      synced: posts.length,
+      platform:
+        "x",
+
+      mode:
+        "full",
+
+      synced:
+        posts.length,
+
       token_refreshed:
-        tokenResult.refreshed,
+        tokenResult
+          .refreshed,
     }
   );
 
-  return NextResponse.json({
-    ok: true,
-    platform: "x",
-    mode: "full",
-    synced: posts.length,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+
+      platform:
+        "x",
+
+      mode:
+        "full",
+
+      synced:
+        posts.length,
+    }
+  );
 }
 
 // -------------------- Main route --------------------
@@ -2351,16 +3661,21 @@ export async function POST(
   req: NextRequest
 ): Promise<NextResponse> {
   const session =
-    await getServerSession(authOptions);
+    await getServerSession(
+      authOptions
+    );
 
   const sessionUserId =
     session?.user?.id;
 
-  if (!sessionUserId) {
+  if (
+    !sessionUserId
+  ) {
     return NextResponse.json(
       {
         ok: false,
-        error: "unauthorized",
+        error:
+          "unauthorized",
       },
       {
         status: 401,
@@ -2369,14 +3684,20 @@ export async function POST(
   }
 
   const userId =
-    String(sessionUserId);
+    String(
+      sessionUserId
+    );
 
-  if (!isUuid(userId)) {
+  if (
+    !isUuid(userId)
+  ) {
     return NextResponse.json(
       {
         ok: false,
+
         error:
           "session_user_id_not_uuid",
+
         hint:
           "NextAuth session.user.id must contain the canonical Supabase user UUID.",
       },
@@ -2386,22 +3707,31 @@ export async function POST(
     );
   }
 
-  const body = await req
-    .json()
-    .catch(() => ({}));
+  const body =
+    await req
+      .json()
+      .catch(
+        () => ({})
+      );
 
-  let platform: Platform;
+  let platform:
+    Platform;
 
   try {
-    platform = normalizePlatform(
-      getObject(body).platform
-    );
+    platform =
+      normalizePlatform(
+        getObject(
+          body
+        ).platform
+      );
   } catch (error) {
     return NextResponse.json(
       {
         ok: false,
+
         error:
-          error instanceof Error
+          error instanceof
+          Error
             ? error.message
             : "invalid_platform",
       },
@@ -2411,19 +3741,23 @@ export async function POST(
     );
   }
 
-  let runId: string;
+  let runId:
+    string;
 
   try {
-    runId = await createRun(
-      userId,
-      platform
-    );
+    runId =
+      await createRun(
+        userId,
+        platform
+      );
   } catch (error) {
     return NextResponse.json(
       {
         ok: false,
+
         error:
-          error instanceof Error
+          error instanceof
+          Error
             ? error.message
             : "sync_run_create_failed",
       },
@@ -2434,7 +3768,9 @@ export async function POST(
   }
 
   try {
-    switch (platform) {
+    switch (
+      platform
+    ) {
       case "instagram":
         return await syncInstagram(
           userId,
@@ -2473,7 +3809,8 @@ export async function POST(
     }
   } catch (error) {
     const message =
-      error instanceof Error
+      error instanceof
+      Error
         ? error.message
         : "sync_failed";
 
@@ -2483,18 +3820,22 @@ export async function POST(
         userId,
         platform,
         runId,
-        error: message,
+        error:
+          message,
       }
     );
 
     const publicError =
-      publicSyncError(message);
+      publicSyncError(
+        message
+      );
 
     await finishRunError(
       runId,
       message,
       {
         platform,
+
         public_error:
           publicError.error,
       }
@@ -2503,17 +3844,22 @@ export async function POST(
     return NextResponse.json(
       {
         ok: false,
+
         platform,
+
         error:
           publicError.error,
+
         detail:
-          process.env.NODE_ENV ===
+          process.env
+            .NODE_ENV ===
           "development"
             ? message
             : undefined,
       },
       {
-        status: publicError.status,
+        status:
+          publicError.status,
       }
     );
   }
