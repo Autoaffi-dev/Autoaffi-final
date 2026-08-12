@@ -35,10 +35,12 @@ type LinkedInUserInfoResponse = {
   given_name?: string;
   family_name?: string;
   picture?: string;
-  locale?: string | {
-    country?: string;
-    language?: string;
-  };
+  locale?:
+    | string
+    | {
+        country?: string;
+        language?: string;
+      };
   email?: string;
   email_verified?: boolean;
 };
@@ -170,7 +172,7 @@ function createDashboardRedirect(
   values: Record<string, string>
 ): NextResponse {
   const url = new URL(
-    "/dashboard/social-accounts",
+    "/login/dashboard/social-accounts",
     req.url
   );
 
@@ -463,7 +465,8 @@ export async function GET(req: NextRequest) {
         oauth_connected_at:
           new Date().toISOString(),
 
-        linkedin_member_id: userInfo.sub ?? null,
+        linkedin_member_id:
+          userInfo.sub ?? null,
 
         display_name:
           userInfo.name ?? null,
@@ -490,7 +493,8 @@ export async function GET(req: NextRequest) {
         token_type:
           token.token_type ?? "Bearer",
 
-        granted_scopes: grantedScopes,
+        granted_scopes:
+          grantedScopes,
 
         refresh_token_available:
           Boolean(token.refresh_token),
