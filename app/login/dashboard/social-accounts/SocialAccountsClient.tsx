@@ -38,7 +38,7 @@ const PLATFORM_PLAN: Record<PlatformKey, Plan> = {
 };
 
 // vi antar Basic just nu – kan kopplas mot riktig plan senare
-const ACTIVE_PLAN: Plan = "Basic";
+const ACTIVE_PLAN: Plan = "Elite";
 
 const INITIAL_STATE: Record<PlatformKey, PlatformState> = {
   tiktok: { accounts: [] },
