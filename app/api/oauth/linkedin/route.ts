@@ -73,7 +73,10 @@ function redirectToSocialAccounts(
   req: NextRequest,
   values: Record<string, string>
 ): NextResponse {
-  const url = new URL("/dashboard/social-accounts", req.url);
+  const url = new URL(
+    "/login/dashboard/social-accounts",
+    req.url
+  );
 
   for (const [key, value] of Object.entries(values)) {
     url.searchParams.set(key, value);
@@ -89,16 +92,24 @@ export async function GET(req: NextRequest) {
 
     if (!userId) {
       const loginUrl = new URL("/login", req.url);
-      loginUrl.searchParams.set("error", "unauthorized");
+
+      loginUrl.searchParams.set(
+        "error",
+        "unauthorized"
+      );
+
       loginUrl.searchParams.set(
         "callbackUrl",
-        "/dashboard/social-accounts"
+        "/login/dashboard/social-accounts"
       );
 
       return NextResponse.redirect(loginUrl);
     }
 
-    const clientId = requireEnv("LINKEDIN_CLIENT_ID");
+    const clientId = requireEnv(
+      "LINKEDIN_CLIENT_ID"
+    );
+
     const redirectUri = requireEnv(
       "NEXT_PUBLIC_LINKEDIN_REDIRECT"
     );
@@ -116,7 +127,9 @@ export async function GET(req: NextRequest) {
         userId,
         platform: "linkedin",
         issuedAt: Date.now(),
-        nonce: crypto.randomBytes(24).toString("base64url"),
+        nonce: crypto
+          .randomBytes(24)
+          .toString("base64url"),
       },
       stateSecret
     );
@@ -133,10 +146,15 @@ export async function GET(req: NextRequest) {
       `https://www.linkedin.com/oauth/v2/authorization?${params.toString()}`
     );
   } catch (error) {
-    console.error("[linkedin-oauth] Failed to start OAuth", {
-      error:
-        error instanceof Error ? error.message : "unknown_error",
-    });
+    console.error(
+      "[linkedin-oauth] Failed to start OAuth",
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "unknown_error",
+      }
+    );
 
     return redirectToSocialAccounts(req, {
       error: "linkedin_oauth_start_failed",
