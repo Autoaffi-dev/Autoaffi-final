@@ -12,7 +12,8 @@ export type SocialPlatform =
   | "tiktok"
   | "youtube"
   | "linkedin"
-  | "x";
+  | "x"
+  | "threads";
 
 export type SocialProvider =
   | "meta"
@@ -65,6 +66,18 @@ type MetaRefreshResponse = {
 };
 
 type InstagramRefreshResponse = {
+  access_token?: string;
+  token_type?: string;
+  expires_in?: number;
+  error?: {
+    message?: string;
+    type?: string;
+    code?: number;
+    error_subcode?: number;
+  };
+};
+
+type ThreadsRefreshResponse = {
   access_token?: string;
   token_type?: string;
   expires_in?: number;
@@ -148,7 +161,8 @@ function normalizePlatform(
     platform === "tiktok" ||
     platform === "youtube" ||
     platform === "linkedin" ||
-    platform === "x"
+    platform === "x" ||
+    platform === "threads"
   ) {
     return platform;
   }
@@ -275,6 +289,55 @@ function isReconnectErrorCode(
 }
 
 function isInstagramReconnectError(
+  args: {
+    code?:
+      | number
+      | null;
+    subcode?:
+      | number
+      | null;
+    message?:
+      | string
+      | null;
+  }
+): boolean {
+  if (
+    args.code === 190
+  ) {
+    return true;
+  }
+
+  const message =
+    String(
+      args.message ??
+        ""
+    )
+      .toLowerCase()
+      .trim();
+
+  return (
+    message.includes(
+      "invalid oauth"
+    ) ||
+    message.includes(
+      "invalid access token"
+    ) ||
+    message.includes(
+      "access token has expired"
+    ) ||
+    message.includes(
+      "session has expired"
+    ) ||
+    message.includes(
+      "token expired"
+    ) ||
+    message.includes(
+      "revoked"
+    )
+  );
+}
+
+function isThreadsReconnectError(
   args: {
     code?:
       | number
@@ -838,8 +901,8 @@ async function refreshGoogleAccessToken(
 /*
  * Detta är ENDAST Facebooks Meta-tokenflöde.
  *
- * Instagram API with Instagram Login får aldrig
- * skicka sin token hit.
+ * Instagram API with Instagram Login och Threads
+ * får aldrig skicka sina tokens hit.
  */
 async function refreshMetaAccessToken(
   currentAccessToken: string
@@ -1072,6 +1135,157 @@ async function refreshInstagramAccessToken(
 
         reconnectRequired:
           isInstagramReconnectError(
+            {
+              code:
+                providerCode,
+
+              subcode:
+                providerSubcode,
+
+              message:
+                reason,
+            }
+          ),
+
+        providerCode:
+          providerSubcode ??
+          providerCode,
+      }
+    );
+  }
+
+  return {
+    accessToken:
+      body.access_token,
+
+    expiresInSec:
+      typeof body.expires_in ===
+      "number"
+        ? body.expires_in
+        : null,
+
+    tokenType:
+      body.token_type ??
+      null,
+  };
+}
+
+// -------------------- Threads refresh --------------------
+
+/*
+ * Threads använder ett eget token-refresh-flöde.
+ *
+ * Long-lived Threads User Access Token:
+ *
+ * GET https://graph.threads.com/refresh_access_token
+ *
+ * grant_type=th_refresh_token
+ * access_token=<current long-lived token>
+ *
+ * Ingen Facebook Client ID.
+ * Ingen Facebook Client Secret.
+ * Ingen separat refresh_token.
+ *
+ * Datamodellens provider är fortfarande "meta",
+ * men platform = "threads".
+ */
+async function refreshThreadsAccessToken(
+  currentAccessToken: string
+): Promise<{
+  accessToken: string;
+  expiresInSec:
+    | number
+    | null;
+  tokenType:
+    | string
+    | null;
+}> {
+  const params =
+    new URLSearchParams(
+      {
+        grant_type:
+          "th_refresh_token",
+
+        access_token:
+          currentAccessToken,
+      }
+    );
+
+  const response =
+    await fetch(
+      `https://graph.threads.com/refresh_access_token?${params.toString()}`,
+      {
+        method:
+          "GET",
+
+        headers: {
+          Accept:
+            "application/json",
+        },
+
+        cache:
+          "no-store",
+      }
+    );
+
+  const body =
+    (await response
+      .json()
+      .catch(
+        () => ({})
+      )) as ThreadsRefreshResponse;
+
+  if (
+    !response.ok ||
+    body.error ||
+    !body.access_token
+  ) {
+    const providerCode =
+      body.error?.code ??
+      null;
+
+    const providerSubcode =
+      body.error
+        ?.error_subcode ??
+      null;
+
+    const reason =
+      body.error
+        ?.message ||
+      "threads_refresh_failed";
+
+    console.error(
+      "[social-tokens] Threads refresh failed",
+      {
+        status:
+          response.status,
+
+        errorType:
+          body.error
+            ?.type ??
+          null,
+
+        errorCode:
+          providerCode,
+
+        errorSubcode:
+          providerSubcode,
+
+        errorMessage:
+          reason,
+      }
+    );
+
+    throw new TokenRefreshError(
+      {
+        provider:
+          "meta",
+
+        message:
+          `threads_refresh_failed:${reason}`,
+
+        reconnectRequired:
+          isThreadsReconnectError(
             {
               code:
                 providerCode,
@@ -1459,6 +1673,17 @@ export async function getValidAccessToken(
       args.platform
     );
 
+  /*
+   * Threads long-lived tokens måste refreshas
+   * innan de går ut.
+   *
+   * Om caller inte uttryckligen skickar skewSec
+   * använder Threads därför ett säkrare
+   * 7-dagarsfönster.
+   *
+   * Alla befintliga plattformar behåller
+   * exakt tidigare standard: 5 minuter.
+   */
   const skewSec =
     typeof args.skewSec ===
       "number"
@@ -1466,7 +1691,13 @@ export async function getValidAccessToken(
           0,
           args.skewSec
         )
-      : 5 * 60;
+      : platform ===
+          "threads"
+        ? 7 *
+          24 *
+          60 *
+          60
+        : 5 * 60;
 
   const key = [
     args.userId,
@@ -1653,7 +1884,8 @@ export async function getValidAccessToken(
         /*
          * VIKTIGT:
          *
-         * Instagram och Facebook har samma DB-provider:
+         * Instagram, Threads och Facebook har samma
+         * DB-provider:
          *
          * provider = "meta"
          *
@@ -1742,12 +1974,96 @@ export async function getValidAccessToken(
           };
         }
 
+        // ---------------- Threads ----------------
+
+        /*
+         * Threads använder också provider = "meta"
+         * i Autoaffis datamodell, men har ett eget
+         * token-refresh-flöde.
+         *
+         * Denna branch MÅSTE därför ligga före
+         * Facebook / Meta-branchen.
+         */
+        if (
+          row.provider ===
+            "meta" &&
+          row.platform ===
+            "threads"
+        ) {
+          const refreshed =
+            await refreshThreadsAccessToken(
+              accessToken
+            );
+
+          const update =
+            await updateRowTokens(
+              {
+                rowId:
+                  row.id,
+
+                accessToken:
+                  refreshed
+                    .accessToken,
+
+                /*
+                 * Threads long-lived tokens använder
+                 * ingen separat refresh_token.
+                 */
+                refreshToken:
+                  undefined,
+
+                expiresInSec:
+                  refreshed
+                    .expiresInSec,
+
+                metaPatch: {
+                  token_refreshed_at:
+                    new Date()
+                      .toISOString(),
+
+                  token_refresh_provider:
+                    "threads",
+
+                  token_refresh_note:
+                    "threads_long_lived_token_refreshed",
+
+                  oauth_flow:
+                    "threads_oauth",
+
+                  token_type:
+                    refreshed
+                      .tokenType,
+                },
+              }
+            );
+
+          return {
+            accessToken:
+              refreshed
+                .accessToken,
+
+            refreshed:
+              true,
+
+            platform:
+              row.platform,
+
+            provider:
+              row.provider,
+
+            expiresAt:
+              update
+                .token_expires_at,
+          };
+        }
+
         // ---------------- Facebook / Meta ----------------
 
         /*
          * Den här branchen körs nu bara för Facebook.
          *
-         * Instagram fångas ovan innan den kan komma hit.
+         * Instagram och Threads fångas ovan innan
+         * någon av deras tokens kan komma hit.
          */
         if (
           row.provider ===

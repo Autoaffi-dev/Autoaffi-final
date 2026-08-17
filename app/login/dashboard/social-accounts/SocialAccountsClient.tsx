@@ -1,12 +1,27 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+
 import AccountManageModal from "@/components/social-accounts/modals/AccountManageModal";
 
+// -------------------------------------------------------
 // PLATFORM TYPES
-type PlatformKey = "tiktok" | "instagram" | "facebook" | "youtube" | "x" | "linkedin";
-type Plan = "Basic" | "Pro" | "Elite";
+// -------------------------------------------------------
+
+type PlatformKey =
+  | "tiktok"
+  | "instagram"
+  | "facebook"
+  | "youtube"
+  | "threads"
+  | "linkedin";
+
+type Plan =
+  | "Basic"
+  | "Pro"
+  | "Elite";
 
 type Account = {
   id: string;
@@ -19,56 +34,291 @@ type PlatformState = {
   lastSynced?: string;
 };
 
-const PLATFORM_LABELS: Record<PlatformKey, string> = {
-  tiktok: "TikTok",
-  instagram: "Instagram",
-  facebook: "Facebook",
-  youtube: "YouTube",
-  x: "X (Twitter)",
-  linkedin: "LinkedIn",
+type PlatformRow = {
+  platform: PlatformKey | string;
+  status:
+    | "connected"
+    | "disconnected"
+    | "reconnect_required"
+    | string;
+  username?: string | null;
+  account_id?: string | null;
+  token_expires_at?: string | null;
+  updated_at?: string | null;
+  last_synced_at?: string | null;
 };
 
-const PLATFORM_PLAN: Record<PlatformKey, Plan> = {
-  tiktok: "Basic",
-  instagram: "Basic",
-  facebook: "Basic",
-  youtube: "Basic",
-  x: "Pro",
-  linkedin: "Elite",
+type BannerState = {
+  type: "success" | "error";
+  title: string;
+  message: string;
 };
 
-// vi antar Basic just nu – kan kopplas mot riktig plan senare
-const ACTIVE_PLAN: Plan = "Elite";
+// -------------------------------------------------------
+// PLATFORM CONFIG
+// -------------------------------------------------------
 
-const INITIAL_STATE: Record<PlatformKey, PlatformState> = {
-  tiktok: { accounts: [] },
-  instagram: { accounts: [] },
-  facebook: { accounts: [] },
-  youtube: { accounts: [] },
-  x: { accounts: [] },
-  linkedin: { accounts: [] },
+const PLATFORM_LABELS: Record<
+  PlatformKey,
+  string
+> = {
+  tiktok:
+    "TikTok",
+
+  instagram:
+    "Instagram",
+
+  facebook:
+    "Facebook",
+
+  youtube:
+    "YouTube",
+
+  threads:
+    "Threads",
+
+  linkedin:
+    "LinkedIn",
 };
 
-// ✅ Hämta platforms från DB (matchar /api/social/accounts -> { platforms: [...] })
-async function fetchAccounts() {
-  const res = await fetch("/api/social/accounts", { cache: "no-store" });
-  if (!res.ok) return [];
+const PLATFORM_PLAN: Record<
+  PlatformKey,
+  Plan
+> = {
+  tiktok:
+    "Basic",
 
-  const json = await res.json();
+  instagram:
+    "Basic",
 
-  const rows = (json.platforms || []) as Array<{
-    platform: PlatformKey | string;
-    status: "connected" | "disconnected" | string;
-    username?: string | null;
-    account_id?: string | null;
-    token_expires_at?: string | null;
-    updated_at?: string | null;
-  }>;
+  facebook:
+    "Basic",
 
-  return rows;
+  youtube:
+    "Basic",
+
+  threads:
+    "Pro",
+
+  linkedin:
+    "Elite",
+};
+
+const PLATFORM_DESCRIPTION: Record<
+  PlatformKey,
+  string
+> = {
+  tiktok:
+    "Connect TikTok to help Autoaffi understand which short-form content performs best with your audience.",
+
+  instagram:
+    "You don’t need a Facebook Page to connect Instagram. Your Instagram account just needs to be a Professional account — Creator or Business.",
+
+  facebook:
+    "You don’t need an Instagram account to connect Facebook. You just need a published Facebook Page you manage.",
+
+  youtube:
+    "Connect YouTube to bring real channel, video and audience performance into your Autoaffi recommendations.",
+
+  threads:
+    "Connect Threads to help Autoaffi understand which conversations, topics and posts are gaining traction with your audience.",
+
+  linkedin:
+    "Connect LinkedIn to bring your professional profile into Autoaffi. Deeper content analytics will only appear when LinkedIn gives Autoaffi access to those signals.",
+};
+
+/*
+ * TEMPORARY:
+ *
+ * This is intentionally left as the existing plan source
+ * until Autoaffi's real subscription/plan state is wired
+ * into this page.
+ *
+ * Do not treat this as the final launch plan implementation.
+ */
+const ACTIVE_PLAN: Plan =
+  "Elite";
+
+const INITIAL_STATE: Record<
+  PlatformKey,
+  PlatformState
+> = {
+  tiktok: {
+    accounts: [],
+  },
+
+  instagram: {
+    accounts: [],
+  },
+
+  facebook: {
+    accounts: [],
+  },
+
+  youtube: {
+    accounts: [],
+  },
+
+  threads: {
+    accounts: [],
+  },
+
+  linkedin: {
+    accounts: [],
+  },
+};
+
+// -------------------------------------------------------
+// API
+// -------------------------------------------------------
+
+async function fetchAccounts(): Promise<
+  PlatformRow[]
+> {
+  const response =
+    await fetch(
+      "/api/social/accounts",
+      {
+        cache:
+          "no-store",
+      }
+    );
+
+  if (
+    !response.ok
+  ) {
+    return [];
+  }
+
+  const json =
+    await response
+      .json()
+      .catch(
+        () => ({})
+      );
+
+  return Array.isArray(
+    json?.platforms
+  )
+    ? (json.platforms as PlatformRow[])
+    : [];
 }
 
-/** ---------------- UI: Toast + Banner ---------------- */
+// -------------------------------------------------------
+// USER-FRIENDLY MESSAGES
+// -------------------------------------------------------
+
+function getConnectionSuccessMessage(
+  platform: PlatformKey
+): string {
+  if (
+    platform ===
+    "linkedin"
+  ) {
+    return "LinkedIn is connected. You can refresh your available profile data whenever needed.";
+  }
+
+  if (
+    platform ===
+    "threads"
+  ) {
+    return "Threads is connected. Sync analytics to bring your real Threads performance into Autoaffi.";
+  }
+
+  return `${PLATFORM_LABELS[platform]} is connected. Sync analytics to load your latest real performance data.`;
+}
+
+function getReadableOAuthError(
+  errorCode: string | null,
+  platform:
+    | PlatformKey
+    | null
+): string {
+  const label =
+    platform
+      ? PLATFORM_LABELS[
+          platform
+        ]
+      : "your social account";
+
+  switch (
+    errorCode
+  ) {
+    case "oauth_state_expired":
+      return "The connection session expired before it was completed. Please press Connect and try again.";
+
+    case "bad_oauth_state":
+      return "Autoaffi could not securely verify the connection request. Please start the connection again.";
+
+    case "oauth_user_mismatch":
+      return "The social connection did not match your current Autoaffi session. Please sign in again and retry.";
+
+    case "session_expired":
+      return "Your Autoaffi session expired during the connection. Please sign in again and retry.";
+
+    case "instagram_access_denied":
+    case "threads_access_denied":
+      return `You cancelled the ${label} connection. Nothing was changed.`;
+
+    case "instagram_code_exchange_failed":
+    case "instagram_long_lived_token_failed":
+    case "instagram_account_lookup_failed":
+      return "Instagram could not finish the connection. Make sure you are connecting a Creator or Business account, then try again.";
+
+    case "threads_code_exchange_failed":
+    case "threads_long_lived_token_failed":
+    case "threads_profile_lookup_failed":
+      return "Threads could not finish the connection. Please try Connect again.";
+
+    default:
+      return `Autoaffi could not finish connecting ${label}. Please try again.`;
+  }
+}
+
+function getReadableSyncError(
+  platform: PlatformKey,
+  rawMessage: unknown
+): string {
+  const raw =
+    String(
+      rawMessage ??
+        ""
+    )
+      .trim()
+      .toLowerCase();
+
+  if (
+    raw.includes(
+      "reconnect"
+    ) ||
+    raw.includes(
+      "expired"
+    ) ||
+    raw.includes(
+      "invalid_token"
+    ) ||
+    raw.includes(
+      "invalid oauth"
+    )
+  ) {
+    return `${PLATFORM_LABELS[platform]} needs to be reconnected before Autoaffi can sync it again.`;
+  }
+
+  if (
+    raw.includes(
+      "no_connected_account"
+    )
+  ) {
+    return `${PLATFORM_LABELS[platform]} is not currently connected. Connect the account first.`;
+  }
+
+  return `Autoaffi could not refresh ${PLATFORM_LABELS[platform]} right now. Please try again in a moment.`;
+}
+
+// -------------------------------------------------------
+// UI HELPERS
+// -------------------------------------------------------
+
 function Toast({
   open,
   type,
@@ -76,23 +326,43 @@ function Toast({
   message,
 }: {
   open: boolean;
-  type: "success" | "error";
+  type:
+    | "success"
+    | "error";
   title: string;
   message: string;
 }) {
-  if (!open) return null;
+  if (!open) {
+    return null;
+  }
 
   const base =
     "fixed right-4 top-4 z-[60] w-[min(420px,calc(100vw-2rem))] rounded-2xl border px-4 py-3 shadow-[0_18px_60px_rgba(0,0,0,0.65)] backdrop-blur";
-  const skin = type === "success" ? "border-yellow-500/40 bg-slate-950/70" : "border-red-500/40 bg-slate-950/70";
+
+  const skin =
+    type ===
+    "success"
+      ? "border-yellow-500/40 bg-slate-950/90"
+      : "border-red-500/40 bg-slate-950/90";
 
   return (
-    <div className={`${base} ${skin}`}>
+    <div
+      className={`${base} ${skin}`}
+    >
       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">
-        {type === "success" ? "Success" : "Error"}
+        {type ===
+        "success"
+          ? "Success"
+          : "Error"}
       </p>
-      <p className="mt-1 text-sm font-extrabold text-slate-50">{title}</p>
-      <p className="mt-1 text-[12px] text-slate-300">{message}</p>
+
+      <p className="mt-1 text-sm font-extrabold text-slate-50">
+        {title}
+      </p>
+
+      <p className="mt-1 text-[12px] leading-relaxed text-slate-300">
+        {message}
+      </p>
     </div>
   );
 }
@@ -104,622 +374,1584 @@ function Banner({
   message,
 }: {
   open: boolean;
-  type: "success" | "error";
+  type:
+    | "success"
+    | "error";
   title: string;
   message: string;
 }) {
-  if (!open) return null;
+  if (!open) {
+    return null;
+  }
 
-  const skin = type === "success" ? "border-yellow-500/40 bg-yellow-500/10" : "border-red-500/40 bg-red-500/10";
+  const skin =
+    type ===
+    "success"
+      ? "border-yellow-500/40 bg-yellow-500/10"
+      : "border-red-500/40 bg-red-500/10";
 
   return (
-    <div className={`mb-6 rounded-2xl border ${skin} px-4 py-3`}>
-      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">{title}</p>
-      <p className="mt-1 text-[12px] text-slate-200">{message}</p>
+    <div
+      className={`mb-6 rounded-2xl border ${skin} px-4 py-3`}
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
+        {title}
+      </p>
+
+      <p className="mt-1 text-[12px] leading-relaxed text-slate-200">
+        {message}
+      </p>
     </div>
   );
 }
 
+function AnalyticsSignals({
+  platform,
+  connected,
+}: {
+  platform:
+    PlatformKey;
+  connected:
+    boolean;
+}) {
+  /*
+   * LinkedIn intentionally has NO posting-time
+   * recommendation here.
+   *
+   * We currently do not have the LinkedIn
+   * performance access required to calculate it
+   * honestly.
+   */
+  if (
+    platform ===
+    "linkedin"
+  ) {
+    return (
+      <div className="mb-4 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Profile
+          </p>
+
+          <p className="mt-1 text-[11px] font-semibold text-slate-100">
+            {connected
+              ? "Connected"
+              : "Available after connect"}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Content analytics
+          </p>
+
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+            Limited until LinkedIn provides broader analytics access.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    platform ===
+    "threads"
+  ) {
+    return (
+      <div className="mb-4 grid gap-2 sm:grid-cols-3">
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Performance
+          </p>
+
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+            {connected
+              ? "Built from real synced posts"
+              : "Available after connect"}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Conversations
+          </p>
+
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+            Replies and engagement when the Threads API provides them.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/[0.04] p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-yellow-300">
+            Recommended publish time
+          </p>
+
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+            Calculated from real activity — about 30 minutes before your audience peak.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 grid gap-2 sm:grid-cols-3">
+      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          Audience
+        </p>
+
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+          {connected
+            ? "Uses real audience signals from sync"
+            : "Available after connect"}
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/[0.04] p-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-yellow-300">
+          Recommended publish time
+        </p>
+
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+          About 30 minutes before your real audience peak — once Autoaffi has enough activity to calculate it.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          Content performance
+        </p>
+
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+          {connected
+            ? "Based only on real synced content"
+            : "Available after connect"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// -------------------------------------------------------
+// COMPONENT
+// -------------------------------------------------------
+
 export default function SocialAccountsClient() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const pathname = usePathname();
+  const router =
+    useRouter();
 
-  const safePath = pathname ?? "/login/dashboard/social-accounts";
+  const searchParams =
+    useSearchParams();
 
-  const [platforms, setPlatforms] = useState<Record<PlatformKey, PlatformState>>(INITIAL_STATE);
+  const pathname =
+    usePathname();
 
-  const [manageOpen, setManageOpen] = useState(false);
-  const [managePlatform, setManagePlatform] = useState<PlatformKey | null>(null);
+  const safePath =
+    pathname ??
+    "/login/dashboard/social-accounts";
 
-  // UI banners/toasts (OAuth + Sync)
-  const [toastVisible, setToastVisible] = useState(false);
-  const [bannerVisible, setBannerVisible] = useState(false);
-  const [runtimeBanner, setRuntimeBanner] = useState<{
-    type: "success" | "error";
-    title: string;
-    message: string;
-  } | null>(null);
+  const [
+    platforms,
+    setPlatforms,
+  ] = useState<
+    Record<
+      PlatformKey,
+      PlatformState
+    >
+  >(
+    INITIAL_STATE
+  );
 
-  // Loading state per platform for Sync
-  const [syncing, setSyncing] = useState<Record<PlatformKey, boolean>>({
-    tiktok: false,
-    instagram: false,
-    facebook: false,
-    youtube: false,
-    x: false,
-    linkedin: false,
+  const [
+    manageOpen,
+    setManageOpen,
+  ] = useState(
+    false
+  );
+
+  const [
+    managePlatform,
+    setManagePlatform,
+  ] = useState<
+    PlatformKey | null
+  >(
+    null
+  );
+
+  const [
+    toastVisible,
+    setToastVisible,
+  ] = useState(
+    false
+  );
+
+  const [
+    bannerVisible,
+    setBannerVisible,
+  ] = useState(
+    false
+  );
+
+  const [
+    runtimeBanner,
+    setRuntimeBanner,
+  ] = useState<
+    BannerState | null
+  >(
+    null
+  );
+
+  const [
+    syncing,
+    setSyncing,
+  ] = useState<
+    Record<
+      PlatformKey,
+      boolean
+    >
+  >({
+    tiktok:
+      false,
+
+    instagram:
+      false,
+
+    facebook:
+      false,
+
+    youtube:
+      false,
+
+    threads:
+      false,
+
+    linkedin:
+      false,
   });
 
-  const connected = searchParams?.get("connected");
-  const error = searchParams?.get("error");
-  const platformParam = searchParams?.get("platform");
+  const connected =
+    searchParams?.get(
+      "connected"
+    );
 
-  const banner = useMemo(() => {
-    // runtimeBanner (sync) takes priority if set
-    if (runtimeBanner) return runtimeBanner;
+  const error =
+    searchParams?.get(
+      "error"
+    );
 
-    if (error) {
-      return {
-        type: "error" as const,
-        title: "Connection failed",
-        message: "Something went wrong during OAuth. Please try again. If it keeps failing, disconnect and reconnect.",
-      };
-    }
+  const platformParam =
+    searchParams?.get(
+      "platform"
+    );
 
-    if (connected) {
-      const p = connected.toLowerCase() as PlatformKey;
-      const label = (PLATFORM_LABELS as any)[p] || connected;
-      return {
-        type: "success" as const,
-        title: "Connected!",
-        message: `${label} is now connected. Sync analytics to load your latest performance data.`,
-      };
-    }
+  const normalizedPlatformParam =
+    platformParam &&
+    Object.prototype.hasOwnProperty.call(
+      PLATFORM_LABELS,
+      platformParam.toLowerCase()
+    )
+      ? (platformParam.toLowerCase() as PlatformKey)
+      : null;
 
-    if (platformParam) {
-      const p = platformParam.toLowerCase() as PlatformKey;
-      const label = (PLATFORM_LABELS as any)[p] || platformParam;
-      return {
-        type: "success" as const,
-        title: "Ready",
-        message: `${label} is ready. You can now sync analytics.`,
-      };
-    }
-
-    return null;
-  }, [connected, error, platformParam, runtimeBanner]);
-
-  // ---------------- PLAN LOCKING ----------------
-  function isLocked(platform: PlatformKey): boolean {
-    const neededPlan = PLATFORM_PLAN[platform];
-    if (ACTIVE_PLAN === "Elite") return false;
-    if (ACTIVE_PLAN === "Pro") return neededPlan === "Elite";
-    return neededPlan === "Pro" || neededPlan === "Elite"; // Basic
-  }
-
-  // ✅ Hydrate UI state från DB
-  async function hydrate() {
-    const rows = await fetchAccounts();
-
-    setPlatforms((prev) => {
-      const next = { ...prev };
-
-      // reset så disconnect syns direkt
-      (Object.keys(next) as PlatformKey[]).forEach((p) => {
-        next[p] = { accounts: [] };
-      });
-
-      for (const row of rows) {
-        const p = String(row.platform).toLowerCase() as PlatformKey;
-        if (!next[p]) continue;
-
-        if (row.status === "connected") {
-          next[p] = {
-            accounts: [
-              {
-                id: row.account_id || `acc-${p}-1`,
-                username: row.username || `${(PLATFORM_LABELS as any)[p] || p} account`,
-                primary: true,
-              },
-            ],
-            lastSynced: row.updated_at ? new Date(row.updated_at).toLocaleString() : undefined,
-          };
-        }
+  const banner =
+    useMemo<
+      BannerState | null
+    >(() => {
+      if (
+        runtimeBanner
+      ) {
+        return runtimeBanner;
       }
 
-      return next;
-    });
+      if (error) {
+        return {
+          type:
+            "error",
+
+          title:
+            "Connection failed",
+
+          message:
+            getReadableOAuthError(
+              error,
+              normalizedPlatformParam
+            ),
+        };
+      }
+
+      if (connected) {
+        const normalized =
+          connected.toLowerCase();
+
+        if (
+          Object.prototype.hasOwnProperty.call(
+            PLATFORM_LABELS,
+            normalized
+          )
+        ) {
+          const platform =
+            normalized as PlatformKey;
+
+          return {
+            type:
+              "success",
+
+            title:
+              "Connected!",
+
+            message:
+              getConnectionSuccessMessage(
+                platform
+              ),
+          };
+        }
+
+        return {
+          type:
+            "success",
+
+          title:
+            "Connected!",
+
+          message:
+            "Your social account is now connected to Autoaffi.",
+        };
+      }
+
+      return null;
+    }, [
+      connected,
+      error,
+      normalizedPlatformParam,
+      runtimeBanner,
+    ]);
+
+  // -----------------------------------------------------
+  // PLAN LOCKING
+  // -----------------------------------------------------
+
+  function isLocked(
+    platform: PlatformKey
+  ): boolean {
+    const neededPlan =
+      PLATFORM_PLAN[
+        platform
+      ];
+
+    if (
+      ACTIVE_PLAN ===
+      "Elite"
+    ) {
+      return false;
+    }
+
+    if (
+      ACTIVE_PLAN ===
+      "Pro"
+    ) {
+      return (
+        neededPlan ===
+        "Elite"
+      );
+    }
+
+    return (
+      neededPlan ===
+        "Pro" ||
+      neededPlan ===
+        "Elite"
+    );
   }
 
-  useEffect(() => {
-    hydrate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // -----------------------------------------------------
+  // HYDRATE FROM DB
+  // -----------------------------------------------------
 
-  // ✅ Toast/Banner lifecycle + rensa query params
-  useEffect(() => {
-    if (!banner) return;
+  async function hydrate() {
+    const rows =
+      await fetchAccounts();
 
-    setToastVisible(true);
-    setBannerVisible(true);
+    setPlatforms(
+      () => {
+        const next:
+          Record<
+            PlatformKey,
+            PlatformState
+          > = {
+          tiktok: {
+            accounts: [],
+          },
 
-    const t1 = setTimeout(() => setToastVisible(false), 4500);
-    const t2 = setTimeout(() => setBannerVisible(false), 6500);
+          instagram: {
+            accounts: [],
+          },
 
-    if (searchParams) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("connected");
-      params.delete("error");
-      params.delete("platform");
+          facebook: {
+            accounts: [],
+          },
 
-      const qs = params.toString();
-      const target = qs.length > 0 ? `${safePath}?${qs}` : safePath;
-      router.replace(target);
-    }
+          youtube: {
+            accounts: [],
+          },
 
-    // om vi kom från OAuth => hydrate igen så UI uppdateras direkt
-    hydrate();
+          threads: {
+            accounts: [],
+          },
 
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [banner]);
+          linkedin: {
+            accounts: [],
+          },
+        };
 
-  // ✅ Riktiga connect redirects per plattform
-  function goConnect(platform: PlatformKey) {
-    if (isLocked(platform)) return;
+        for (
+          const row of rows
+        ) {
+          const rawPlatform =
+            String(
+              row.platform
+            )
+              .toLowerCase()
+              .trim();
 
-    if (platform === "instagram") {
-      window.location.href = `/api/oauth/facebook?platform=instagram`;
-      return;
-    }
+          if (
+            !Object.prototype.hasOwnProperty.call(
+              next,
+              rawPlatform
+            )
+          ) {
+            /*
+             * Example:
+             *
+             * Legacy X rows can still exist in DB
+             * while backend cleanup is ongoing.
+             *
+             * They are intentionally ignored by
+             * the new customer-facing UI.
+             */
+            continue;
+          }
 
-    if (platform === "facebook") {
-      window.location.href = `/api/oauth/facebook?platform=facebook`;
-      return;
-    }
+          const platform =
+            rawPlatform as PlatformKey;
 
-    if (platform === "tiktok") {
-      window.location.href = `/api/oauth/tiktok`;
-      return;
-    }
+          if (
+            row.status ===
+            "connected"
+          ) {
+            const syncDate =
+              row.last_synced_at ??
+              null;
 
-    if (platform === "youtube") {
-      window.location.href = `/api/oauth/google?platform=youtube`;
-      return;
-    }
+            next[
+              platform
+            ] = {
+              accounts: [
+                {
+                  id:
+                    row.account_id ||
+                    `acc-${platform}-1`,
 
-    if (platform === "linkedin") {
-      window.location.href = `/api/oauth/linkedin`;
-      return;
-    }
+                  username:
+                    row.username ||
+                    `${PLATFORM_LABELS[platform]} account`,
 
-    // X placeholder tills API byggs
+                  primary:
+                    true,
+                },
+              ],
+
+              lastSynced:
+                syncDate
+                  ? new Date(
+                      syncDate
+                    ).toLocaleString()
+                  : undefined,
+            };
+          }
+        }
+
+        return next;
+      }
+    );
   }
 
-  // ✅ Riktig sync för ALLA (backend bestämmer full vs stub)
-  async function runSync(platform: PlatformKey) {
-    setRuntimeBanner(null);
+  useEffect(
+    () => {
+      void hydrate();
 
-    setSyncing((prev) => ({ ...prev, [platform]: true }));
-    try {
-      const res = await fetch("/api/social/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({ platform }),
-      });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    []
+  );
 
-      const json = await res.json().catch(() => ({} as any));
+  // -----------------------------------------------------
+  // TOAST / BANNER LIFECYCLE
+  // -----------------------------------------------------
 
-      if (!res.ok || json?.ok === false) {
-        const msg =
-          json?.error ||
-          json?.message ||
-          `Sync failed for ${PLATFORM_LABELS[platform]}. Check server logs for details.`;
-
-        setRuntimeBanner({
-          type: "error",
-          title: "Sync failed",
-          message: msg,
-        });
-        setToastVisible(true);
-        setBannerVisible(true);
+  useEffect(
+    () => {
+      if (!banner) {
         return;
       }
 
-      const mode = json?.mode ? String(json.mode) : "ok";
-      const synced = typeof json?.synced === "number" ? json.synced : undefined;
+      setToastVisible(
+        true
+      );
 
-      setRuntimeBanner({
-        type: "success",
-        title: "Synced!",
-        message:
-          synced != null
-            ? `${PLATFORM_LABELS[platform]} updated (${mode}). Items: ${synced}.`
-            : `${PLATFORM_LABELS[platform]} updated (${mode}).`,
-      });
-      setToastVisible(true);
-      setBannerVisible(true);
+      setBannerVisible(
+        true
+      );
 
-      await hydrate();
-    } catch (e: any) {
-      setRuntimeBanner({
-        type: "error",
-        title: "Sync failed",
-        message: e?.message || "Unexpected error during sync.",
-      });
-      setToastVisible(true);
-      setBannerVisible(true);
-    } finally {
-      setSyncing((prev) => ({ ...prev, [platform]: false }));
-    }
-  }
+      const toastTimer =
+        setTimeout(
+          () =>
+            setToastVisible(
+              false
+            ),
+          4500
+        );
 
-  // ---------------- CONNECT / SYNC ----------------
-  async function handleConnect(platform: PlatformKey) {
-    if (isLocked(platform)) return;
+      const bannerTimer =
+        setTimeout(
+          () =>
+            setBannerVisible(
+              false
+            ),
+          6500
+        );
 
-    const current = platforms[platform];
-    const hasAccounts = current.accounts.length > 0;
+      if (
+        searchParams
+      ) {
+        const params =
+          new URLSearchParams(
+            searchParams.toString()
+          );
 
-    // Första gången => redirect till OAuth
-    if (!hasAccounts) {
-      goConnect(platform);
+        params.delete(
+          "connected"
+        );
+
+        params.delete(
+          "error"
+        );
+
+        params.delete(
+          "platform"
+        );
+
+        const query =
+          params.toString();
+
+        const target =
+          query.length > 0
+            ? `${safePath}?${query}`
+            : safePath;
+
+        router.replace(
+          target
+        );
+      }
+
+      void hydrate();
+
+      return () => {
+        clearTimeout(
+          toastTimer
+        );
+
+        clearTimeout(
+          bannerTimer
+        );
+      };
+
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [banner]
+  );
+
+  // -----------------------------------------------------
+  // CONNECT REDIRECTS
+  // -----------------------------------------------------
+
+  function goConnect(
+    platform: PlatformKey
+  ) {
+    if (
+      isLocked(
+        platform
+      )
+    ) {
       return;
     }
 
-    // Redan ansluten => kör sync
-    await runSync(platform);
+    if (
+      platform ===
+      "instagram"
+    ) {
+      /*
+       * Direct Instagram Login.
+       *
+       * No Facebook Page required.
+       */
+      window.location.href =
+        "/api/oauth/instagram";
+
+      return;
+    }
+
+    if (
+      platform ===
+      "facebook"
+    ) {
+      window.location.href =
+        "/api/oauth/facebook?platform=facebook";
+
+      return;
+    }
+
+    if (
+      platform ===
+      "tiktok"
+    ) {
+      window.location.href =
+        "/api/oauth/tiktok";
+
+      return;
+    }
+
+    if (
+      platform ===
+      "youtube"
+    ) {
+      window.location.href =
+        "/api/oauth/google?platform=youtube";
+
+      return;
+    }
+
+    if (
+      platform ===
+      "threads"
+    ) {
+      window.location.href =
+        "/api/oauth/threads";
+
+      return;
+    }
+
+    if (
+      platform ===
+      "linkedin"
+    ) {
+      window.location.href =
+        "/api/oauth/linkedin";
+    }
   }
 
-  // ---------------- ADD ACCOUNT (+) ----------------
-  function handleAddAccount(platform: PlatformKey) {
-    if (isLocked(platform)) return;
+  // -----------------------------------------------------
+  // SYNC
+  // -----------------------------------------------------
 
-    setPlatforms((prev) => {
-      const current = prev[platform];
-      if (current.accounts.length === 0) return prev;
+  async function runSync(
+    platform: PlatformKey
+  ) {
+    setRuntimeBanner(
+      null
+    );
 
-      const index = current.accounts.length + 1;
-      const newAccount: Account = {
-        id: `acc-${platform}-${index}`,
-        username: `${PLATFORM_LABELS[platform]} #${index}`,
-        primary: false,
-      };
+    setSyncing(
+      (previous) => ({
+        ...previous,
+        [platform]:
+          true,
+      })
+    );
 
-      return {
-        ...prev,
-        [platform]: {
-          ...current,
-          accounts: [...current.accounts, newAccount],
-        },
-      };
-    });
+    try {
+      const response =
+        await fetch(
+          "/api/social/sync",
+          {
+            method:
+              "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            cache:
+              "no-store",
+
+            body:
+              JSON.stringify({
+                platform,
+              }),
+          }
+        );
+
+      const json =
+        await response
+          .json()
+          .catch(
+            () => ({})
+          );
+
+      if (
+        !response.ok ||
+        json?.ok ===
+          false
+      ) {
+        const rawMessage =
+          json?.error ??
+          json?.message ??
+          null;
+
+        setRuntimeBanner(
+          {
+            type:
+              "error",
+
+            title:
+              "Sync failed",
+
+            message:
+              getReadableSyncError(
+                platform,
+                rawMessage
+              ),
+          }
+        );
+
+        setToastVisible(
+          true
+        );
+
+        setBannerVisible(
+          true
+        );
+
+        return;
+      }
+
+      const mode =
+        json?.mode
+          ? String(
+              json.mode
+            )
+          : "ok";
+
+      const synced =
+        typeof json?.synced ===
+        "number"
+          ? json.synced
+          : undefined;
+
+      let message:
+        string;
+
+      if (
+        platform ===
+        "linkedin"
+      ) {
+        message =
+          "LinkedIn profile updated.";
+      } else if (
+        synced !==
+        undefined
+      ) {
+        message =
+          `${PLATFORM_LABELS[platform]} updated (${mode}). Items: ${synced}.`;
+      } else {
+        message =
+          `${PLATFORM_LABELS[platform]} updated (${mode}).`;
+      }
+
+      setRuntimeBanner(
+        {
+          type:
+            "success",
+
+          title:
+            "Synced!",
+
+          message,
+        }
+      );
+
+      setToastVisible(
+        true
+      );
+
+      setBannerVisible(
+        true
+      );
+
+      await hydrate();
+    } catch {
+      setRuntimeBanner(
+        {
+          type:
+            "error",
+
+          title:
+            "Sync failed",
+
+          message:
+            `Autoaffi could not refresh ${PLATFORM_LABELS[platform]} right now. Please try again.`,
+        }
+      );
+
+      setToastVisible(
+        true
+      );
+
+      setBannerVisible(
+        true
+      );
+    } finally {
+      setSyncing(
+        (previous) => ({
+          ...previous,
+
+          [platform]:
+            false,
+        })
+      );
+    }
   }
 
-  // ---------------- MANAGE MODAL ----------------
-  function handleManage(platform: PlatformKey) {
-    const state = platforms[platform];
-    if (state.accounts.length === 0) return;
-    setManagePlatform(platform);
-    setManageOpen(true);
+  // -----------------------------------------------------
+  // CONNECT / SYNC ACTION
+  // -----------------------------------------------------
+
+  async function handleConnect(
+    platform: PlatformKey
+  ) {
+    if (
+      isLocked(
+        platform
+      )
+    ) {
+      return;
+    }
+
+    const current =
+      platforms[
+        platform
+      ];
+
+    const hasAccounts =
+      current.accounts
+        .length > 0;
+
+    if (
+      !hasAccounts
+    ) {
+      goConnect(
+        platform
+      );
+
+      return;
+    }
+
+    await runSync(
+      platform
+    );
+  }
+
+  // -----------------------------------------------------
+  // MULTI ACCOUNT
+  // -----------------------------------------------------
+
+  /*
+   * The current DB model stores one canonical connection
+   * per user + platform.
+   *
+   * We therefore do NOT create fake local accounts here.
+   *
+   * AccountManageModal will get its own cleanup pass next.
+   */
+  function handleAddAccount(
+    platform: PlatformKey
+  ) {
+    if (
+      isLocked(
+        platform
+      )
+    ) {
+      return;
+    }
+
+    setRuntimeBanner(
+      {
+        type:
+          "error",
+
+        title:
+          "One account per platform",
+
+        message:
+          `Autoaffi currently supports one connected ${PLATFORM_LABELS[platform]} account here. Additional-account support will only be shown when it is fully available.`,
+      }
+    );
+
+    setToastVisible(
+      true
+    );
+
+    setBannerVisible(
+      true
+    );
+  }
+
+  // -----------------------------------------------------
+  // MANAGE MODAL
+  // -----------------------------------------------------
+
+  function handleManage(
+    platform: PlatformKey
+  ) {
+    const state =
+      platforms[
+        platform
+      ];
+
+    if (
+      state.accounts
+        .length === 0
+    ) {
+      return;
+    }
+
+    setManagePlatform(
+      platform
+    );
+
+    setManageOpen(
+      true
+    );
   }
 
   function closeManage() {
-    setManageOpen(false);
-    setManagePlatform(null);
+    setManageOpen(
+      false
+    );
+
+    setManagePlatform(
+      null
+    );
   }
 
   function handleModalAdd() {
-    if (!managePlatform) return;
-    handleAddAccount(managePlatform);
-  }
-
-  // ✅ Om sista kontot tas bort => disconnect i backend
-  async function handleModalRemove(id: string) {
-    if (!managePlatform) return;
-
-    const current = platforms[managePlatform];
-    const filtered = current.accounts.filter((acc) => acc.id !== id);
-
-    if (filtered.length === 0) {
-      await fetch("/api/social/disconnect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({ platform: managePlatform }),
-      });
-      await hydrate();
+    if (
+      !managePlatform
+    ) {
       return;
     }
 
-    // annars: bara UI (multi-account DB kan komma senare)
-    if (filtered.length > 0 && !filtered.some((acc) => acc.primary)) {
-      filtered[0] = { ...filtered[0], primary: true };
+    handleAddAccount(
+      managePlatform
+    );
+  }
+
+  async function handleModalRemove(
+    id: string
+  ) {
+    if (
+      !managePlatform
+    ) {
+      return;
     }
 
-    setPlatforms((prev) => ({
-      ...prev,
-      [managePlatform]: {
-        ...prev[managePlatform],
-        accounts: filtered,
-      },
-    }));
-  }
+    const current =
+      platforms[
+        managePlatform
+      ];
 
-  function handleModalSetPrimary(id: string) {
-    if (!managePlatform) return;
-    setPlatforms((prev) => {
-      const current = prev[managePlatform];
-      const updated = current.accounts.map((acc) => ({
-        ...acc,
-        primary: acc.id === id,
-      }));
-      return {
-        ...prev,
+    const filtered =
+      current.accounts.filter(
+        (account) =>
+          account.id !==
+          id
+      );
+
+    if (
+      filtered.length ===
+      0
+    ) {
+      const response =
+        await fetch(
+          "/api/social/disconnect",
+          {
+            method:
+              "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            cache:
+              "no-store",
+
+            body:
+              JSON.stringify({
+                platform:
+                  managePlatform,
+              }),
+          }
+        );
+
+      if (
+        !response.ok
+      ) {
+        setRuntimeBanner(
+          {
+            type:
+              "error",
+
+            title:
+              "Disconnect failed",
+
+            message:
+              `Autoaffi could not disconnect ${PLATFORM_LABELS[managePlatform]} right now. Please try again.`,
+          }
+        );
+
+        setToastVisible(
+          true
+        );
+
+        setBannerVisible(
+          true
+        );
+
+        return;
+      }
+
+      await hydrate();
+
+      closeManage();
+
+      return;
+    }
+
+    /*
+     * Defensive UI fallback only.
+     *
+     * Real multi-account persistence is not enabled.
+     */
+    setPlatforms(
+      (previous) => ({
+        ...previous,
+
         [managePlatform]: {
-          ...current,
-          accounts: updated,
+          ...previous[
+            managePlatform
+          ],
+
+          accounts:
+            filtered,
         },
-      };
-    });
+      })
+    );
   }
 
-  // ---------------- RENDER ----------------
+  function handleModalSetPrimary(
+    id: string
+  ) {
+    if (
+      !managePlatform
+    ) {
+      return;
+    }
+
+    setPlatforms(
+      (previous) => {
+        const current =
+          previous[
+            managePlatform
+          ];
+
+        const updated =
+          current.accounts.map(
+            (account) => ({
+              ...account,
+
+              primary:
+                account.id ===
+                id,
+            })
+          );
+
+        return {
+          ...previous,
+
+          [managePlatform]: {
+            ...current,
+
+            accounts:
+              updated,
+          },
+        };
+      }
+    );
+  }
+
+  // -----------------------------------------------------
+  // RENDER
+  // -----------------------------------------------------
+
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-black text-slate-50 px-4 py-10">
+    <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-black px-4 py-10 text-slate-50">
       <Toast
-        open={toastVisible && !!banner}
-        type={(banner?.type || "success") as "success" | "error"}
-        title={banner?.title || ""}
-        message={banner?.message || ""}
+        open={
+          toastVisible &&
+          !!banner
+        }
+        type={
+          (
+            banner?.type ??
+            "success"
+          ) as
+            | "success"
+            | "error"
+        }
+        title={
+          banner?.title ??
+          ""
+        }
+        message={
+          banner?.message ??
+          ""
+        }
       />
 
       <div className="mx-auto max-w-6xl">
         <Banner
-          open={bannerVisible && !!banner}
-          type={(banner?.type || "success") as "success" | "error"}
-          title={banner?.title || ""}
-          message={banner?.message || ""}
+          open={
+            bannerVisible &&
+            !!banner
+          }
+          type={
+            (
+              banner?.type ??
+              "success"
+            ) as
+              | "success"
+              | "error"
+          }
+          title={
+            banner?.title ??
+            ""
+          }
+          message={
+            banner?.message ??
+            ""
+          }
         />
 
-        {/* HEADER */}
-        <header className="mb-8 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 mb-2">Social connections</p>
-            <h1 className="text-3xl font-extrabold tracking-tight">
-              <span className="bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 bg-clip-text text-transparent">
-                Connect your socials
-              </span>
-            </h1>
-            <p className="mt-2 text-sm md:text-base text-slate-400 max-w-xl">
-              Autoaffi never auto-DMs, never auto-likes and never posts without your consent. We only read safe analytics
-              to help you grow smarter.
-            </p>
-          </div>
+        {/* ------------------------------------------------ */}
+        {/* HERO                                             */}
+        {/* ------------------------------------------------ */}
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-xs text-slate-300 shadow-lg shadow-black/50 max-w-xs">
-            <p className="font-semibold text-yellow-300 mb-1">What changes when you connect?</p>
-            <ul className="space-y-1">
-              <li>• Better Smart Suggestions & Viral Heads-Up</li>
-              <li>• Real performance data for My Progress</li>
-              <li>• Safer, platform-compliant optimization</li>
-            </ul>
+        <header className="mb-8 overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-950/30 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+          <div className="grid items-center gap-4 md:grid-cols-[1.08fr_0.92fr]">
+            {/* HERO COPY */}
+
+            <div className="px-5 py-7 md:px-7 md:py-9">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-yellow-400/80">
+                Social connections
+              </p>
+
+              <h1 className="text-3xl font-extrabold tracking-tight md:text-4xl">
+                <span className="bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 bg-clip-text text-transparent">
+                  Connect your socials
+                </span>
+              </h1>
+
+              <p className="mt-3 max-w-xl text-sm leading-relaxed text-slate-300 md:text-base">
+                Autoaffi never auto-DMs, never auto-likes and never posts without your consent.
+                We use the real social performance data you choose to connect to help you understand
+                what works and make smarter content decisions.
+              </p>
+
+              <div className="mt-5 flex flex-wrap gap-2 text-[11px]">
+                <span className="rounded-full border border-yellow-500/25 bg-yellow-500/[0.06] px-3 py-1.5 text-yellow-200">
+                  Your data stays private
+                </span>
+
+                <span className="rounded-full border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-slate-300">
+                  Real analytics only
+                </span>
+
+                <span className="rounded-full border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-slate-300">
+                  You stay in control
+                </span>
+              </div>
+            </div>
+
+            {/* HERO IMAGE */}
+
+            <div className="relative min-h-[250px] overflow-hidden md:min-h-[320px]">
+  <Image
+    src="/images/social-accounts/social-accounts-hero-v2.png"
+    alt="Autoaffi connected to TikTok, Instagram, Facebook, YouTube, Threads and LinkedIn"
+    fill
+    priority
+    sizes="(max-width: 768px) 100vw, 44vw"
+    className="object-contain object-center"
+  />
+</div>
           </div>
         </header>
 
-        {/* 3-STEP GUIDE */}
+        {/* ------------------------------------------------ */}
+        {/* 3 STEP GUIDE                                     */}
+        {/* ------------------------------------------------ */}
+
         <section className="mb-10 rounded-2xl border border-yellow-500/30 bg-slate-900/70 p-6 shadow-[0_18px_50px_rgba(0,0,0,0.6)]">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.28em] text-yellow-300 mb-3">Start here – 3 steps</h2>
-
-          <div className="grid gap-4 md:grid-cols-3 text-xs text-slate-200">
-            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="mb-1 text-[11px] font-semibold text-yellow-300">Step 1 — Connect basics</p>
-              <p>
-                Start with <span className="font-semibold">TikTok, Instagram, Facebook &amp; YouTube</span>. These give the
-                strongest analytics boost.
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="mb-1 text-[11px] font-semibold text-yellow-300">Step 2 — Add extra channels</p>
-              <p>
-                <span className="font-semibold">Pro</span> unlocks X and <span className="font-semibold">Elite</span>{" "}
-                unlocks LinkedIn for advanced authority &amp; B2B growth.
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-              <p className="mb-1 text-[11px] font-semibold text-yellow-300">Step 3 — Let Autoaffi guide you</p>
-              <p>
-                Connected accounts power <span className="font-semibold">Content Optimizer, Smart Suggestions, Viral Heads-Up</span>{" "}
-                and <span className="font-semibold">My Progress</span>.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* PLATFORM CARDS */}
-        <section className="mb-12">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-yellow-400 mb-2">Platforms & plans</h2>
-          <p className="text-[11px] text-slate-500 mb-4">Basic users see everything — Pro &amp; Elite unlock more connections.</p>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            {(Object.keys(PLATFORM_LABELS) as PlatformKey[]).map((platform) => {
-              const label = PLATFORM_LABELS[platform];
-              const plan = PLATFORM_PLAN[platform];
-              const state = platforms[platform];
-              const locked = isLocked(platform);
-              const hasAccounts = state.accounts.length > 0;
-              const isSyncing = syncing[platform];
-
-              const connectLabel = locked
-                ? "Upgrade to unlock"
-                : hasAccounts
-                ? isSyncing
-                  ? "Syncing..."
-                  : "Sync analytics"
-                : "Connect";
-
-              const statusLabel = hasAccounts
-                ? `${state.accounts.length} account${state.accounts.length > 1 ? "s" : ""} connected`
-                : "Not connected yet";
-
-              const lastSyncedLabel = hasAccounts
-                ? state.lastSynced
-                  ? `Last synced: ${state.lastSynced}`
-                  : "Not synced yet"
-                : "Sync will start after first connect";
-
-              const followersLabel = hasAccounts ? "Growing steadily" : "Visible after connect";
-              const bestTimeLabel = hasAccounts ? "18:00–21:00 (your peak)" : "Calculated after sync";
-              const trendLabel = hasAccounts ? "Strong fit for short-form" : "Analyzed from your content";
-
-              return (
-                <article
-                  key={platform}
-                  className={`flex flex-col rounded-2xl border bg-slate-900/70 p-4 shadow-[0_14px_40px_rgba(0,0,0,0.6)] transition-all ${
-                    locked ? "border-slate-800 opacity-85" : "border-slate-800 hover:border-yellow-400/70 hover:bg-slate-900/90"
-                  }`}
-                >
-                  {/* TOP ROW */}
-                  <div className="flex items-center justify-between mb-2">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-50">{label}</h3>
-                      <p className="text-[11px] text-slate-500">Included in {plan}</p>
-                    </div>
-
-                    <div className="flex flex-col items-end gap-1">
-                      {locked && (
-                        <span className="rounded-full border border-yellow-500/60 bg-yellow-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-yellow-300">
-                          {plan} feature
-                        </span>
-                      )}
-                      <span className="text-[11px] text-slate-400">{statusLabel}</span>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-slate-300 mb-3">
-                    Analytics & insights for {label}. Connect once — Autoaffi keeps reading safe data in the background.
-                  </p>
-
-                  {/* MINI STATS */}
-                  <div className="mb-4 grid grid-cols-3 gap-3 text-[11px] text-slate-300">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">Followers</p>
-                      <p className="font-semibold text-slate-100">{followersLabel}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">Best time</p>
-                      <p className="font-semibold text-slate-100">{bestTimeLabel}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 mb-1">Trend fit</p>
-                      <p className="font-semibold text-slate-100">{trendLabel}</p>
-                    </div>
-                  </div>
-
-                  {/* BUTTONS */}
-                  <div className="mt-auto flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={locked || (hasAccounts && isSyncing)}
-                      onClick={() => handleConnect(platform)}
-                      className={`flex-1 rounded-full px-3 py-2 text-xs font-semibold transition ${
-                        locked
-                          ? "cursor-not-allowed border border-slate-700 text-slate-500"
-                          : hasAccounts && isSyncing
-                          ? "cursor-wait border border-yellow-500/40 bg-slate-900 text-yellow-200"
-                          : "border border-yellow-500 bg-gradient-to-r from-yellow-400 to-yellow-600 text-slate-900 hover:brightness-110"
-                      }`}
-                    >
-                      {connectLabel}
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={!hasAccounts}
-                      onClick={() => handleManage(platform)}
-                      className={`rounded-full px-3 py-2 text-[11px] font-medium border ${
-                        !hasAccounts
-                          ? "cursor-not-allowed border-slate-700 text-slate-600"
-                          : "border-slate-700 text-slate-200 hover:border-yellow-400 hover:text-yellow-300"
-                      }`}
-                    >
-                      Manage
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={!hasAccounts}
-                      onClick={() => handleAddAccount(platform)}
-                      className={`rounded-full px-3 py-2 text-[14px] font-bold border ${
-                        !hasAccounts ? "cursor-not-allowed border-slate-700 text-slate-700" : "border-yellow-500 text-yellow-400 hover:text-yellow-200"
-                      }`}
-                    >
-                      +
-                    </button>
-                  </div>
-
-                  <p className="mt-2 text-[10px] text-slate-500">{lastSyncedLabel}</p>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* WHAT WE READ / NEVER DO */}
-        <section className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-5">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-yellow-400 mb-2">
-            What Autoaffi reads (and what we never do)
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.28em] text-yellow-300">
+            Start here — 3 steps
           </h2>
 
-          <div className="grid gap-4 md:grid-cols-3 text-[11px] text-slate-300">
+          <div className="grid gap-4 text-xs text-slate-200 md:grid-cols-3">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+              <p className="mb-1 text-[11px] font-semibold text-yellow-300">
+                Step 1 — Connect your core channels
+              </p>
+
+              <p className="leading-relaxed">
+                Start with{" "}
+                <span className="font-semibold text-slate-100">
+                  TikTok, Instagram, Facebook &amp; YouTube
+                </span>
+                . These give Autoaffi the strongest foundation for understanding your content performance.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+              <p className="mb-1 text-[11px] font-semibold text-yellow-300">
+                Step 2 — Add extra channels
+              </p>
+
+              <p className="leading-relaxed">
+                Add{" "}
+                <span className="font-semibold text-slate-100">
+                  Threads
+                </span>{" "}
+                on Pro and{" "}
+                <span className="font-semibold text-slate-100">
+                  LinkedIn
+                </span>{" "}
+                on Elite to give Autoaffi an even broader view of your audience and content.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+              <p className="mb-1 text-[11px] font-semibold text-yellow-300">
+                Step 3 — Let Autoaffi guide you
+              </p>
+
+              <p className="leading-relaxed">
+                Your real performance helps Autoaffi recommend what to create,
+                when to post and where to focus next.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* ------------------------------------------------ */}
+        {/* PLATFORM CARDS                                   */}
+        {/* ------------------------------------------------ */}
+
+        <section className="mb-12">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-yellow-400">
+            Platforms &amp; plans
+          </h2>
+
+          <p className="mb-4 text-[11px] leading-relaxed text-slate-500">
+            See every channel at a glance. Your plan decides which extra connections you can activate.
+          </p>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {(
+              Object.keys(
+                PLATFORM_LABELS
+              ) as PlatformKey[]
+            ).map(
+              (
+                platform
+              ) => {
+                const label =
+                  PLATFORM_LABELS[
+                    platform
+                  ];
+
+                const plan =
+                  PLATFORM_PLAN[
+                    platform
+                  ];
+
+                const state =
+                  platforms[
+                    platform
+                  ];
+
+                const locked =
+                  isLocked(
+                    platform
+                  );
+
+                const hasAccounts =
+                  state.accounts
+                    .length > 0;
+
+                const isSyncing =
+                  syncing[
+                    platform
+                  ];
+
+                const connectLabel =
+                  locked
+                    ? `Unlock with ${plan}`
+                    : hasAccounts
+                      ? platform ===
+                        "linkedin"
+                        ? isSyncing
+                          ? "Syncing profile..."
+                          : "Sync profile"
+                        : isSyncing
+                          ? "Syncing..."
+                          : "Sync analytics"
+                      : `Connect ${label}`;
+
+                const statusLabel =
+                  hasAccounts
+                    ? `${state.accounts.length} account${state.accounts.length > 1 ? "s" : ""} connected`
+                    : "Not connected";
+
+                const lastSyncedLabel =
+                  hasAccounts
+                    ? state.lastSynced
+                      ? `Last synced: ${state.lastSynced}`
+                      : platform ===
+                        "linkedin"
+                        ? "Profile not synced yet"
+                        : "Analytics not synced yet"
+                    : null;
+
+                return (
+                  <article
+                    key={
+                      platform
+                    }
+                    className={`flex flex-col rounded-2xl border bg-slate-900/70 p-4 shadow-[0_14px_40px_rgba(0,0,0,0.6)] transition-all ${
+                      locked
+                        ? "border-slate-800 opacity-90"
+                        : "border-slate-800 hover:border-yellow-400/60 hover:bg-slate-900/90"
+                    }`}
+                  >
+                    {/* TOP */}
+
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-50">
+                          {label}
+                        </h3>
+
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          Included from {plan}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-1.5">
+                        {locked && (
+                          <span className="rounded-full border border-yellow-500/50 bg-yellow-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-yellow-300">
+                            {plan}
+                          </span>
+                        )}
+
+                        <span
+                          className={`text-[11px] font-medium ${
+                            hasAccounts
+                              ? "text-emerald-400"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          {statusLabel}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* COPY */}
+
+                    <p className="mb-4 min-h-[48px] text-xs leading-relaxed text-slate-300">
+                      {PLATFORM_DESCRIPTION[
+                        platform
+                      ]}
+                    </p>
+
+                    {/* FACEBOOK META HELP */}
+
+                    {platform ===
+                      "facebook" && (
+                      <div className="mb-4 rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2.5 text-[11px] leading-relaxed text-slate-400">
+                        Meta may ask you to select your business portfolio, Facebook Page and related assets during connection.
+                      </div>
+                    )}
+
+                    {/* REAL / HONEST SIGNAL AREA */}
+
+                    <AnalyticsSignals
+                      platform={
+                        platform
+                      }
+                      connected={
+                        hasAccounts
+                      }
+                    />
+
+                    {/* BUTTONS */}
+
+                    <div className="mt-auto flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={
+                          locked ||
+                          (
+                            hasAccounts &&
+                            isSyncing
+                          )
+                        }
+                        onClick={() =>
+                          handleConnect(
+                            platform
+                          )
+                        }
+                        className={`flex-1 rounded-full px-3 py-2 text-xs font-semibold transition ${
+                          locked
+                            ? "cursor-not-allowed border border-slate-700 text-slate-500"
+                            : hasAccounts &&
+                                isSyncing
+                              ? "cursor-wait border border-yellow-500/40 bg-slate-900 text-yellow-200"
+                              : "border border-yellow-500 bg-gradient-to-r from-yellow-400 to-yellow-600 text-slate-950 hover:brightness-110"
+                        }`}
+                      >
+                        {connectLabel}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={
+                          !hasAccounts
+                        }
+                        onClick={() =>
+                          handleManage(
+                            platform
+                          )
+                        }
+                        className={`rounded-full border px-3 py-2 text-[11px] font-medium transition ${
+                          !hasAccounts
+                            ? "cursor-not-allowed border-slate-700 text-slate-600"
+                            : "border-slate-700 text-slate-200 hover:border-yellow-400 hover:text-yellow-300"
+                        }`}
+                      >
+                        Manage
+                      </button>
+                    </div>
+
+                    {lastSyncedLabel && (
+                      <p className="mt-2 text-[10px] text-slate-500">
+                        {lastSyncedLabel}
+                      </p>
+                    )}
+                  </article>
+                );
+              }
+            )}
+          </div>
+        </section>
+
+        {/* ------------------------------------------------ */}
+        {/* PRIVACY / TRUST                                  */}
+        {/* ------------------------------------------------ */}
+
+        <section className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 md:p-5">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-yellow-400">
+            Your accounts stay under your control
+          </h2>
+
+          <div className="grid gap-4 text-[11px] text-slate-300 md:grid-cols-3">
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-              <p className="font-semibold text-yellow-300 mb-1">We use</p>
-              <ul className="space-y-1">
-                <li>• Views, likes & comments</li>
-                <li>• Post frequency & timing</li>
-                <li>• High-level profile data</li>
-              </ul>
+              <p className="mb-1 font-semibold text-yellow-300">
+                What Autoaffi can use
+              </p>
+
+              <p className="leading-relaxed">
+                Available performance signals such as views, engagement,
+                publishing activity and audience data when each platform provides them.
+              </p>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-              <p className="font-semibold text-yellow-300 mb-1">We never</p>
-              <ul className="space-y-1">
-                <li>• Auto-DM or auto-comment</li>
-                <li>• Auto-like or follow/unfollow</li>
-                <li>• Post anything without consent</li>
-              </ul>
+              <p className="mb-1 font-semibold text-yellow-300">
+                What Autoaffi never does
+              </p>
+
+              <p className="leading-relaxed">
+                No automatic DMs, likes, follows, comments or publishing without your consent.
+              </p>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-              <p className="font-semibold text-yellow-300 mb-1">This powers</p>
-              <ul className="space-y-1">
-                <li>• Content Optimizer</li>
-                <li>• Smart Suggestions</li>
-                <li>• Viral Heads-Up</li>
-                <li>• Performance Score</li>
-              </ul>
+              <p className="mb-1 font-semibold text-yellow-300">
+                Why connect
+              </p>
+
+              <p className="leading-relaxed">
+                Your real performance gives Autoaffi better evidence for content ideas,
+                timing recommendations and what you should focus on next.
+              </p>
             </div>
           </div>
         </section>
       </div>
 
-      {/* MANAGE MODAL */}
+      {/* -------------------------------------------------- */}
+      {/* MANAGE MODAL                                       */}
+      {/* -------------------------------------------------- */}
+
       {managePlatform && (
         <AccountManageModal
-          open={manageOpen}
-          onClose={closeManage}
-          platform={PLATFORM_LABELS[managePlatform]}
-          accounts={platforms[managePlatform].accounts}
-          onAdd={handleModalAdd}
-          onRemove={handleModalRemove}
-          onSetPrimary={handleModalSetPrimary}
+          open={
+            manageOpen
+          }
+          onClose={
+            closeManage
+          }
+          platform={
+            PLATFORM_LABELS[
+              managePlatform
+            ]
+          }
+          accounts={
+            platforms[
+              managePlatform
+            ].accounts
+          }
+          onAdd={
+            handleModalAdd
+          }
+          onRemove={
+            handleModalRemove
+          }
+          onSetPrimary={
+            handleModalSetPrimary
+          }
         />
       )}
     </main>

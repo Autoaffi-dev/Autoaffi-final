@@ -1,4 +1,5 @@
 // lib/socialStore.ts
+
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { encryptToken } from "@/lib/socialCrypto";
 
@@ -8,7 +9,8 @@ export type SocialPlatform =
   | "tiktok"
   | "youtube"
   | "linkedin"
-  | "x";
+  | "x"
+  | "threads";
 
 export type SocialProvider =
   | "meta"
@@ -101,14 +103,19 @@ function isPlainObject(
 }
 
 function normalizeSensitiveKey(key: string): string {
-  return key.trim().toLowerCase().replace(/[-\s]/g, "_");
+  return key
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]/g, "_");
 }
 
 /**
  * Tar bort känsliga tokenvärden som av misstag kan ha sparats
  * i metadata av äldre OAuth-kod.
  */
-function sanitizeMetaValue(value: unknown): MetaValue | undefined {
+function sanitizeMetaValue(
+  value: unknown
+): MetaValue | undefined {
   if (
     value === null ||
     typeof value === "string" ||
@@ -122,7 +129,8 @@ function sanitizeMetaValue(value: unknown): MetaValue | undefined {
     const sanitizedArray = value
       .map((item) => sanitizeMetaValue(item))
       .filter(
-        (item): item is MetaValue => item !== undefined
+        (item): item is MetaValue =>
+          item !== undefined
       );
 
     return sanitizedArray;
@@ -132,16 +140,25 @@ function sanitizeMetaValue(value: unknown): MetaValue | undefined {
     const sanitizedObject: MetaObject = {};
 
     for (const [key, childValue] of Object.entries(value)) {
-      const normalizedKey = normalizeSensitiveKey(key);
+      const normalizedKey =
+        normalizeSensitiveKey(key);
 
-      if (SENSITIVE_META_KEYS.has(normalizedKey)) {
+      if (
+        SENSITIVE_META_KEYS.has(
+          normalizedKey
+        )
+      ) {
         continue;
       }
 
-      const sanitizedChild = sanitizeMetaValue(childValue);
+      const sanitizedChild =
+        sanitizeMetaValue(childValue);
 
-      if (sanitizedChild !== undefined) {
-        sanitizedObject[key] = sanitizedChild;
+      if (
+        sanitizedChild !== undefined
+      ) {
+        sanitizedObject[key] =
+          sanitizedChild;
       }
     }
 
@@ -151,8 +168,11 @@ function sanitizeMetaValue(value: unknown): MetaValue | undefined {
   return undefined;
 }
 
-function sanitizeMetaObject(value: unknown): MetaObject {
-  const sanitized = sanitizeMetaValue(value);
+function sanitizeMetaObject(
+  value: unknown
+): MetaObject {
+  const sanitized =
+    sanitizeMetaValue(value);
 
   return isPlainObject(sanitized)
     ? (sanitized as MetaObject)
@@ -161,12 +181,18 @@ function sanitizeMetaObject(value: unknown): MetaObject {
 
 function mergeMeta(
   existingMeta: unknown,
-  incomingMeta: MetaObject | null | undefined
+  incomingMeta:
+    | MetaObject
+    | null
+    | undefined
 ): MetaObject | null {
-  const safeExistingMeta = sanitizeMetaObject(existingMeta);
+  const safeExistingMeta =
+    sanitizeMetaObject(existingMeta);
 
   if (incomingMeta === undefined) {
-    return Object.keys(safeExistingMeta).length > 0
+    return Object.keys(
+      safeExistingMeta
+    ).length > 0
       ? safeExistingMeta
       : null;
   }
@@ -175,14 +201,17 @@ function mergeMeta(
     return null;
   }
 
-  const safeIncomingMeta = sanitizeMetaObject(incomingMeta);
+  const safeIncomingMeta =
+    sanitizeMetaObject(incomingMeta);
 
   const mergedMeta: MetaObject = {
     ...safeExistingMeta,
     ...safeIncomingMeta,
   };
 
-  return Object.keys(mergedMeta).length > 0
+  return Object.keys(
+    mergedMeta
+  ).length > 0
     ? mergedMeta
     : null;
 }
@@ -199,7 +228,9 @@ function calculateTokenExpiry(
   }
 
   return new Date(
-    Date.now() + Math.floor(expiresInSec) * 1000
+    Date.now() +
+      Math.floor(expiresInSec) *
+        1000
   ).toISOString();
 }
 
@@ -218,21 +249,23 @@ export async function upsertSocialAccount(
     );
   }
 
-  const { data: existingData, error: existingError } =
-    await supabaseAdmin
-      .from("user_social_accounts")
-      .select(
-        [
-          "account_id",
-          "username",
-          "meta",
-          "refresh_token_enc",
-          "token_expires_at",
-        ].join(",")
-      )
-      .eq("user_id", args.userId)
-      .eq("platform", args.platform)
-      .maybeSingle();
+  const {
+    data: existingData,
+    error: existingError,
+  } = await supabaseAdmin
+    .from("user_social_accounts")
+    .select(
+      [
+        "account_id",
+        "username",
+        "meta",
+        "refresh_token_enc",
+        "token_expires_at",
+      ].join(",")
+    )
+    .eq("user_id", args.userId)
+    .eq("platform", args.platform)
+    .maybeSingle();
 
   if (existingError) {
     throw new Error(
@@ -241,9 +274,11 @@ export async function upsertSocialAccount(
   }
 
   const existing =
-    (existingData as ExistingSocialAccount | null) ?? null;
+    (existingData as ExistingSocialAccount | null) ??
+    null;
 
-  const accessTokenEnc = encryptToken(args.accessToken);
+  const accessTokenEnc =
+    encryptToken(args.accessToken);
 
   const refreshTokenEnc =
     args.refreshToken === undefined
@@ -255,7 +290,9 @@ export async function upsertSocialAccount(
   const tokenExpiresAt =
     args.expiresInSec === undefined
       ? existing?.token_expires_at ?? null
-      : calculateTokenExpiry(args.expiresInSec);
+      : calculateTokenExpiry(
+          args.expiresInSec
+        );
 
   const accountId =
     args.accountId === undefined
@@ -267,32 +304,55 @@ export async function upsertSocialAccount(
       ? existing?.username ?? null
       : args.username;
 
-  const meta = mergeMeta(existing?.meta, args.meta);
+  const meta =
+    mergeMeta(
+      existing?.meta,
+      args.meta
+    );
 
-  const now = new Date().toISOString();
+  const now =
+    new Date().toISOString();
 
   const payload = {
-    user_id: args.userId,
-    platform: args.platform,
-    provider: args.provider,
+    user_id:
+      args.userId,
 
-    access_token_enc: accessTokenEnc,
-    refresh_token_enc: refreshTokenEnc,
-    token_expires_at: tokenExpiresAt,
+    platform:
+      args.platform,
 
-    status: "connected",
+    provider:
+      args.provider,
 
-    account_id: accountId,
+    access_token_enc:
+      accessTokenEnc,
+
+    refresh_token_enc:
+      refreshTokenEnc,
+
+    token_expires_at:
+      tokenExpiresAt,
+
+    status:
+      "connected",
+
+    account_id:
+      accountId,
+
     username,
+
     meta,
 
-    updated_at: now,
+    updated_at:
+      now,
   };
 
-  const { error: upsertError } = await supabaseAdmin
+  const {
+    error: upsertError,
+  } = await supabaseAdmin
     .from("user_social_accounts")
     .upsert(payload, {
-      onConflict: "user_id,platform",
+      onConflict:
+        "user_id,platform",
     });
 
   if (upsertError) {
