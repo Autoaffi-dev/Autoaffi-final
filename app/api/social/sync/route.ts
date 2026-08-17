@@ -1,5 +1,9 @@
 // app/api/social/sync/route.ts
-import { NextRequest, NextResponse } from "next/server";
+
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/authOptions";
@@ -17,6 +21,7 @@ type Platform =
   | "facebook"
   | "tiktok"
   | "youtube"
+  | "threads"
   | "linkedin"
   | "x";
 
@@ -62,32 +67,35 @@ type MetaPage = {
   };
 };
 
-type MetaPagesResponse = MetaApiError & {
-  data?: MetaPage[];
-  paging?: MetaPaging;
-};
-
-type MetaPageInstagramResponse = MetaApiError & {
-  id?: string;
-  name?: string;
-  instagram_business_account?: {
-    id?: string;
+type MetaPagesResponse =
+  MetaApiError & {
+    data?: MetaPage[];
+    paging?: MetaPaging;
   };
-};
 
-type InstagramProfile = MetaApiError & {
-  id?: string;
-  user_id?: string;
-  username?: string;
-  name?: string;
-  account_type?: string;
-  biography?: string;
-  website?: string;
-  profile_picture_url?: string;
-  followers_count?: number;
-  follows_count?: number;
-  media_count?: number;
-};
+type MetaPageInstagramResponse =
+  MetaApiError & {
+    id?: string;
+    name?: string;
+    instagram_business_account?: {
+      id?: string;
+    };
+  };
+
+type InstagramProfile =
+  MetaApiError & {
+    id?: string;
+    user_id?: string;
+    username?: string;
+    name?: string;
+    account_type?: string;
+    biography?: string;
+    website?: string;
+    profile_picture_url?: string;
+    followers_count?: number;
+    follows_count?: number;
+    media_count?: number;
+  };
 
 type InstagramMedia = {
   id: string;
@@ -102,10 +110,11 @@ type InstagramMedia = {
   comments_count?: number;
 };
 
-type InstagramMediaResponse = MetaApiError & {
-  data?: InstagramMedia[];
-  paging?: MetaPaging;
-};
+type InstagramMediaResponse =
+  MetaApiError & {
+    data?: InstagramMedia[];
+    paging?: MetaPaging;
+  };
 
 type InstagramInsightValue = {
   value?: number | JsonObject;
@@ -124,9 +133,10 @@ type InstagramInsight = {
   };
 };
 
-type InstagramInsightsResponse = MetaApiError & {
-  data?: InstagramInsight[];
-};
+type InstagramInsightsResponse =
+  MetaApiError & {
+    data?: InstagramInsight[];
+  };
 
 type FacebookPost = {
   id: string;
@@ -150,10 +160,11 @@ type FacebookPost = {
   };
 };
 
-type FacebookPostsResponse = MetaApiError & {
-  data?: FacebookPost[];
-  paging?: MetaPaging;
-};
+type FacebookPostsResponse =
+  MetaApiError & {
+    data?: FacebookPost[];
+    paging?: MetaPaging;
+  };
 
 type FacebookInsight = {
   id?: string;
@@ -165,9 +176,84 @@ type FacebookInsight = {
   }>;
 };
 
-type FacebookInsightsResponse = MetaApiError & {
-  data?: FacebookInsight[];
+type FacebookInsightsResponse =
+  MetaApiError & {
+    data?: FacebookInsight[];
+  };
+
+// -------------------- Threads types --------------------
+
+type ThreadsApiError = {
+  error?: {
+    message?: string;
+    type?: string;
+    code?: number;
+    error_subcode?: number;
+    fbtrace_id?: string;
+  };
 };
+
+type ThreadsProfile =
+  ThreadsApiError & {
+    id?: string;
+    username?: string;
+    name?: string;
+    threads_profile_picture_url?: string;
+    threads_biography?: string;
+    is_verified?: boolean;
+  };
+
+type ThreadsPost = {
+  id: string;
+  media_product_type?: string;
+  media_type?: string;
+  media_url?: string;
+  permalink?: string;
+  username?: string;
+  text?: string;
+  timestamp?: string;
+  shortcode?: string;
+  thumbnail_url?: string;
+  is_quote_post?: boolean;
+  alt_text?: string;
+};
+
+type ThreadsPostsResponse =
+  ThreadsApiError & {
+    data?: ThreadsPost[];
+    paging?: MetaPaging;
+  };
+
+type ThreadsInsight = {
+  id?: string;
+  name?: string;
+  period?: string;
+  title?: string;
+  description?: string;
+  values?: Array<{
+    value?: number | JsonObject;
+    end_time?: string;
+  }>;
+  total_value?: {
+    value?: number | JsonObject;
+  };
+};
+
+type ThreadsInsightsResponse =
+  ThreadsApiError & {
+    data?: ThreadsInsight[];
+  };
+
+type ThreadsMediaMetrics = {
+  views: number | null;
+  likes: number | null;
+  replies: number | null;
+  reposts: number | null;
+  quotes: number | null;
+  shares: number | null;
+};
+
+// -------------------- YouTube types --------------------
 
 type YouTubeChannelResponse = {
   items?: Array<{
@@ -177,9 +263,15 @@ type YouTubeChannelResponse = {
       description?: string;
       customUrl?: string;
       thumbnails?: {
-        default?: { url?: string };
-        medium?: { url?: string };
-        high?: { url?: string };
+        default?: {
+          url?: string;
+        };
+        medium?: {
+          url?: string;
+        };
+        high?: {
+          url?: string;
+        };
       };
     };
     statistics?: {
@@ -231,6 +323,8 @@ type YouTubeVideosResponse = {
   };
 };
 
+// -------------------- TikTok types --------------------
+
 type TikTokApiError = {
   error?: {
     code?: string;
@@ -256,11 +350,12 @@ type TikTokUser = {
   video_count?: number;
 };
 
-type TikTokUserResponse = TikTokApiError & {
-  data?: {
-    user?: TikTokUser;
+type TikTokUserResponse =
+  TikTokApiError & {
+    data?: {
+      user?: TikTokUser;
+    };
   };
-};
 
 type TikTokVideo = {
   id: string;
@@ -277,13 +372,16 @@ type TikTokVideo = {
   view_count?: number;
 };
 
-type TikTokVideoListResponse = TikTokApiError & {
-  data?: {
-    videos?: TikTokVideo[];
-    cursor?: number;
-    has_more?: boolean;
+type TikTokVideoListResponse =
+  TikTokApiError & {
+    data?: {
+      videos?: TikTokVideo[];
+      cursor?: number;
+      has_more?: boolean;
+    };
   };
-};
+
+// -------------------- LinkedIn types --------------------
 
 type LinkedInUserInfo = {
   sub?: string;
@@ -300,6 +398,8 @@ type LinkedInUserInfo = {
   email?: string;
   email_verified?: boolean;
 };
+
+// -------------------- X types --------------------
 
 type XApiError = {
   errors?: Array<{
@@ -332,9 +432,10 @@ type XUser = {
   };
 };
 
-type XUserResponse = XApiError & {
-  data?: XUser;
-};
+type XUserResponse =
+  XApiError & {
+    data?: XUser;
+  };
 
 type XPost = {
   id: string;
@@ -353,26 +454,35 @@ type XPost = {
   };
 };
 
-type XPostsResponse = XApiError & {
-  data?: XPost[];
-  meta?: {
-    result_count?: number;
-    newest_id?: string;
-    oldest_id?: string;
-    next_token?: string;
+type XPostsResponse =
+  XApiError & {
+    data?: XPost[];
+    meta?: {
+      result_count?: number;
+      newest_id?: string;
+      oldest_id?: string;
+      next_token?: string;
+    };
   };
-};
 
-function normalizePlatform(value: unknown): Platform {
-  const platform = String(value ?? "")
-    .toLowerCase()
-    .trim();
+// -------------------------------------------------------
+// General helpers
+// -------------------------------------------------------
+
+function normalizePlatform(
+  value: unknown
+): Platform {
+  const platform =
+    String(value ?? "")
+      .toLowerCase()
+      .trim();
 
   if (
     platform === "instagram" ||
     platform === "facebook" ||
     platform === "tiktok" ||
     platform === "youtube" ||
+    platform === "threads" ||
     platform === "linkedin" ||
     platform === "x"
   ) {
@@ -384,7 +494,9 @@ function normalizePlatform(value: unknown): Platform {
   );
 }
 
-function isUuid(value: string): boolean {
+function isUuid(
+  value: string
+): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value
   );
@@ -432,24 +544,44 @@ function getMetaGraphVersion(): string {
     : `v${configured}`;
 }
 
+function getThreadsGraphVersion(): string {
+  const configured =
+    process.env
+      .THREADS_GRAPH_API_VERSION
+      ?.trim() ||
+    "v1.0";
+
+  return configured.startsWith(
+    "v"
+  )
+    ? configured
+    : `v${configured}`;
+}
+
 function safeNumber(
   value: unknown
 ): number | null {
   if (
-    typeof value === "number" &&
-    Number.isFinite(value)
+    typeof value ===
+      "number" &&
+    Number.isFinite(
+      value
+    )
   ) {
     return value;
   }
 
   if (
-    typeof value === "string" &&
+    typeof value ===
+      "string" &&
     value.trim() &&
     Number.isFinite(
       Number(value)
     )
   ) {
-    return Number(value);
+    return Number(
+      value
+    );
   }
 
   return null;
@@ -459,14 +591,17 @@ function safeIsoDate(
   value: unknown
 ): string | null {
   if (
-    typeof value !== "string" ||
+    typeof value !==
+      "string" ||
     !value.trim()
   ) {
     return null;
   }
 
   const timestamp =
-    Date.parse(value);
+    Date.parse(
+      value
+    );
 
   if (
     !Number.isFinite(
@@ -485,7 +620,9 @@ function unixSecondsToIso(
   value: unknown
 ): string | null {
   const seconds =
-    safeNumber(value);
+    safeNumber(
+      value
+    );
 
   if (
     seconds === null ||
@@ -501,11 +638,17 @@ function unixSecondsToIso(
 
 function getObject(
   value: unknown
-): Record<string, unknown> {
+): Record<
+  string,
+  unknown
+> {
   if (
-    typeof value === "object" &&
+    typeof value ===
+      "object" &&
     value !== null &&
-    !Array.isArray(value)
+    !Array.isArray(
+      value
+    )
   ) {
     return value as Record<
       string,
@@ -516,23 +659,77 @@ function getObject(
   return {};
 }
 
+function sumKnownNumbers(
+  values: Array<
+    number | null
+  >
+): number | null {
+  let found =
+    false;
+
+  let total =
+    0;
+
+  for (
+    const value of
+    values
+  ) {
+    if (
+      typeof value ===
+        "number" &&
+      Number.isFinite(
+        value
+      )
+    ) {
+      found =
+        true;
+
+      total +=
+        value;
+    }
+  }
+
+  return found
+    ? total
+    : null;
+}
+
 function providerForPlatform(
   platform: Platform
 ): SocialProvider {
   if (
-    platform === "instagram" ||
-    platform === "facebook"
+    platform ===
+      "instagram" ||
+    platform ===
+      "facebook" ||
+    platform ===
+      "threads"
   ) {
     return "meta";
   }
 
   if (
-    platform === "youtube"
+    platform ===
+    "youtube"
   ) {
     return "google";
   }
 
-  return platform;
+  if (
+    platform ===
+    "linkedin"
+  ) {
+    return "linkedin";
+  }
+
+  if (
+    platform ===
+    "tiktok"
+  ) {
+    return "tiktok";
+  }
+
+  return "x";
 }
 
 function publicSyncError(
@@ -636,7 +833,9 @@ function publicSyncError(
   };
 }
 
-// -------------------- Sync runs --------------------
+// -------------------------------------------------------
+// Sync runs
+// -------------------------------------------------------
 
 async function createRun(
   userId: string,
@@ -653,13 +852,18 @@ async function createRun(
       .insert({
         user_id:
           userId,
+
         platform,
+
         status:
           "running",
+
         message:
           "Sync started",
       })
-      .select("id")
+      .select(
+        "id"
+      )
       .single();
 
   if (
@@ -682,16 +886,23 @@ async function finishRunOk(
   message: string,
   meta?: JsonObject
 ): Promise<void> {
-  const { error } =
+  const {
+    error,
+  } =
     await supabaseAdmin
       .from(
         "social_sync_runs"
       )
       .update({
-        status: "ok",
+        status:
+          "ok",
+
         message,
+
         meta:
-          meta ?? null,
+          meta ??
+          null,
+
         finished_at:
           new Date()
             .toISOString(),
@@ -701,11 +912,14 @@ async function finishRunOk(
         runId
       );
 
-  if (error) {
+  if (
+    error
+  ) {
     console.error(
       "[social-sync] Failed to finish successful run",
       {
         runId,
+
         error:
           error.message,
       }
@@ -718,7 +932,9 @@ async function finishRunError(
   message: string,
   meta?: JsonObject
 ): Promise<void> {
-  const { error } =
+  const {
+    error,
+  } =
     await supabaseAdmin
       .from(
         "social_sync_runs"
@@ -726,9 +942,13 @@ async function finishRunError(
       .update({
         status:
           "error",
+
         message,
+
         meta:
-          meta ?? null,
+          meta ??
+          null,
+
         finished_at:
           new Date()
             .toISOString(),
@@ -738,11 +958,14 @@ async function finishRunError(
         runId
       );
 
-  if (error) {
+  if (
+    error
+  ) {
     console.error(
       "[social-sync] Failed to finish failed run",
       {
         runId,
+
         error:
           error.message,
       }
@@ -750,7 +973,9 @@ async function finishRunError(
   }
 }
 
-// -------------------- Database helpers --------------------
+// -------------------------------------------------------
+// Database helpers
+// -------------------------------------------------------
 
 async function getConnectedAccount(
   userId: string,
@@ -791,13 +1016,17 @@ async function getConnectedAccount(
       )
       .maybeSingle();
 
-  if (error) {
+  if (
+    error
+  ) {
     throw new Error(
       `account_read_failed:${error.message}`
     );
   }
 
-  if (!data) {
+  if (
+    !data
+  ) {
     throw new Error(
       `no_connected_${platform}_account_row`
     );
@@ -834,6 +1063,7 @@ async function updateConnectedAccount(
       ...getObject(
         args.existingMeta
       ),
+
       ...(
         args.metaPatch ??
         {}
@@ -857,7 +1087,9 @@ async function updateConnectedAccount(
       args.username;
   }
 
-  const { error } =
+  const {
+    error,
+  } =
     await supabaseAdmin
       .from(
         "user_social_accounts"
@@ -870,7 +1102,9 @@ async function updateConnectedAccount(
         args.rowId
       );
 
-  if (error) {
+  if (
+    error
+  ) {
     throw new Error(
       `account_update_failed:${error.message}`
     );
@@ -915,7 +1149,9 @@ async function upsertSocialPost(
       | null;
   }
 ): Promise<void> {
-  const { error } =
+  const {
+    error,
+  } =
     await supabaseAdmin
       .from(
         "social_posts"
@@ -956,7 +1192,9 @@ async function upsertSocialPost(
         }
       );
 
-  if (error) {
+  if (
+    error
+  ) {
     throw new Error(
       `social_post_upsert_failed:${error.message}`
     );
@@ -988,7 +1226,9 @@ async function upsertSocialPostMetrics(
       | null;
   }
 ): Promise<void> {
-  const { error } =
+  const {
+    error,
+  } =
     await supabaseAdmin
       .from(
         "social_post_metrics"
@@ -1038,14 +1278,18 @@ async function upsertSocialPostMetrics(
         }
       );
 
-  if (error) {
+  if (
+    error
+  ) {
     throw new Error(
       `social_metrics_upsert_failed:${error.message}`
     );
   }
 }
 
-// -------------------- Generic API helpers --------------------
+// -------------------------------------------------------
+// Generic API helper
+// -------------------------------------------------------
 
 async function fetchJson<T>(
   url: string,
@@ -1066,12 +1310,16 @@ async function fetchJson<T>(
         url,
         {
           ...init,
+
           cache:
             "no-store",
+
           signal,
+
           headers: {
             Accept:
               "application/json",
+
             ...(
               init.headers ??
               {}
@@ -1124,7 +1372,9 @@ async function fetchJson<T>(
   }
 }
 
-// -------------------- Meta API --------------------
+// -------------------------------------------------------
+// Facebook Meta API
+// -------------------------------------------------------
 
 function createMetaUrl(
   path: string,
@@ -1176,7 +1426,9 @@ async function metaGraph<T>(
 }
 
 /*
- * -------------------- Instagram Graph API --------------------
+ * -------------------------------------------------------
+ * Instagram Graph API
+ * -------------------------------------------------------
  *
  * Instagram API with Instagram Login använder
  * graph.instagram.com direkt.
@@ -1235,6 +1487,75 @@ async function instagramGraph<T>(
 
   return body;
 }
+
+/*
+ * -------------------------------------------------------
+ * Threads Graph API
+ * -------------------------------------------------------
+ *
+ * Threads använder sitt eget Graph API.
+ *
+ * Threads-tokenen ska aldrig skickas till:
+ *
+ * graph.facebook.com
+ * graph.instagram.com
+ *
+ * provider är fortfarande "meta" i Autoaffis DB,
+ * men platform = "threads".
+ */
+
+function createThreadsGraphUrl(
+  path: string,
+  accessToken: string
+): string {
+  const normalizedPath =
+    path.replace(
+      /^\/+/,
+      ""
+    );
+
+  const url =
+    new URL(
+      `https://graph.threads.com/${getThreadsGraphVersion()}/${normalizedPath}`
+    );
+
+  url.searchParams.set(
+    "access_token",
+    accessToken
+  );
+
+  return url.toString();
+}
+
+async function threadsGraph<T>(
+  path: string,
+  accessToken: string
+): Promise<T> {
+  const body =
+    await fetchJson<
+      T &
+        ThreadsApiError
+    >(
+      createThreadsGraphUrl(
+        path,
+        accessToken
+      )
+    );
+
+  if (
+    body.error?.message
+  ) {
+    throw new Error(
+      `threads_api_error:${body.error.message}`
+    );
+  }
+
+  return body;
+}
+
+// -------------------------------------------------------
+// Existing Meta helpers
+// -------------------------------------------------------
 
 async function getMetaPages(
   userAccessToken: string
@@ -1437,14 +1758,6 @@ async function getInstagramInsights(
         | null,
   };
 
-  /*
-   * Tillgängliga Instagram metrics varierar
-   * beroende på mediatyp och API-version.
-   *
-   * Därför testar vi en metric i taget.
-   * En unsupported metric får inte krascha
-   * hela synken.
-   */
   const metrics = [
     "views",
     "reach",
@@ -1594,7 +1907,8 @@ async function getFacebookPostInsights(
     ) {
       const numericValue =
         safeNumber(
-          insight.values?.[0]
+          insight
+            .values?.[0]
             ?.value
         );
 
@@ -1639,7 +1953,195 @@ async function getFacebookPostInsights(
   return result;
 }
 
-// -------------------- YouTube API --------------------
+// -------------------------------------------------------
+// Threads insight helpers
+// -------------------------------------------------------
+
+function readThreadsInsightValue(
+  response: ThreadsInsightsResponse,
+  metric: string
+): number | null {
+  const insight =
+    (
+      response.data ??
+      []
+    ).find(
+      (item) =>
+        item.name ===
+        metric
+    );
+
+  if (
+    !insight
+  ) {
+    return null;
+  }
+
+  return safeNumber(
+    insight
+      .total_value
+      ?.value ??
+      insight
+        .values?.[0]
+        ?.value
+  );
+}
+
+async function getThreadsMediaInsights(
+  mediaId: string,
+  accessToken: string
+): Promise<ThreadsMediaMetrics> {
+  const empty:
+    ThreadsMediaMetrics = {
+    views:
+      null,
+
+    likes:
+      null,
+
+    replies:
+      null,
+
+    reposts:
+      null,
+
+    quotes:
+      null,
+
+    shares:
+      null,
+  };
+
+  try {
+    const metrics = [
+      "views",
+      "likes",
+      "replies",
+      "reposts",
+      "quotes",
+      "shares",
+    ];
+
+    const response =
+      await threadsGraph<
+        ThreadsInsightsResponse
+      >(
+        `${encodeURIComponent(
+          mediaId
+        )}/insights?metric=${encodeURIComponent(
+          metrics.join(
+            ","
+          )
+        )}`,
+        accessToken
+      );
+
+    return {
+      views:
+        readThreadsInsightValue(
+          response,
+          "views"
+        ),
+
+      likes:
+        readThreadsInsightValue(
+          response,
+          "likes"
+        ),
+
+      replies:
+        readThreadsInsightValue(
+          response,
+          "replies"
+        ),
+
+      reposts:
+        readThreadsInsightValue(
+          response,
+          "reposts"
+        ),
+
+      quotes:
+        readThreadsInsightValue(
+          response,
+          "quotes"
+        ),
+
+      shares:
+        readThreadsInsightValue(
+          response,
+          "shares"
+        ),
+    };
+  } catch (error) {
+    /*
+     * En enskild posts insights får inte stoppa
+     * hela Threads-synken.
+     *
+     * Det kan exempelvis finnas variationer mellan
+     * mediatyper eller tillgängliga mätvärden.
+     */
+    console.info(
+      "[social-sync] Threads media insights unavailable",
+      {
+        mediaId,
+
+        error:
+          error instanceof
+          Error
+            ? error.message
+            : "unknown_error",
+      }
+    );
+
+    return empty;
+  }
+}
+
+async function getThreadsFollowerCount(
+  threadsUserId: string,
+  accessToken: string
+): Promise<number | null> {
+  try {
+    const response =
+      await threadsGraph<
+        ThreadsInsightsResponse
+      >(
+        `${encodeURIComponent(
+          threadsUserId
+        )}/threads_insights?metric=followers_count`,
+        accessToken
+      );
+
+    return readThreadsInsightValue(
+      response,
+      "followers_count"
+    );
+  } catch (error) {
+    /*
+     * Followers är värdefullt men inte kritiskt
+     * för en lyckad postsync.
+     */
+    console.info(
+      "[social-sync] Threads follower count unavailable",
+      {
+        threadsUserId,
+
+        error:
+          error instanceof
+          Error
+            ? error.message
+            : "unknown_error",
+      }
+    );
+
+    return null;
+  }
+}
+
+// -------------------------------------------------------
+// YouTube API
+// -------------------------------------------------------
 
 async function youtubeApi<T>(
   url: string,
@@ -1656,7 +2158,9 @@ async function youtubeApi<T>(
   );
 }
 
-// -------------------- TikTok API --------------------
+// -------------------------------------------------------
+// TikTok API
+// -------------------------------------------------------
 
 async function tiktokApi<T>(
   url: string,
@@ -1701,7 +2205,9 @@ async function tiktokApi<T>(
   return body;
 }
 
-// -------------------- LinkedIn API --------------------
+// -------------------------------------------------------
+// LinkedIn API
+// -------------------------------------------------------
 
 async function linkedinApi<T>(
   url: string,
@@ -1721,7 +2227,9 @@ async function linkedinApi<T>(
   );
 }
 
-// -------------------- X API --------------------
+// -------------------------------------------------------
+// X API
+// -------------------------------------------------------
 
 async function xApi<T>(
   url: string,
@@ -1763,22 +2271,14 @@ async function xApi<T>(
   return body;
 }
 
-// -------------------- Instagram sync --------------------
+// -------------------------------------------------------
+// Instagram sync
+// -------------------------------------------------------
 
 async function syncInstagram(
   userId: string,
   runId: string
 ): Promise<NextResponse> {
-  /*
-   * Instagram använder nu:
-   *
-   * Instagram API with Instagram Login
-   *
-   * Ingen Facebook Page krävs.
-   * Ingen /me/accounts används.
-   * Ingen Facebook-token fallback används.
-   */
-
   const account =
     await getConnectedAccount(
       userId,
@@ -1793,13 +2293,6 @@ async function syncInstagram(
       "instagram_provider_must_be_meta"
     );
   }
-
-  /*
-   * Läs den sparade Instagram User Access Token.
-   *
-   * Vi granskar token-refresh separat i
-   * lib/socialTokens.ts efter detta test.
-   */
 
   const tokenResult =
     await getValidAccessToken({
@@ -1818,16 +2311,13 @@ async function syncInstagram(
   const accessToken =
     tokenResult.accessToken;
 
-  /*
-   * Hämta Instagram Professional Account direkt.
-   */
-
   const profile =
     await instagramGraph<
       InstagramProfile
     >(
       [
         "me?fields=",
+
         encodeURIComponent(
           [
             "id",
@@ -1844,6 +2334,7 @@ async function syncInstagram(
           ].join(",")
         ),
       ].join(""),
+
       accessToken
     );
 
@@ -1893,16 +2384,13 @@ async function syncInstagram(
     }
   );
 
-  /*
-   * Hämta senaste Instagram media direkt.
-   */
-
   const mediaResponse =
     await instagramGraph<
       InstagramMediaResponse
     >(
       [
         `${instagramId}/media?fields=`,
+
         encodeURIComponent(
           [
             "id",
@@ -1917,8 +2405,10 @@ async function syncInstagram(
             "comments_count",
           ].join(",")
         ),
+
         "&limit=25",
       ].join(""),
+
       accessToken
     );
 
@@ -1939,10 +2429,6 @@ async function syncInstagram(
         media.length,
     }
   );
-
-  /*
-   * Spara media + metrics.
-   */
 
   for (
     const item of
@@ -2026,10 +2512,6 @@ async function syncInstagram(
   const now =
     new Date()
       .toISOString();
-
-  /*
-   * Uppdatera den anslutna Instagram-raden.
-   */
 
   await updateConnectedAccount(
     {
@@ -2192,7 +2674,9 @@ async function syncInstagram(
   );
 }
 
-// -------------------- Facebook sync --------------------
+// -------------------------------------------------------
+// Facebook sync
+// -------------------------------------------------------
 
 async function syncFacebook(
   userId: string,
@@ -2216,10 +2700,13 @@ async function syncFacebook(
   const tokenResult =
     await getValidAccessToken({
       userId,
+
       platform:
         "facebook",
+
       provider:
         "meta",
+
       skewSec:
         24 * 60 * 60,
     });
@@ -2295,8 +2782,7 @@ async function syncFacebook(
 
         postedAt:
           safeIsoDate(
-            post
-              .created_time
+            post.created_time
           ),
       }
     );
@@ -2340,8 +2826,7 @@ async function syncFacebook(
           insights.reach,
 
         impressions:
-          insights
-            .impressions,
+          insights.impressions,
 
         plays:
           null,
@@ -2444,7 +2929,9 @@ async function syncFacebook(
   );
 }
 
-// -------------------- TikTok sync --------------------
+// -------------------------------------------------------
+// TikTok sync
+// -------------------------------------------------------
 
 async function syncTikTok(
   userId: string,
@@ -2468,10 +2955,13 @@ async function syncTikTok(
   const tokenResult =
     await getValidAccessToken({
       userId,
+
       platform:
         "tiktok",
+
       provider:
         "tiktok",
+
       skewSec:
         10 * 60,
     });
@@ -2500,8 +2990,7 @@ async function syncTikTok(
       `https://open.tiktokapis.com/v2/user/info/?fields=${encodeURIComponent(
         userFields
       )}`,
-      tokenResult
-        .accessToken
+      tokenResult.accessToken
     );
 
   const profile =
@@ -2539,10 +3028,10 @@ async function syncTikTok(
       `https://open.tiktokapis.com/v2/video/list/?fields=${encodeURIComponent(
         videoFields
       )}`,
-      tokenResult
-        .accessToken,
+      tokenResult.accessToken,
       {
-        method: "POST",
+        method:
+          "POST",
 
         headers: {
           "Content-Type":
@@ -2595,8 +3084,7 @@ async function syncTikTok(
 
         postedAt:
           unixSecondsToIso(
-            video
-              .create_time
+            video.create_time
           ),
       }
     );
@@ -2613,26 +3101,22 @@ async function syncTikTok(
 
         likes:
           safeNumber(
-            video
-              .like_count
+            video.like_count
           ),
 
         comments:
           safeNumber(
-            video
-              .comment_count
+            video.comment_count
           ),
 
         views:
           safeNumber(
-            video
-              .view_count
+            video.view_count
           ),
 
         plays:
           safeNumber(
-            video
-              .view_count
+            video.view_count
           ),
 
         reach:
@@ -2658,8 +3142,7 @@ async function syncTikTok(
 
       username:
         profile.username ??
-        profile
-          .display_name ??
+        profile.display_name ??
         account.username,
 
       existingMeta:
@@ -2675,8 +3158,7 @@ async function syncTikTok(
 
         tiktok_profile: {
           display_name:
-            profile
-              .display_name ??
+            profile.display_name ??
             null,
 
           username:
@@ -2684,47 +3166,37 @@ async function syncTikTok(
             null,
 
           bio_description:
-            profile
-              .bio_description ??
+            profile.bio_description ??
             null,
 
           avatar_url:
-            profile
-              .avatar_large_url ??
-            profile
-              .avatar_url ??
-            profile
-              .avatar_url_100 ??
+            profile.avatar_large_url ??
+            profile.avatar_url ??
+            profile.avatar_url_100 ??
             null,
 
           profile_deep_link:
-            profile
-              .profile_deep_link ??
+            profile.profile_deep_link ??
             null,
 
           is_verified:
-            profile
-              .is_verified ??
+            profile.is_verified ??
             null,
 
           follower_count:
-            profile
-              .follower_count ??
+            profile.follower_count ??
             null,
 
           following_count:
-            profile
-              .following_count ??
+            profile.following_count ??
             null,
 
           likes_count:
-            profile
-              .likes_count ??
+            profile.likes_count ??
             null,
 
           video_count:
-            profile
-              .video_count ??
+            profile.video_count ??
             null,
         },
 
@@ -2796,7 +3268,9 @@ async function syncTikTok(
   );
 }
 
-// -------------------- YouTube sync --------------------
+// -------------------------------------------------------
+// YouTube sync
+// -------------------------------------------------------
 
 async function syncYouTube(
   userId: string,
@@ -2820,10 +3294,13 @@ async function syncYouTube(
   const tokenResult =
     await getValidAccessToken({
       userId,
+
       platform:
         "youtube",
+
       provider:
         "google",
+
       skewSec:
         10 * 60,
     });
@@ -2833,8 +3310,7 @@ async function syncYouTube(
       YouTubeChannelResponse
     >(
       "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true",
-      tokenResult
-        .accessToken
+      tokenResult.accessToken
     );
 
   const channel =
@@ -2854,27 +3330,27 @@ async function syncYouTube(
       YouTubeSearchResponse
     >(
       "https://www.googleapis.com/youtube/v3/search?part=snippet&forMine=true&type=video&maxResults=25&order=date",
-      tokenResult
-        .accessToken
+      tokenResult.accessToken
     );
 
-  const videoIds = (
-    searchResponse.items ??
-    []
-  )
-    .map(
-      (item) =>
-        item.id
-          ?.videoId
+  const videoIds =
+    (
+      searchResponse.items ??
+      []
     )
-    .filter(
-      (
-        videoId
-      ): videoId is string =>
-        Boolean(
+      .map(
+        (item) =>
+          item.id
+            ?.videoId
+      )
+      .filter(
+        (
           videoId
-        )
-    );
+        ): videoId is string =>
+          Boolean(
+            videoId
+          )
+      );
 
   let videos:
     NonNullable<
@@ -2890,12 +3366,9 @@ async function syncYouTube(
         YouTubeVideosResponse
       >(
         `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${encodeURIComponent(
-          videoIds.join(
-            ","
-          )
+          videoIds.join(",")
         )}`,
-        tokenResult
-          .accessToken
+        tokenResult.accessToken
       );
 
     videos =
@@ -2913,8 +3386,7 @@ async function syncYouTube(
         ? video.snippet
             .description
           ? `${video.snippet.title}\n\n${video.snippet.description}`
-          : video.snippet
-              .title
+          : video.snippet.title
         : video.snippet
             ?.description ??
           null;
@@ -3122,13 +3594,505 @@ async function syncYouTube(
   );
 }
 
-// -------------------- LinkedIn sync --------------------
+// -------------------------------------------------------
+// Threads sync
+// -------------------------------------------------------
+
+async function syncThreads(
+  userId: string,
+  runId: string
+): Promise<NextResponse> {
+  const account =
+    await getConnectedAccount(
+      userId,
+      "threads"
+    );
+
+  if (
+    account.provider !==
+    "meta"
+  ) {
+    throw new Error(
+      "threads_provider_must_be_meta"
+    );
+  }
+
+  /*
+   * Threads has its own refresh logic inside
+   * lib/socialTokens.ts.
+   *
+   * Do not send this token through Facebook's
+   * fb_exchange_token flow.
+   */
+  const tokenResult =
+    await getValidAccessToken({
+      userId,
+
+      platform:
+        "threads",
+
+      provider:
+        "meta",
+    });
+
+  const accessToken =
+    tokenResult.accessToken;
+
+  /*
+   * Resolve the actual Threads profile again.
+   *
+   * This verifies that the stored token still belongs
+   * to a real Threads user and refreshes profile data.
+   */
+  const profileFields = [
+    "id",
+    "username",
+    "name",
+    "threads_profile_picture_url",
+    "threads_biography",
+    "is_verified",
+  ].join(",");
+
+  const profile =
+    await threadsGraph<
+      ThreadsProfile
+    >(
+      `me?fields=${encodeURIComponent(
+        profileFields
+      )}`,
+      accessToken
+    );
+
+  if (
+    !profile.id
+  ) {
+    throw new Error(
+      "threads_profile_not_found"
+    );
+  }
+
+  const threadsUserId =
+    String(
+      profile.id
+    );
+
+  /*
+   * Retrieve the user's latest Threads posts.
+   *
+   * No publishing permission is required for this
+   * read-only Autoaffi flow.
+   */
+  const postFields = [
+    "id",
+    "media_product_type",
+    "media_type",
+    "media_url",
+    "permalink",
+    "username",
+    "text",
+    "timestamp",
+    "shortcode",
+    "thumbnail_url",
+    "is_quote_post",
+    "alt_text",
+  ].join(",");
+
+  const postsResponse =
+    await threadsGraph<
+      ThreadsPostsResponse
+    >(
+      `${encodeURIComponent(
+        threadsUserId
+      )}/threads?fields=${encodeURIComponent(
+        postFields
+      )}&limit=25`,
+      accessToken
+    );
+
+  const posts =
+    postsResponse.data ??
+    [];
+
+  console.info(
+    "[social-sync] Threads posts loaded",
+    {
+      threadsUserId,
+
+      username:
+        profile.username ??
+        null,
+
+      count:
+        posts.length,
+    }
+  );
+
+  /*
+   * Existing normalized DB columns:
+   *
+   * Threads likes   -> social_post_metrics.likes
+   * Threads replies -> social_post_metrics.comments
+   * Threads views   -> social_post_metrics.views
+   *
+   * Reposts, quotes and shares currently have no
+   * dedicated normalized Supabase columns.
+   *
+   * We preserve them in account metadata rather than
+   * changing the existing DB schema during this pass.
+   */
+  const extraPostMetrics:
+    Array<{
+      post_id: string;
+      reposts: number | null;
+      quotes: number | null;
+      shares: number | null;
+    }> = [];
+
+  const allMetrics:
+    ThreadsMediaMetrics[] = [];
+
+  for (
+    const post of
+    posts
+  ) {
+    await upsertSocialPost(
+      {
+        userId,
+
+        platform:
+          "threads",
+
+        accountId:
+          threadsUserId,
+
+        postId:
+          post.id,
+
+        permalink:
+          post.permalink ??
+          null,
+
+        caption:
+          post.text ??
+          null,
+
+        mediaType:
+          post.media_product_type ??
+          post.media_type ??
+          "post",
+
+        postedAt:
+          safeIsoDate(
+            post.timestamp
+          ),
+      }
+    );
+
+    const insights =
+      await getThreadsMediaInsights(
+        post.id,
+        accessToken
+      );
+
+    allMetrics.push(
+      insights
+    );
+
+    extraPostMetrics.push(
+      {
+        post_id:
+          post.id,
+
+        reposts:
+          insights.reposts,
+
+        quotes:
+          insights.quotes,
+
+        shares:
+          insights.shares,
+      }
+    );
+
+    await upsertSocialPostMetrics(
+      {
+        userId,
+
+        platform:
+          "threads",
+
+        postId:
+          post.id,
+
+        likes:
+          insights.likes,
+
+        /*
+         * Autoaffi's normalized comments column
+         * represents reply/comment interaction.
+         */
+        comments:
+          insights.replies,
+
+        views:
+          insights.views,
+
+        plays:
+          null,
+
+        reach:
+          null,
+
+        impressions:
+          null,
+      }
+    );
+  }
+
+  /*
+   * Followers are account-level Threads insight data.
+   *
+   * Failure here should not invalidate an otherwise
+   * successful post sync.
+   */
+  const followersCount =
+    await getThreadsFollowerCount(
+      threadsUserId,
+      accessToken
+    );
+
+  /*
+   * Build a useful summary from the exact posts
+   * retrieved in this sync.
+   *
+   * These are NOT fabricated values and they are not
+   * presented as all-time account totals.
+   */
+  const syncedPostSummary = {
+    posts:
+      posts.length,
+
+    views:
+      sumKnownNumbers(
+        allMetrics.map(
+          (item) =>
+            item.views
+        )
+      ),
+
+    likes:
+      sumKnownNumbers(
+        allMetrics.map(
+          (item) =>
+            item.likes
+        )
+      ),
+
+    replies:
+      sumKnownNumbers(
+        allMetrics.map(
+          (item) =>
+            item.replies
+        )
+      ),
+
+    reposts:
+      sumKnownNumbers(
+        allMetrics.map(
+          (item) =>
+            item.reposts
+        )
+      ),
+
+    quotes:
+      sumKnownNumbers(
+        allMetrics.map(
+          (item) =>
+            item.quotes
+        )
+      ),
+
+    shares:
+      sumKnownNumbers(
+        allMetrics.map(
+          (item) =>
+            item.shares
+        )
+      ),
+  };
+
+  const now =
+    new Date()
+      .toISOString();
+
+  await updateConnectedAccount(
+    {
+      rowId:
+        account.id,
+
+      accountId:
+        threadsUserId,
+
+      username:
+        profile.username ??
+        account.username,
+
+      existingMeta:
+        account.meta,
+
+      metaPatch: {
+        oauth_flow:
+          "threads_oauth",
+
+        threads_user_id:
+          threadsUserId,
+
+        threads_profile: {
+          id:
+            threadsUserId,
+
+          username:
+            profile.username ??
+            null,
+
+          display_name:
+            profile.name ??
+            null,
+
+          profile_picture_url:
+            profile
+              .threads_profile_picture_url ??
+            null,
+
+          biography:
+            profile
+              .threads_biography ??
+            null,
+
+          is_verified:
+            profile
+              .is_verified ??
+            null,
+
+          followers_count:
+            followersCount,
+        },
+
+        /*
+         * Summary from this synced post window.
+         *
+         * Never label these values as all-time totals.
+         */
+        threads_synced_post_summary:
+          syncedPostSummary,
+
+        /*
+         * Preserve Threads-native engagement signals
+         * that do not yet have normalized columns in
+         * social_post_metrics.
+         */
+        threads_extra_post_metrics:
+          extraPostMetrics,
+
+        last_sync: {
+          platform:
+            "threads",
+
+          mode:
+            "full",
+
+          api:
+            "threads_graph",
+
+          at:
+            now,
+
+          items:
+            posts.length,
+
+          followers_count:
+            followersCount,
+        },
+
+        token: {
+          refreshed:
+            tokenResult.refreshed,
+
+          expires_at:
+            tokenResult.expiresAt,
+        },
+      },
+    }
+  );
+
+  await finishRunOk(
+    runId,
+    "Threads sync complete",
+    {
+      platform:
+        "threads",
+
+      mode:
+        "full",
+
+      api:
+        "threads_graph",
+
+      threads_user_id:
+        threadsUserId,
+
+      synced:
+        posts.length,
+
+      followers_count:
+        followersCount,
+
+      token_refreshed:
+        tokenResult.refreshed,
+    }
+  );
+
+  return NextResponse.json(
+    {
+      ok:
+        true,
+
+      platform:
+        "threads",
+
+      mode:
+        "full",
+
+      api:
+        "threads_graph",
+
+      accountId:
+        threadsUserId,
+
+      username:
+        profile.username ??
+        null,
+
+      followers:
+        followersCount,
+
+      synced:
+        posts.length,
+    }
+  );
+}
+
+// -------------------------------------------------------
+// LinkedIn sync
+// -------------------------------------------------------
 
 function normalizeLinkedInLocale(
   locale:
     LinkedInUserInfo["locale"]
 ): string | null {
-  if (!locale) {
+  if (
+    !locale
+  ) {
     return null;
   }
 
@@ -3183,10 +4147,13 @@ async function syncLinkedIn(
   const tokenResult =
     await getValidAccessToken({
       userId,
+
       platform:
         "linkedin",
+
       provider:
         "linkedin",
+
       skewSec:
         10 * 60,
     });
@@ -3196,8 +4163,7 @@ async function syncLinkedIn(
       LinkedInUserInfo
     >(
       "https://api.linkedin.com/v2/userinfo",
-      tokenResult
-        .accessToken
+      tokenResult.accessToken
     );
 
   if (
@@ -3238,13 +4204,11 @@ async function syncLinkedIn(
             null,
 
           given_name:
-            profile
-              .given_name ??
+            profile.given_name ??
             null,
 
           family_name:
-            profile
-              .family_name ??
+            profile.family_name ??
             null,
 
           profile_picture_url:
@@ -3256,8 +4220,7 @@ async function syncLinkedIn(
             null,
 
           email_verified:
-            profile
-              .email_verified ??
+            profile.email_verified ??
             null,
 
           locale:
@@ -3285,12 +4248,10 @@ async function syncLinkedIn(
 
         token: {
           refreshed:
-            tokenResult
-              .refreshed,
+            tokenResult.refreshed,
 
           expires_at:
-            tokenResult
-              .expiresAt,
+            tokenResult.expiresAt,
         },
       },
     }
@@ -3310,14 +4271,14 @@ async function syncLinkedIn(
         0,
 
       token_refreshed:
-        tokenResult
-          .refreshed,
+        tokenResult.refreshed,
     }
   );
 
   return NextResponse.json(
     {
-      ok: true,
+      ok:
+        true,
 
       platform:
         "linkedin",
@@ -3334,7 +4295,9 @@ async function syncLinkedIn(
   );
 }
 
-// -------------------- X sync --------------------
+// -------------------------------------------------------
+// X sync
+// -------------------------------------------------------
 
 async function syncX(
   userId: string,
@@ -3358,8 +4321,13 @@ async function syncX(
   const tokenResult =
     await getValidAccessToken({
       userId,
-      platform: "x",
-      provider: "x",
+
+      platform:
+        "x",
+
+      provider:
+        "x",
+
       skewSec:
         10 * 60,
     });
@@ -3383,8 +4351,7 @@ async function syncX(
       `https://api.x.com/2/users/me?user.fields=${encodeURIComponent(
         userFields
       )}`,
-      tokenResult
-        .accessToken
+      tokenResult.accessToken
     );
 
   const profile =
@@ -3417,8 +4384,7 @@ async function syncX(
       )}/tweets?max_results=25&exclude=retweets,replies&tweet.fields=${encodeURIComponent(
         tweetFields
       )}`,
-      tokenResult
-        .accessToken
+      tokenResult.accessToken
     );
 
   const posts =
@@ -3460,8 +4426,7 @@ async function syncX(
 
         postedAt:
           safeIsoDate(
-            post
-              .created_at
+            post.created_at
           ),
       }
     );
@@ -3544,8 +4509,7 @@ async function syncX(
             null,
 
           description:
-            profile
-              .description ??
+            profile.description ??
             null,
 
           location:
@@ -3553,8 +4517,7 @@ async function syncX(
             null,
 
           profile_image_url:
-            profile
-              .profile_image_url ??
+            profile.profile_image_url ??
             null,
 
           profile_url:
@@ -3562,28 +4525,23 @@ async function syncX(
             null,
 
           account_created_at:
-            profile
-              .created_at ??
+            profile.created_at ??
             null,
 
           protected:
-            profile
-              .protected ??
+            profile.protected ??
             null,
 
           verified:
-            profile
-              .verified ??
+            profile.verified ??
             null,
 
           verified_type:
-            profile
-              .verified_type ??
+            profile.verified_type ??
             null,
 
           public_metrics:
-            profile
-              .public_metrics ??
+            profile.public_metrics ??
             null,
         },
 
@@ -3609,12 +4567,10 @@ async function syncX(
 
         token: {
           refreshed:
-            tokenResult
-              .refreshed,
+            tokenResult.refreshed,
 
           expires_at:
-            tokenResult
-              .expiresAt,
+            tokenResult.expiresAt,
         },
       },
     }
@@ -3634,14 +4590,14 @@ async function syncX(
         posts.length,
 
       token_refreshed:
-        tokenResult
-          .refreshed,
+        tokenResult.refreshed,
     }
   );
 
   return NextResponse.json(
     {
-      ok: true,
+      ok:
+        true,
 
       platform:
         "x",
@@ -3655,7 +4611,9 @@ async function syncX(
   );
 }
 
-// -------------------- Main route --------------------
+// -------------------------------------------------------
+// Main route
+// -------------------------------------------------------
 
 export async function POST(
   req: NextRequest
@@ -3673,12 +4631,15 @@ export async function POST(
   ) {
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
+
         error:
           "unauthorized",
       },
       {
-        status: 401,
+        status:
+          401,
       }
     );
   }
@@ -3689,11 +4650,14 @@ export async function POST(
     );
 
   if (
-    !isUuid(userId)
+    !isUuid(
+      userId
+    )
   ) {
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
 
         error:
           "session_user_id_not_uuid",
@@ -3702,7 +4666,8 @@ export async function POST(
           "NextAuth session.user.id must contain the canonical Supabase user UUID.",
       },
       {
-        status: 401,
+        status:
+          401,
       }
     );
   }
@@ -3727,7 +4692,8 @@ export async function POST(
   } catch (error) {
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
 
         error:
           error instanceof
@@ -3736,7 +4702,8 @@ export async function POST(
             : "invalid_platform",
       },
       {
-        status: 400,
+        status:
+          400,
       }
     );
   }
@@ -3753,7 +4720,8 @@ export async function POST(
   } catch (error) {
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
 
         error:
           error instanceof
@@ -3762,7 +4730,8 @@ export async function POST(
             : "sync_run_create_failed",
       },
       {
-        status: 500,
+        status:
+          500,
       }
     );
   }
@@ -3795,6 +4764,12 @@ export async function POST(
           runId
         );
 
+      case "threads":
+        return await syncThreads(
+          userId,
+          runId
+        );
+
       case "linkedin":
         return await syncLinkedIn(
           userId,
@@ -3820,6 +4795,7 @@ export async function POST(
         userId,
         platform,
         runId,
+
         error:
           message,
       }
@@ -3843,7 +4819,8 @@ export async function POST(
 
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
 
         platform,
 
