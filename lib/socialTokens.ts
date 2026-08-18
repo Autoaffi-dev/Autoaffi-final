@@ -11,16 +11,14 @@ export type SocialPlatform =
   | "facebook"
   | "tiktok"
   | "youtube"
-  | "linkedin"
-  | "x"
-  | "threads";
+  | "threads"
+  | "linkedin";
 
 export type SocialProvider =
   | "meta"
   | "tiktok"
   | "google"
-  | "linkedin"
-  | "x";
+  | "linkedin";
 
 type SocialAccountRow = {
   id: string;
@@ -102,16 +100,6 @@ type TikTokRefreshResponse = {
   log_id?: string;
 };
 
-type XRefreshResponse = {
-  access_token?: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
-  token_type?: string;
-  error?: string;
-  error_description?: string;
-};
-
 class TokenRefreshError extends Error {
   provider: SocialProvider;
   reconnectRequired: boolean;
@@ -160,9 +148,8 @@ function normalizePlatform(
     platform === "facebook" ||
     platform === "tiktok" ||
     platform === "youtube" ||
-    platform === "linkedin" ||
-    platform === "x" ||
-    platform === "threads"
+    platform === "threads" ||
+    platform === "linkedin"
   ) {
     return platform;
   }
@@ -257,35 +244,6 @@ function splitScopes(
         item.trim()
     )
     .filter(Boolean);
-}
-
-function isReconnectErrorCode(
-  errorCode:
-    | string
-    | undefined
-): boolean {
-  const normalized =
-    String(
-      errorCode ??
-        ""
-    )
-      .trim()
-      .toLowerCase();
-
-  return (
-    normalized ===
-      "invalid_grant" ||
-    normalized ===
-      "invalid_token" ||
-    normalized ===
-      "invalid_request" ||
-    normalized.includes(
-      "invalid_refresh"
-    ) ||
-    normalized.includes(
-      "revoked"
-    )
-  );
 }
 
 function isInstagramReconnectError(
@@ -1278,6 +1236,10 @@ async function refreshThreadsAccessToken(
 
     throw new TokenRefreshError(
       {
+        /*
+         * Datamodellens provider är fortfarande
+         * "meta" för Threads.
+         */
         provider:
           "meta",
 
@@ -1489,160 +1451,6 @@ async function refreshTikTokAccessToken(
     openId:
       body.open_id ??
       null,
-
-    tokenType:
-      body.token_type ??
-      null,
-
-    grantedScopes:
-      splitScopes(
-        body.scope
-      ),
-  };
-}
-
-// -------------------- X refresh --------------------
-
-async function refreshXAccessToken(
-  currentRefreshToken: string
-): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-  expiresInSec:
-    | number
-    | null;
-  tokenType:
-    | string
-    | null;
-  grantedScopes: string[];
-}> {
-  const clientId =
-    requireEnv(
-      "X_CLIENT_ID"
-    );
-
-  const clientSecret =
-    requireEnv(
-      "X_CLIENT_SECRET"
-    );
-
-  /*
-   * Autoaffi är konfigurerad som Web App/confidential
-   * client. Klientuppgifterna skickas därför med HTTP Basic.
-   */
-  const basicCredentials =
-    Buffer.from(
-      `${clientId}:${clientSecret}`,
-      "utf8"
-    ).toString(
-      "base64"
-    );
-
-  const response =
-    await fetch(
-      "https://api.x.com/2/oauth2/token",
-      {
-        method:
-          "POST",
-
-        headers: {
-          Authorization:
-            `Basic ${basicCredentials}`,
-
-          "Content-Type":
-            "application/x-www-form-urlencoded",
-
-          Accept:
-            "application/json",
-        },
-
-        body:
-          new URLSearchParams(
-            {
-              grant_type:
-                "refresh_token",
-
-              refresh_token:
-                currentRefreshToken,
-            }
-          ),
-
-        cache:
-          "no-store",
-      }
-    );
-
-  const body =
-    (await response
-      .json()
-      .catch(
-        () => ({})
-      )) as XRefreshResponse;
-
-  if (
-    !response.ok ||
-    body.error ||
-    !body.access_token
-  ) {
-    const reason =
-      body
-        .error_description ||
-      body.error ||
-      "x_refresh_failed";
-
-    console.error(
-      "[social-tokens] X refresh failed",
-      {
-        status:
-          response.status,
-
-        error:
-          body.error,
-
-        description:
-          body
-            .error_description,
-      }
-    );
-
-    throw new TokenRefreshError(
-      {
-        provider:
-          "x",
-
-        message:
-          `x_refresh_failed:${reason}`,
-
-        reconnectRequired:
-          isReconnectErrorCode(
-            body.error
-          ),
-
-        providerCode:
-          body.error ??
-          null,
-      }
-    );
-  }
-
-  return {
-    accessToken:
-      body.access_token,
-
-    /*
-     * Om X skickar en ny refresh-token sparas den.
-     * Om ingen ny returneras behåller updateRowTokens()
-     * den befintliga.
-     */
-    refreshToken:
-      body.refresh_token ||
-      undefined,
-
-    expiresInSec:
-      typeof body.expires_in ===
-      "number"
-        ? body.expires_in
-        : null,
 
     tokenType:
       body.token_type ??
@@ -1891,9 +1699,6 @@ export async function getValidAccessToken(
          *
          * Därför måste PLATFORM kontrolleras före
          * den generella Meta/Facebook-branchen.
-         *
-         * Annars skulle en Instagram User Access Token
-         * skickas till Facebooks fb_exchange_token.
          */
         if (
           row.provider ===
@@ -2228,115 +2033,6 @@ export async function getValidAccessToken(
 
                   refresh_token_expires_at:
                     refreshExpiresAt,
-                },
-              }
-            );
-
-          return {
-            accessToken:
-              refreshed
-                .accessToken,
-
-            refreshed:
-              true,
-
-            platform:
-              row.platform,
-
-            provider:
-              row.provider,
-
-            expiresAt:
-              update
-                .token_expires_at,
-          };
-        }
-
-        // ---------------- X ----------------
-
-        if (
-          row.provider ===
-          "x"
-        ) {
-          if (
-            !refreshToken
-          ) {
-            throw new TokenRefreshError(
-              {
-                provider:
-                  "x",
-
-                message:
-                  "missing_refresh_token",
-
-                reconnectRequired:
-                  true,
-              }
-            );
-          }
-
-          const refreshed =
-            await refreshXAccessToken(
-              refreshToken
-            );
-
-          const now =
-            new Date()
-              .toISOString();
-
-          const update =
-            await updateRowTokens(
-              {
-                rowId:
-                  row.id,
-
-                accessToken:
-                  refreshed
-                    .accessToken,
-
-                /*
-                 * Om X returnerar en ny refresh-token
-                 * ersätter vi den gamla.
-                 *
-                 * undefined = behåll den befintliga.
-                 */
-                refreshToken:
-                  refreshed
-                    .refreshToken,
-
-                expiresInSec:
-                  refreshed
-                    .expiresInSec,
-
-                metaPatch: {
-                  token_refreshed_at:
-                    now,
-
-                  token_refresh_provider:
-                    "x",
-
-                  token_refresh_note:
-                    "x_access_token_refreshed",
-
-                  token_type:
-                    refreshed
-                      .tokenType,
-
-                  ...(
-                    refreshed
-                      .grantedScopes
-                      .length >
-                    0
-                      ? {
-                          granted_scopes:
-                            refreshed
-                              .grantedScopes,
-                        }
-                      : {}
-                  ),
-
-                  refresh_token_available:
-                    true,
                 },
               }
             );

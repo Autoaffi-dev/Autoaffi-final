@@ -8,16 +8,14 @@ export type SocialPlatform =
   | "facebook"
   | "tiktok"
   | "youtube"
-  | "linkedin"
-  | "x"
-  | "threads";
+  | "threads"
+  | "linkedin";
 
 export type SocialProvider =
   | "meta"
   | "tiktok"
   | "google"
-  | "linkedin"
-  | "x";
+  | "linkedin";
 
 type MetaValue =
   | string

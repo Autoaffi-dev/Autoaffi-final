@@ -1,5 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+// app/api/social/disconnect/route.ts
+
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 import { getServerSession } from "next-auth";
+
 import { authOptions } from "@/lib/authOptions";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { decryptToken } from "@/lib/socialCrypto";
@@ -11,200 +17,392 @@ type Platform =
   | "facebook"
   | "tiktok"
   | "youtube"
-  | "linkedin"
-  | "x";
+  | "threads"
+  | "linkedin";
 
-function normalizePlatform(v: any): Platform | null {
-  const p = String(v || "")
-    .toLowerCase()
-    .trim();
+function normalizePlatform(
+  value: unknown
+): Platform | null {
+  const platform =
+    String(value ?? "")
+      .toLowerCase()
+      .trim();
 
   if (
-    p === "instagram" ||
-    p === "facebook" ||
-    p === "tiktok" ||
-    p === "youtube" ||
-    p === "linkedin" ||
-    p === "x"
+    platform === "instagram" ||
+    platform === "facebook" ||
+    platform === "tiktok" ||
+    platform === "youtube" ||
+    platform === "threads" ||
+    platform === "linkedin"
   ) {
-    return p;
+    return platform;
   }
 
   return null;
 }
 
-function isUuid(v: string) {
+function isUuid(
+  value: string
+): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v
+    value
   );
 }
 
-// -------------------- Optional cleanup toggle --------------------
+// -------------------------------------------------------
+// Optional cleanup toggle
+// -------------------------------------------------------
 
-const CLEANUP_POSTS_ON_DISCONNECT = false;
+/*
+ * false:
+ *
+ * Disconnect removes active credentials/identity but keeps
+ * historical social_posts / social_post_metrics.
+ *
+ * This allows Autoaffi to retain historical performance
+ * unless we explicitly decide otherwise later.
+ */
+const CLEANUP_POSTS_ON_DISCONNECT =
+  false;
 
-// -------------------- Runs --------------------
+// -------------------------------------------------------
+// Runs
+// -------------------------------------------------------
 
 async function createRun(
   userId: string,
   platform: Platform
-) {
-  const runInsert = await supabaseAdmin
-    .from("social_sync_runs")
-    .insert({
-      user_id: userId,
-      platform,
-      status: "running",
-      message: "Disconnect started",
-    })
-    .select()
-    .single();
+): Promise<string> {
+  const runInsert =
+    await supabaseAdmin
+      .from(
+        "social_sync_runs"
+      )
+      .insert({
+        user_id:
+          userId,
 
-  const runId = runInsert.data?.id;
+        platform,
 
-  if (runInsert.error || !runId) {
+        status:
+          "running",
+
+        message:
+          "Disconnect started",
+      })
+      .select()
+      .single();
+
+  const runId =
+    runInsert.data
+      ?.id;
+
+  if (
+    runInsert.error ||
+    !runId
+  ) {
     throw new Error(
-      runInsert.error?.message ||
+      runInsert.error
+        ?.message ||
         "disconnect_run_create_failed"
     );
   }
 
-  return String(runId);
+  return String(
+    runId
+  );
 }
 
 async function finishRunOk(
   runId: string,
   message: string,
-  meta?: any
-) {
-  await supabaseAdmin
-    .from("social_sync_runs")
-    .update({
-      status: "ok",
-      message,
-      meta: meta ?? null,
-      finished_at: new Date().toISOString(),
-    })
-    .eq("id", runId);
+  meta?: unknown
+): Promise<void> {
+  const {
+    error,
+  } =
+    await supabaseAdmin
+      .from(
+        "social_sync_runs"
+      )
+      .update({
+        status:
+          "ok",
+
+        message,
+
+        meta:
+          meta ??
+          null,
+
+        finished_at:
+          new Date()
+            .toISOString(),
+      })
+      .eq(
+        "id",
+        runId
+      );
+
+  if (
+    error
+  ) {
+    console.error(
+      "[social-disconnect] Failed to finish successful run",
+      {
+        runId,
+
+        error:
+          error.message,
+      }
+    );
+  }
 }
 
 async function finishRunError(
   runId: string,
   message: string,
-  meta?: any
-) {
-  await supabaseAdmin
-    .from("social_sync_runs")
-    .update({
-      status: "error",
-      message,
-      meta: meta ?? null,
-      finished_at: new Date().toISOString(),
-    })
-    .eq("id", runId);
+  meta?: unknown
+): Promise<void> {
+  const {
+    error,
+  } =
+    await supabaseAdmin
+      .from(
+        "social_sync_runs"
+      )
+      .update({
+        status:
+          "error",
+
+        message,
+
+        meta:
+          meta ??
+          null,
+
+        finished_at:
+          new Date()
+            .toISOString(),
+      })
+      .eq(
+        "id",
+        runId
+      );
+
+  if (
+    error
+  ) {
+    console.error(
+      "[social-disconnect] Failed to finish failed run",
+      {
+        runId,
+
+        error:
+          error.message,
+      }
+    );
+  }
 }
 
-// -------------------- Revoke helpers (best effort) --------------------
+// -------------------------------------------------------
+// Provider revoke helpers — best effort only
+// -------------------------------------------------------
 
-// Meta revoke: DELETE /me/permissions
+/*
+ * Facebook / Instagram Meta revoke.
+ *
+ * IMPORTANT:
+ *
+ * Threads tokens must NOT be sent here.
+ *
+ * Threads uses its own Graph API/token flow.
+ */
 async function revokeMetaPermissions(
   accessToken: string
-) {
+): Promise<unknown> {
   const url =
     `https://graph.facebook.com/v20.0/me/permissions` +
-    `?access_token=${encodeURIComponent(accessToken)}`;
+    `?access_token=${encodeURIComponent(
+      accessToken
+    )}`;
 
-  const res = await fetch(url, {
-    method: "DELETE",
-    cache: "no-store",
-  });
+  const response =
+    await fetch(
+      url,
+      {
+        method:
+          "DELETE",
 
-  const json = await res
-    .json()
-    .catch(() => ({}));
+        cache:
+          "no-store",
+      }
+    );
 
-  if (!res.ok) {
-    const msg =
-      json?.error?.message ||
+  const json =
+    await response
+      .json()
+      .catch(
+        () => ({})
+      );
+
+  if (
+    !response.ok
+  ) {
+    const body =
+      json &&
+      typeof json ===
+        "object" &&
+      !Array.isArray(
+        json
+      )
+        ? (
+            json as Record<
+              string,
+              any
+            >
+          )
+        : {};
+
+    const message =
+      body?.error
+        ?.message ||
       "meta_revoke_failed";
 
-    throw new Error(msg);
+    throw new Error(
+      message
+    );
   }
 
   return json;
 }
 
-// Google revoke: POST oauth2.googleapis.com/revoke
+/*
+ * Google revoke.
+ */
 async function revokeGoogleToken(
   token: string
-) {
-  const res = await fetch(
-    "https://oauth2.googleapis.com/revoke",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        token,
-      }),
-      cache: "no-store",
-    }
-  );
+): Promise<{
+  ok: true;
+}> {
+  const response =
+    await fetch(
+      "https://oauth2.googleapis.com/revoke",
+      {
+        method:
+          "POST",
 
-  if (!res.ok) {
-    const text = await res
-      .text()
-      .catch(() => "");
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+        },
+
+        body:
+          new URLSearchParams({
+            token,
+          }),
+
+        cache:
+          "no-store",
+      }
+    );
+
+  if (
+    !response.ok
+  ) {
+    const text =
+      await response
+        .text()
+        .catch(
+          () => ""
+        );
 
     throw new Error(
-      text || "google_revoke_failed"
+      text ||
+        "google_revoke_failed"
     );
   }
 
   return {
-    ok: true,
+    ok:
+      true,
   };
 }
 
-// -------------------- Metadata cleanup --------------------
+// -------------------------------------------------------
+// Metadata helpers
+// -------------------------------------------------------
 
-function safeStripLastSync(meta: any) {
-  const prev =
-    meta &&
-    typeof meta === "object" &&
-    !Array.isArray(meta)
-      ? { ...meta }
-      : {};
+function getMetaObject(
+  meta: unknown
+): Record<
+  string,
+  unknown
+> {
+  if (
+    typeof meta ===
+      "object" &&
+    meta !== null &&
+    !Array.isArray(
+      meta
+    )
+  ) {
+    return {
+      ...(
+        meta as Record<
+          string,
+          unknown
+        >
+      ),
+    };
+  }
 
-  delete prev.last_sync;
-
-  return prev;
+  return {};
 }
 
-/**
- * LinkedIn-specific disconnect cleanup.
- *
- * IMPORTANT:
- * This function is ONLY used for LinkedIn.
- * Meta / Google / TikTok / X metadata is untouched.
- *
- * We remove LinkedIn identity and OAuth metadata so that
- * "Remove" leaves no stale LinkedIn profile/token state
- * inside user_social_accounts.meta.
- */
-function stripLinkedInConnectionMeta(meta: any) {
+function safeStripLastSync(
+  meta: unknown
+): Record<
+  string,
+  unknown
+> {
   const next =
-    meta &&
-    typeof meta === "object" &&
-    !Array.isArray(meta)
-      ? { ...meta }
-      : {};
+    getMetaObject(
+      meta
+    );
+
+  delete next.last_sync;
+
+  return next;
+}
+
+/*
+ * -------------------------------------------------------
+ * LinkedIn-specific cleanup
+ * -------------------------------------------------------
+ *
+ * LinkedIn does not currently use a provider revoke
+ * endpoint in this Autoaffi flow.
+ *
+ * We therefore destroy its stored tokens below and remove
+ * stale active identity/OAuth metadata here.
+ */
+function stripLinkedInConnectionMeta(
+  meta: unknown
+): Record<
+  string,
+  unknown
+> {
+  const next =
+    getMetaObject(
+      meta
+    );
 
   delete next.oauth_connected_at;
 
   delete next.linkedin_member_id;
+  delete next.linkedin_profile;
 
   delete next.display_name;
   delete next.given_name;
@@ -224,177 +422,388 @@ function stripLinkedInConnectionMeta(meta: any) {
   delete next.refresh_token_expires_in;
   delete next.refresh_token_expires_at;
 
+  delete next.token;
+  delete next.token_refreshed_at;
+  delete next.token_refresh_provider;
+  delete next.token_refresh_note;
+
+  return next;
+}
+
+/*
+ * -------------------------------------------------------
+ * Threads-specific cleanup
+ * -------------------------------------------------------
+ *
+ * Threads remains:
+ *
+ * platform = "threads"
+ * provider = "meta"
+ *
+ * But its token must never be treated like a Facebook
+ * User Access Token.
+ *
+ * On disconnect we remove active Threads OAuth/profile
+ * identity metadata.
+ *
+ * We intentionally retain historical analytics summaries
+ * such as:
+ *
+ * threads_synced_post_summary
+ * threads_extra_post_metrics
+ *
+ * because CLEANUP_POSTS_ON_DISCONNECT is false and
+ * Autoaffi currently preserves historical performance.
+ */
+function stripThreadsConnectionMeta(
+  meta: unknown
+): Record<
+  string,
+  unknown
+> {
+  const next =
+    getMetaObject(
+      meta
+    );
+
+  delete next.oauth_connected_at;
+  delete next.oauth_flow;
+
+  delete next.threads_user_id;
+  delete next.short_token_user_id;
+
+  delete next.username;
+  delete next.display_name;
+
+  delete next.profile_picture_url;
+  delete next.biography;
+
+  delete next.threads_profile;
+
+  delete next.token_type;
+
+  delete next.requested_scopes;
+  delete next.granted_scopes;
+
+  delete next.publishing_enabled;
+  delete next.insights_requested;
+  delete next.replies_requested;
+
+  delete next.token;
+
+  delete next.token_refreshed_at;
+  delete next.token_refresh_provider;
+  delete next.token_refresh_note;
+
+  delete next.refresh_token_available;
+  delete next.refresh_token_expires_in;
+  delete next.refresh_token_expires_at;
+
   return next;
 }
 
 function buildDisconnectBaseMeta(
   platform: Platform,
-  meta: any
-) {
+  meta: unknown
+): Record<
+  string,
+  unknown
+> {
   const withoutLastSync =
-    safeStripLastSync(meta);
+    safeStripLastSync(
+      meta
+    );
 
-  if (platform === "linkedin") {
+  if (
+    platform ===
+    "linkedin"
+  ) {
     return stripLinkedInConnectionMeta(
       withoutLastSync
     );
   }
 
-  // IMPORTANT:
-  // Other platforms retain the exact same metadata
-  // behavior as before.
+  if (
+    platform ===
+    "threads"
+  ) {
+    return stripThreadsConnectionMeta(
+      withoutLastSync
+    );
+  }
+
+  /*
+   * Instagram / Facebook / TikTok / YouTube retain
+   * their existing metadata behavior.
+   */
   return withoutLastSync;
 }
 
-// -------------------- Main --------------------
+// -------------------------------------------------------
+// Main
+// -------------------------------------------------------
 
 export async function POST(
   req: NextRequest
-) {
+): Promise<NextResponse> {
   const session =
-    await getServerSession(authOptions);
+    await getServerSession(
+      authOptions
+    );
 
   const userIdRaw =
-    (session as any)?.user?.id;
+    (
+      session as {
+        user?: {
+          id?: unknown;
+        };
+      } | null
+    )?.user?.id;
 
-  if (!userIdRaw) {
+  if (
+    !userIdRaw
+  ) {
     return NextResponse.json(
       {
-        ok: false,
-        error: "unauthorized",
+        ok:
+          false,
+
+        error:
+          "unauthorized",
       },
       {
-        status: 401,
+        status:
+          401,
       }
     );
   }
 
-  const userId = String(userIdRaw);
+  const userId =
+    String(
+      userIdRaw
+    );
 
-  if (!isUuid(userId)) {
+  if (
+    !isUuid(
+      userId
+    )
+  ) {
     return NextResponse.json(
       {
-        ok: false,
-        error: "session_user_id_not_uuid",
-        received: userId,
+        ok:
+          false,
+
+        error:
+          "session_user_id_not_uuid",
+
+        received:
+          userId,
+
         hint:
           "Fix NextAuth callbacks: session.user.id måste vara Supabase user UUID.",
       },
       {
-        status: 401,
+        status:
+          401,
       }
     );
   }
 
-  const body = await req
-    .json()
-    .catch(() => ({}));
+  const body =
+    await req
+      .json()
+      .catch(
+        () => ({})
+      );
+
+  const bodyObject =
+    body &&
+    typeof body ===
+      "object" &&
+    !Array.isArray(
+      body
+    )
+      ? (
+          body as Record<
+            string,
+            unknown
+          >
+        )
+      : {};
 
   const platform =
-    normalizePlatform(body?.platform);
+    normalizePlatform(
+      bodyObject.platform
+    );
 
-  if (!platform) {
+  if (
+    !platform
+  ) {
     return NextResponse.json(
       {
-        ok: false,
-        error: "invalid_platform",
+        ok:
+          false,
+
+        error:
+          "invalid_platform",
+
         allowed: [
           "instagram",
           "facebook",
           "tiktok",
           "youtube",
+          "threads",
           "linkedin",
-          "x",
         ],
       },
       {
-        status: 400,
+        status:
+          400,
       }
     );
   }
 
-  let runId = "";
+  let runId =
+    "";
 
   try {
-    runId = await createRun(
-      userId,
-      platform
-    );
-  } catch (e: any) {
+    runId =
+      await createRun(
+        userId,
+        platform
+      );
+  } catch (
+    error
+  ) {
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
+
         error:
-          e?.message ||
-          "disconnect_run_create_failed",
+          error instanceof
+          Error
+            ? error.message
+            : "disconnect_run_create_failed",
       },
       {
-        status: 500,
+        status:
+          500,
       }
     );
   }
 
-  // -------------------- Read account --------------------
-  // Idempotent: finns ingen row => already disconnected.
+  // -----------------------------------------------------
+  // Read account
+  // -----------------------------------------------------
+  //
+  // Idempotent:
+  //
+  // no row => already disconnected.
+  //
 
-  let acc: any | null = null;
+  let account:
+    Record<
+      string,
+      any
+    > | null =
+    null;
 
   try {
     const {
       data,
       error,
-    } = await supabaseAdmin
-      .from("user_social_accounts")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("platform", platform)
-      .maybeSingle();
+    } =
+      await supabaseAdmin
+        .from(
+          "user_social_accounts"
+        )
+        .select("*")
+        .eq(
+          "user_id",
+          userId
+        )
+        .eq(
+          "platform",
+          platform
+        )
+        .maybeSingle();
 
-    if (error) {
-      throw new Error(error.message);
+    if (
+      error
+    ) {
+      throw new Error(
+        error.message
+      );
     }
 
-    acc = data || null;
-  } catch (e: any) {
+    account =
+      data ??
+      null;
+  } catch (
+    error
+  ) {
+    const detail =
+      error instanceof
+      Error
+        ? error.message
+        : "unknown_error";
+
     await finishRunError(
       runId,
       "account_read_failed",
       {
         platform,
-        detail: e?.message,
+        detail,
       }
     );
 
     return NextResponse.json(
       {
-        ok: false,
-        error: "account_read_failed",
+        ok:
+          false,
+
+        error:
+          "account_read_failed",
       },
       {
-        status: 500,
+        status:
+          500,
       }
     );
   }
 
-  if (!acc) {
+  if (
+    !account
+  ) {
     await finishRunOk(
       runId,
       "No account row found; already disconnected",
       {
         platform,
-        already: true,
+
+        already:
+          true,
       }
     );
 
-    return NextResponse.json({
-      ok: true,
-      platform,
-      alreadyDisconnected: true,
-    });
+    return NextResponse.json(
+      {
+        ok:
+          true,
+
+        platform,
+
+        alreadyDisconnected:
+          true,
+      }
+    );
   }
 
   const alreadyDisconnected =
-    String(acc.status) ===
+    String(
+      account.status
+    ) ===
     "disconnected";
 
   const revoke: {
@@ -403,98 +812,169 @@ export async function POST(
     provider?: string;
     error?: string;
   } = {
-    attempted: false,
-    ok: false,
+    attempted:
+      false,
+
+    ok:
+      false,
   };
 
-  // -------------------- Best-effort provider revoke --------------------
+  // -----------------------------------------------------
+  // Best-effort provider revoke
+  // -----------------------------------------------------
 
   try {
-    // Meta revoke (Instagram / Facebook)
+    /*
+     * ---------------------------------------------------
+     * Instagram / Facebook
+     * ---------------------------------------------------
+     *
+     * Threads is intentionally NOT included here.
+     */
     if (
       (
-        platform === "instagram" ||
-        platform === "facebook"
+        platform ===
+          "instagram" ||
+        platform ===
+          "facebook"
       ) &&
-      acc?.provider === "meta" &&
-      acc?.access_token_enc
+      account.provider ===
+        "meta" &&
+      account.access_token_enc
     ) {
-      revoke.attempted = true;
-      revoke.provider = "meta";
+      revoke.attempted =
+        true;
 
-      const token = decryptToken(
-        acc.access_token_enc
+      revoke.provider =
+        "meta";
+
+      const token =
+        decryptToken(
+          String(
+            account.access_token_enc
+          )
+        );
+
+      await revokeMetaPermissions(
+        token
       );
 
-      await revokeMetaPermissions(token);
-
-      revoke.ok = true;
+      revoke.ok =
+        true;
     }
 
-    // Google revoke (YouTube)
+    /*
+     * ---------------------------------------------------
+     * YouTube / Google
+     * ---------------------------------------------------
+     */
     if (
-      platform === "youtube" &&
-      acc?.provider === "google"
+      platform ===
+        "youtube" &&
+      account.provider ===
+        "google"
     ) {
       const access =
-        acc?.access_token_enc
+        account.access_token_enc
           ? decryptToken(
-              acc.access_token_enc
+              String(
+                account.access_token_enc
+              )
             )
           : null;
 
       const refresh =
-        acc?.refresh_token_enc
+        account.refresh_token_enc
           ? decryptToken(
-              acc.refresh_token_enc
+              String(
+                account.refresh_token_enc
+              )
             )
           : null;
 
-      if (access || refresh) {
-        revoke.attempted = true;
-        revoke.provider = "google";
+      if (
+        access ||
+        refresh
+      ) {
+        revoke.attempted =
+          true;
+
+        revoke.provider =
+          "google";
 
         await revokeGoogleToken(
-          String(access || refresh)
+          String(
+            access ||
+            refresh
+          )
         );
 
-        revoke.ok = true;
+        revoke.ok =
+          true;
       }
     }
 
     /*
-     * LinkedIn:
+     * ---------------------------------------------------
+     * Threads
+     * ---------------------------------------------------
      *
-     * We intentionally do NOT invent/use an undocumented
-     * provider revoke endpoint here.
+     * No Facebook revoke call.
      *
-     * Autoaffi disconnects LinkedIn by securely destroying
-     * its locally stored access/refresh tokens below and
-     * clearing LinkedIn-specific identity/OAuth metadata.
+     * Autoaffi destroys its encrypted Threads tokens and
+     * active identity metadata in the DB cleanup below.
+     *
+     * Provider-side uninstall/data-deletion handling is
+     * implemented separately.
      */
-  } catch (e: any) {
-    revoke.ok = false;
+
+    /*
+     * ---------------------------------------------------
+     * LinkedIn
+     * ---------------------------------------------------
+     *
+     * Autoaffi does not invent an undocumented remote
+     * revoke endpoint.
+     *
+     * Stored credentials and LinkedIn connection metadata
+     * are destroyed below.
+     */
+  } catch (
+    error
+  ) {
+    revoke.ok =
+      false;
+
     revoke.error =
-      e?.message ||
-      "revoke_failed";
+      error instanceof
+      Error
+        ? error.message
+        : "revoke_failed";
   }
 
-  // -------------------- DB clean --------------------
+  // -----------------------------------------------------
+  // DB clean
+  // -----------------------------------------------------
 
   try {
     const baseMeta =
       buildDisconnectBaseMeta(
         platform,
-        acc?.meta
+        account.meta
       );
+
+    const now =
+      new Date()
+        .toISOString();
 
     const nextMeta = {
       ...baseMeta,
 
       disconnected_at:
-        new Date().toISOString(),
+        now,
 
-      disconnected_by: "user",
+      disconnected_by:
+        "user",
 
       disconnected_platform:
         platform,
@@ -503,178 +983,279 @@ export async function POST(
         revoke,
 
       previous_status:
-        acc?.status ?? null,
+        account.status ??
+        null,
     };
 
     const {
-      error: updErr,
-    } = await supabaseAdmin
-      .from("user_social_accounts")
-      .update({
-        status: "disconnected",
+      error:
+        updateError,
+    } =
+      await supabaseAdmin
+        .from(
+          "user_social_accounts"
+        )
+        .update({
+          status:
+            "disconnected",
 
-        // Destroy provider tokens
-        access_token_enc: null,
-        refresh_token_enc: null,
-        token_expires_at: null,
+          /*
+           * Destroy provider credentials.
+           */
+          access_token_enc:
+            null,
 
-        // Remove provider identity from active row
-        account_id: null,
-        username: null,
+          refresh_token_enc:
+            null,
 
-        meta: nextMeta,
+          token_expires_at:
+            null,
 
-        updated_at:
-          new Date().toISOString(),
-      })
-      .eq("id", acc.id);
+          /*
+           * Remove active provider identity.
+           */
+          account_id:
+            null,
 
-    if (updErr) {
+          username:
+            null,
+
+          meta:
+            nextMeta,
+
+          updated_at:
+            now,
+        })
+        .eq(
+          "id",
+          account.id
+        );
+
+    if (
+      updateError
+    ) {
       throw new Error(
-        updErr.message
+        updateError.message
       );
     }
-  } catch (e: any) {
+  } catch (
+    error
+  ) {
+    const detail =
+      error instanceof
+      Error
+        ? error.message
+        : "unknown";
+
     await finishRunError(
       runId,
       "disconnect_db_update_failed",
       {
         platform,
         revoke,
-        detail:
-          e?.message ||
-          "unknown",
+        detail,
       }
     );
 
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
+
         error:
           "disconnect_db_update_failed",
-        detail:
-          e?.message ||
-          "unknown",
+
+        detail,
       },
       {
-        status: 500,
+        status:
+          500,
       }
     );
   }
 
-  // -------------------- Optional content cleanup --------------------
+  // -----------------------------------------------------
+  // Optional historical content cleanup
+  // -----------------------------------------------------
 
   if (
     CLEANUP_POSTS_ON_DISCONNECT
   ) {
     try {
-      await supabaseAdmin
-        .from(
-          "social_post_metrics"
-        )
-        .delete()
-        .eq(
-          "user_id",
-          userId
-        )
-        .eq(
-          "platform",
-          platform
-        );
+      const {
+        error:
+          metricsError,
+      } =
+        await supabaseAdmin
+          .from(
+            "social_post_metrics"
+          )
+          .delete()
+          .eq(
+            "user_id",
+            userId
+          )
+          .eq(
+            "platform",
+            platform
+          );
 
-      await supabaseAdmin
-        .from("social_posts")
-        .delete()
-        .eq(
-          "user_id",
-          userId
-        )
-        .eq(
-          "platform",
-          platform
+      if (
+        metricsError
+      ) {
+        throw new Error(
+          metricsError.message
         );
-    } catch (e: any) {
+      }
+
+      const {
+        error:
+          postsError,
+      } =
+        await supabaseAdmin
+          .from(
+            "social_posts"
+          )
+          .delete()
+          .eq(
+            "user_id",
+            userId
+          )
+          .eq(
+            "platform",
+            platform
+          );
+
+      if (
+        postsError
+      ) {
+        throw new Error(
+          postsError.message
+        );
+      }
+    } catch (
+      error
+    ) {
+      const detail =
+        error instanceof
+        Error
+          ? error.message
+          : "cleanup_failed";
+
       await finishRunError(
         runId,
         "disconnected_but_cleanup_failed",
         {
           platform,
           revoke,
+
           cleanup: {
-            ok: false,
+            ok:
+              false,
+
             error:
-              e?.message ||
-              "cleanup_failed",
+              detail,
           },
         }
       );
 
-      return NextResponse.json({
-        ok: true,
-        platform,
-        revoked: revoke,
+      return NextResponse.json(
+        {
+          ok:
+            true,
 
-        cleanup: {
-          ok: false,
-          error:
-            e?.message ||
-            "cleanup_failed",
-        },
+          platform,
 
-        message:
-          "Disconnected (cleanup failed — safe to reconnect).",
-      });
+          revoked:
+            revoke,
+
+          cleanup: {
+            ok:
+              false,
+
+            error:
+              detail,
+          },
+
+          message:
+            "Disconnected (cleanup failed — safe to reconnect).",
+        }
+      );
     }
   }
 
-  // -------------------- Finish run --------------------
+  // -----------------------------------------------------
+  // Finish
+  // -----------------------------------------------------
 
   await finishRunOk(
     runId,
+
     alreadyDisconnected
       ? "Already disconnected (refreshed state)"
       : "Disconnected",
+
     {
       platform,
+
       revoke,
+
       alreadyDisconnected,
 
       cleanup:
         CLEANUP_POSTS_ON_DISCONNECT
           ? {
-              ok: true,
+              ok:
+                true,
             }
           : {
-              skipped: true,
+              skipped:
+                true,
             },
 
       linkedinMetadataCleared:
-        platform === "linkedin",
+        platform ===
+        "linkedin",
+
+      threadsMetadataCleared:
+        platform ===
+        "threads",
     }
   );
 
-  // -------------------- Response --------------------
+  // -----------------------------------------------------
+  // Response
+  // -----------------------------------------------------
 
-  return NextResponse.json({
-    ok: true,
-    platform,
-    alreadyDisconnected,
-    revoked: revoke,
+  return NextResponse.json(
+    {
+      ok:
+        true,
 
-    cleanup:
-      CLEANUP_POSTS_ON_DISCONNECT
-        ? {
-            ok: true,
-          }
-        : {
-            skipped: true,
-          },
+      platform,
 
-    message:
-      revoke.attempted
-        ? revoke.ok
-          ? "Disconnected + revoke attempted successfully."
-          : "Disconnected (revoke failed — token may be expired, safe to reconnect)."
-        : "Disconnected.",
-  });
+      alreadyDisconnected,
+
+      revoked:
+        revoke,
+
+      cleanup:
+        CLEANUP_POSTS_ON_DISCONNECT
+          ? {
+              ok:
+                true,
+            }
+          : {
+              skipped:
+                true,
+            },
+
+      message:
+        revoke.attempted
+          ? revoke.ok
+            ? "Disconnected + revoke attempted successfully."
+            : "Disconnected (revoke failed — token may be expired, safe to reconnect)."
+          : "Disconnected.",
+    }
+  );
 }
