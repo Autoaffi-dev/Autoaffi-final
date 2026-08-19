@@ -20,6 +20,12 @@ type Platform =
   | "threads"
   | "linkedin";
 
+type TikTokRevokeErrorResponse = {
+  error?: string;
+  error_description?: string;
+  log_id?: string;
+};
+
 function normalizePlatform(
   value: unknown
 ): Platform | null {
@@ -50,6 +56,22 @@ function isUuid(
   );
 }
 
+function requireEnv(
+  name: string
+): string {
+  const value =
+    process.env[name]
+      ?.trim();
+
+  if (!value) {
+    throw new Error(
+      `missing_env:${name}`
+    );
+  }
+
+  return value;
+}
+
 // -------------------------------------------------------
 // Optional cleanup toggle
 // -------------------------------------------------------
@@ -57,11 +79,13 @@ function isUuid(
 /*
  * false:
  *
- * Disconnect removes active credentials/identity but keeps
- * historical social_posts / social_post_metrics.
+ * Instagram / Facebook / TikTok / Threads / LinkedIn
+ * keep historical social_posts / social_post_metrics
+ * after an ordinary user disconnect.
  *
- * This allows Autoaffi to retain historical performance
- * unless we explicitly decide otherwise later.
+ * YouTube is handled separately below and ALWAYS removes
+ * stored YouTube-derived post/performance data when the
+ * user disconnects the integration.
  */
 const CLEANUP_POSTS_ON_DISCONNECT =
   false;
@@ -330,6 +354,125 @@ async function revokeGoogleToken(
   };
 }
 
+/*
+ * -------------------------------------------------------
+ * TikTok revoke
+ * -------------------------------------------------------
+ *
+ * Official TikTok OAuth v2 revoke endpoint:
+ *
+ * POST https://open.tiktokapis.com/v2/oauth/revoke/
+ *
+ * body:
+ *
+ * client_key
+ * client_secret
+ * token = current access token
+ *
+ * Provider revoke is best-effort only.
+ *
+ * Even if TikTok says the token is already invalid/revoked,
+ * Autoaffi will still destroy its local encrypted copies
+ * later in the disconnect flow.
+ */
+async function revokeTikTokToken(
+  accessToken: string
+): Promise<{
+  ok: true;
+}> {
+  const clientKey =
+    requireEnv(
+      "TIKTOK_CLIENT_ID"
+    );
+
+  const clientSecret =
+    requireEnv(
+      "TIKTOK_CLIENT_SECRET"
+    );
+
+  const response =
+    await fetch(
+      "https://open.tiktokapis.com/v2/oauth/revoke/",
+      {
+        method:
+          "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+
+          "Cache-Control":
+            "no-cache",
+
+          Accept:
+            "application/json",
+        },
+
+        body:
+          new URLSearchParams({
+            client_key:
+              clientKey,
+
+            client_secret:
+              clientSecret,
+
+            token:
+              accessToken,
+          }),
+
+        cache:
+          "no-store",
+      }
+    );
+
+  if (
+    !response.ok
+  ) {
+    const body =
+      (await response
+        .json()
+        .catch(
+          () => ({})
+        )) as TikTokRevokeErrorResponse;
+
+    const reason =
+      body
+        .error_description ||
+      body.error ||
+      `tiktok_revoke_http_${response.status}`;
+
+    console.error(
+      "[social-disconnect] TikTok revoke failed",
+      {
+        status:
+          response.status,
+
+        error:
+          body.error ??
+          null,
+
+        description:
+          body
+            .error_description ??
+          null,
+
+        logId:
+          body.log_id ??
+          null,
+      }
+    );
+
+    throw new Error(
+      `tiktok_revoke_failed:${reason}`
+    );
+  }
+
+  return {
+    ok:
+      true,
+  };
+}
+
 // -------------------------------------------------------
 // Metadata helpers
 // -------------------------------------------------------
@@ -381,12 +524,6 @@ function safeStripLastSync(
  * -------------------------------------------------------
  * LinkedIn-specific cleanup
  * -------------------------------------------------------
- *
- * LinkedIn does not currently use a provider revoke
- * endpoint in this Autoaffi flow.
- *
- * We therefore destroy its stored tokens below and remove
- * stale active identity/OAuth metadata here.
  */
 function stripLinkedInConnectionMeta(
   meta: unknown
@@ -434,26 +571,6 @@ function stripLinkedInConnectionMeta(
  * -------------------------------------------------------
  * Threads-specific cleanup
  * -------------------------------------------------------
- *
- * Threads remains:
- *
- * platform = "threads"
- * provider = "meta"
- *
- * But its token must never be treated like a Facebook
- * User Access Token.
- *
- * On disconnect we remove active Threads OAuth/profile
- * identity metadata.
- *
- * We intentionally retain historical analytics summaries
- * such as:
- *
- * threads_synced_post_summary
- * threads_extra_post_metrics
- *
- * because CLEANUP_POSTS_ON_DISCONNECT is false and
- * Autoaffi currently preserves historical performance.
  */
 function stripThreadsConnectionMeta(
   meta: unknown
@@ -499,6 +616,75 @@ function stripThreadsConnectionMeta(
   delete next.refresh_token_expires_in;
   delete next.refresh_token_expires_at;
 
+  /*
+   * Historical Threads analytics remain here.
+   *
+   * Full Threads deletion is handled by:
+   *
+   * /api/data-deletion/threads
+   */
+  return next;
+}
+
+/*
+ * -------------------------------------------------------
+ * YouTube / Google-specific cleanup
+ * -------------------------------------------------------
+ *
+ * Older Autoaffi Google callback versions stored the
+ * entire Google token response inside:
+ *
+ * meta.raw.token_raw
+ *
+ * The current callback no longer does this.
+ *
+ * We remove the complete legacy raw object here so an old
+ * access_token / refresh_token can never survive a
+ * disconnect inside ordinary metadata.
+ *
+ * We also remove active OAuth state/scopes because
+ * YouTube Authorized Data is removed on disconnect.
+ */
+function stripYouTubeConnectionMeta(
+  meta: unknown
+): Record<
+  string,
+  unknown
+> {
+  const next =
+    getMetaObject(
+      meta
+    );
+
+  /*
+   * Critical legacy cleanup.
+   */
+  delete next.raw;
+
+  delete next.oauth_connected_at;
+  delete next.oauth_flow;
+
+  delete next.token;
+  delete next.token_type;
+
+  delete next.token_refreshed_at;
+  delete next.token_refresh_provider;
+  delete next.token_refresh_note;
+
+  delete next.refresh_token_available;
+  delete next.refresh_token_expires_in;
+  delete next.refresh_token_expires_at;
+
+  delete next.granted_scopes;
+  delete next.youtube_readonly_granted;
+
+  delete next.youtube_profile;
+  delete next.youtube_channel;
+  delete next.youtube_channel_id;
+
+  delete next.display_name;
+  delete next.profile_picture_url;
+
   return next;
 }
 
@@ -532,8 +718,17 @@ function buildDisconnectBaseMeta(
     );
   }
 
+  if (
+    platform ===
+    "youtube"
+  ) {
+    return stripYouTubeConnectionMeta(
+      withoutLastSync
+    );
+  }
+
   /*
-   * Instagram / Facebook / TikTok / YouTube retain
+   * Instagram / Facebook / TikTok retain
    * their existing metadata behavior.
    */
   return withoutLastSync;
@@ -663,6 +858,18 @@ export async function POST(
     );
   }
 
+  /*
+   * Historical post/performance cleanup is normally
+   * controlled by the global toggle.
+   *
+   * YouTube is the deliberate exception and is ALWAYS
+   * cleaned on disconnect.
+   */
+  const shouldCleanupHistoricalContent =
+    CLEANUP_POSTS_ON_DISCONNECT ||
+    platform ===
+      "youtube";
+
   let runId =
     "";
 
@@ -696,11 +903,6 @@ export async function POST(
   // -----------------------------------------------------
   // Read account
   // -----------------------------------------------------
-  //
-  // Idempotent:
-  //
-  // no row => already disconnected.
-  //
 
   let account:
     Record<
@@ -828,8 +1030,6 @@ export async function POST(
      * ---------------------------------------------------
      * Instagram / Facebook
      * ---------------------------------------------------
-     *
-     * Threads is intentionally NOT included here.
      */
     if (
       (
@@ -867,6 +1067,12 @@ export async function POST(
      * ---------------------------------------------------
      * YouTube / Google
      * ---------------------------------------------------
+     *
+     * Prefer the refresh token when one exists.
+     *
+     * This is the durable Google authorization credential.
+     * If no refresh token exists, fall back to the current
+     * access token.
      */
     if (
       platform ===
@@ -893,8 +1099,8 @@ export async function POST(
           : null;
 
       if (
-        access ||
-        refresh
+        refresh ||
+        access
       ) {
         revoke.attempted =
           true;
@@ -904,8 +1110,8 @@ export async function POST(
 
         await revokeGoogleToken(
           String(
-            access ||
-            refresh
+            refresh ||
+            access
           )
         );
 
@@ -916,16 +1122,49 @@ export async function POST(
 
     /*
      * ---------------------------------------------------
+     * TikTok
+     * ---------------------------------------------------
+     */
+    if (
+      platform ===
+        "tiktok" &&
+      account.provider ===
+        "tiktok" &&
+      account.access_token_enc
+    ) {
+      revoke.attempted =
+        true;
+
+      revoke.provider =
+        "tiktok";
+
+      const token =
+        decryptToken(
+          String(
+            account.access_token_enc
+          )
+        );
+
+      await revokeTikTokToken(
+        token
+      );
+
+      revoke.ok =
+        true;
+    }
+
+    /*
+     * ---------------------------------------------------
      * Threads
      * ---------------------------------------------------
      *
      * No Facebook revoke call.
      *
      * Autoaffi destroys its encrypted Threads tokens and
-     * active identity metadata in the DB cleanup below.
+     * active identity metadata below.
      *
-     * Provider-side uninstall/data-deletion handling is
-     * implemented separately.
+     * Provider-side deauthorization/data deletion is
+     * handled by the dedicated Threads callbacks.
      */
 
     /*
@@ -933,15 +1172,20 @@ export async function POST(
      * LinkedIn
      * ---------------------------------------------------
      *
-     * Autoaffi does not invent an undocumented remote
-     * revoke endpoint.
+     * No invented undocumented remote revoke endpoint.
      *
-     * Stored credentials and LinkedIn connection metadata
-     * are destroyed below.
+     * Stored credentials and active identity metadata are
+     * destroyed locally below.
      */
   } catch (
     error
   ) {
+    /*
+     * Provider revoke remains best effort.
+     *
+     * A provider failure must never prevent Autoaffi from
+     * destroying its own credential copies.
+     */
     revoke.ok =
       false;
 
@@ -985,6 +1229,12 @@ export async function POST(
       previous_status:
         account.status ??
         null,
+
+      youtube_authorized_data_cleanup:
+        platform ===
+        "youtube"
+          ? "required"
+          : undefined,
     };
 
     const {
@@ -1075,11 +1325,18 @@ export async function POST(
   }
 
   // -----------------------------------------------------
-  // Optional historical content cleanup
+  // Historical content cleanup
   // -----------------------------------------------------
+  //
+  // YouTube:
+  // ALWAYS runs.
+  //
+  // Other platforms:
+  // only runs if CLEANUP_POSTS_ON_DISCONNECT is enabled.
+  //
 
   if (
-    CLEANUP_POSTS_ON_DISCONNECT
+    shouldCleanupHistoricalContent
   ) {
     try {
       const {
@@ -1147,11 +1404,16 @@ export async function POST(
         "disconnected_but_cleanup_failed",
         {
           platform,
+
           revoke,
 
           cleanup: {
             ok:
               false,
+
+            required:
+              platform ===
+              "youtube",
 
             error:
               detail,
@@ -1173,12 +1435,19 @@ export async function POST(
             ok:
               false,
 
+            required:
+              platform ===
+              "youtube",
+
             error:
               detail,
           },
 
           message:
-            "Disconnected (cleanup failed — safe to reconnect).",
+            platform ===
+            "youtube"
+              ? "Disconnected, but YouTube data cleanup failed and must be retried."
+              : "Disconnected (cleanup failed — safe to reconnect).",
         }
       );
     }
@@ -1203,10 +1472,14 @@ export async function POST(
       alreadyDisconnected,
 
       cleanup:
-        CLEANUP_POSTS_ON_DISCONNECT
+        shouldCleanupHistoricalContent
           ? {
               ok:
                 true,
+
+              required:
+                platform ===
+                "youtube",
             }
           : {
               skipped:
@@ -1220,6 +1493,22 @@ export async function POST(
       threadsMetadataCleared:
         platform ===
         "threads",
+
+      youtubeMetadataCleared:
+        platform ===
+        "youtube",
+
+      youtubeAuthorizedDataDeleted:
+        platform ===
+          "youtube"
+          ? true
+          : undefined,
+
+      tiktokProviderRevokeAttempted:
+        platform ===
+          "tiktok"
+          ? revoke.attempted
+          : false,
     }
   );
 
@@ -1240,10 +1529,14 @@ export async function POST(
         revoke,
 
       cleanup:
-        CLEANUP_POSTS_ON_DISCONNECT
+        shouldCleanupHistoricalContent
           ? {
               ok:
                 true,
+
+              required:
+                platform ===
+                "youtube",
             }
           : {
               skipped:
@@ -1251,11 +1544,18 @@ export async function POST(
             },
 
       message:
-        revoke.attempted
-          ? revoke.ok
-            ? "Disconnected + revoke attempted successfully."
-            : "Disconnected (revoke failed — token may be expired, safe to reconnect)."
-          : "Disconnected.",
+        platform ===
+        "youtube"
+          ? revoke.attempted
+            ? revoke.ok
+              ? "YouTube disconnected, Google authorization revoked and stored YouTube data removed."
+              : "YouTube disconnected and stored YouTube data removed. Google revoke failed or authorization may already be invalid."
+            : "YouTube disconnected and stored YouTube data removed."
+          : revoke.attempted
+            ? revoke.ok
+              ? "Disconnected + revoke attempted successfully."
+              : "Disconnected (revoke failed — token may already be expired or revoked, local credentials removed)."
+            : "Disconnected.",
     }
   );
 }
