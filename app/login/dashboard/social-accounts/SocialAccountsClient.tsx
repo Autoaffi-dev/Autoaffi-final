@@ -2,7 +2,11 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 
 import AccountManageModal from "@/components/social-accounts/modals/AccountManageModal";
 
@@ -35,21 +39,57 @@ type PlatformState = {
 };
 
 type PlatformRow = {
-  platform: PlatformKey | string;
+  platform:
+    | PlatformKey
+    | string;
+
   status:
     | "connected"
     | "disconnected"
     | "reconnect_required"
     | string;
-  username?: string | null;
-  account_id?: string | null;
-  token_expires_at?: string | null;
-  updated_at?: string | null;
-  last_synced_at?: string | null;
+
+  username?:
+    | string
+    | null;
+
+  /*
+   * Human-readable profile name returned by
+   * /api/social/accounts.
+   *
+   * TikTok user.info.basic gives us display_name,
+   * which is intentionally kept separate from username.
+   */
+  display_name?:
+    | string
+    | null;
+
+  avatar_url?:
+    | string
+    | null;
+
+  account_id?:
+    | string
+    | null;
+
+  token_expires_at?:
+    | string
+    | null;
+
+  updated_at?:
+    | string
+    | null;
+
+  last_synced_at?:
+    | string
+    | null;
 };
 
 type BannerState = {
-  type: "success" | "error";
+  type:
+    | "success"
+    | "error";
+
   title: string;
   message: string;
 };
@@ -205,6 +245,41 @@ async function fetchAccounts(): Promise<
 }
 
 // -------------------------------------------------------
+// ACCOUNT PRESENTATION
+// -------------------------------------------------------
+
+function resolveAccountLabel(
+  row: PlatformRow,
+  platform: PlatformKey
+): string {
+  const displayName =
+    typeof row.display_name ===
+      "string"
+      ? row.display_name.trim()
+      : "";
+
+  if (
+    displayName
+  ) {
+    return displayName;
+  }
+
+  const username =
+    typeof row.username ===
+      "string"
+      ? row.username.trim()
+      : "";
+
+  if (
+    username
+  ) {
+    return username;
+  }
+
+  return `${PLATFORM_LABELS[platform]} account`;
+}
+
+// -------------------------------------------------------
 // USER-FRIENDLY MESSAGES
 // -------------------------------------------------------
 
@@ -326,13 +401,17 @@ function Toast({
   message,
 }: {
   open: boolean;
+
   type:
     | "success"
     | "error";
+
   title: string;
   message: string;
 }) {
-  if (!open) {
+  if (
+    !open
+  ) {
     return null;
   }
 
@@ -374,13 +453,17 @@ function Banner({
   message,
 }: {
   open: boolean;
+
   type:
     | "success"
     | "error";
+
   title: string;
   message: string;
 }) {
-  if (!open) {
+  if (
+    !open
+  ) {
     return null;
   }
 
@@ -411,6 +494,7 @@ function AnalyticsSignals({
 }: {
   platform:
     PlatformKey;
+
   connected:
     boolean;
 }) {
@@ -664,7 +748,9 @@ export default function SocialAccountsClient() {
         return runtimeBanner;
       }
 
-      if (error) {
+      if (
+        error
+      ) {
         return {
           type:
             "error",
@@ -680,7 +766,9 @@ export default function SocialAccountsClient() {
         };
       }
 
-      if (connected) {
+      if (
+        connected
+      ) {
         const normalized =
           connected.toLowerCase();
 
@@ -843,6 +931,22 @@ export default function SocialAccountsClient() {
               row.last_synced_at ??
               null;
 
+            /*
+             * Prefer the provider's real human-readable
+             * display name.
+             *
+             * TikTok user.info.basic gives Autoaffi
+             * display_name but not necessarily the actual
+             * @username/handle, so display_name is used
+             * for presentation while username remains
+             * semantically separate in storage.
+             */
+            const accountLabel =
+              resolveAccountLabel(
+                row,
+                platform
+              );
+
             next[
               platform
             ] = {
@@ -853,8 +957,7 @@ export default function SocialAccountsClient() {
                     `acc-${platform}-1`,
 
                   username:
-                    row.username ||
-                    `${PLATFORM_LABELS[platform]} account`,
+                    accountLabel,
 
                   primary:
                     true,
@@ -891,7 +994,9 @@ export default function SocialAccountsClient() {
 
   useEffect(
     () => {
-      if (!banner) {
+      if (
+        !banner
+      ) {
         return;
       }
 
@@ -1064,6 +1169,7 @@ export default function SocialAccountsClient() {
     setSyncing(
       (previous) => ({
         ...previous,
+
         [platform]:
           true,
       })
@@ -1597,15 +1703,15 @@ export default function SocialAccountsClient() {
             {/* HERO IMAGE */}
 
             <div className="relative min-h-[250px] overflow-hidden md:min-h-[320px]">
-  <Image
-    src="/images/social-accounts/social-accounts-hero-v2.png"
-    alt="Autoaffi connected to TikTok, Instagram, Facebook, YouTube, Threads and LinkedIn"
-    fill
-    priority
-    sizes="(max-width: 768px) 100vw, 44vw"
-    className="object-contain object-center"
-  />
-</div>
+              <Image
+                src="/images/social-accounts/social-accounts-hero-v2.png"
+                alt="Autoaffi connected to TikTok, Instagram, Facebook, YouTube, Threads and LinkedIn"
+                fill
+                priority
+                sizes="(max-width: 768px) 100vw, 44vw"
+                className="object-contain object-center"
+              />
+            </div>
           </div>
         </header>
 
