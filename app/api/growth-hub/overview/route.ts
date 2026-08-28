@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 
-import {
-  getSupabaseAdmin,
-  requireUserId,
-} from "@/lib/supabase/server";
+import { authOptions } from "@/lib/authOptions";
+import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -188,8 +187,7 @@ type RankedPlatformPost = {
   metricValue: number;
 };
 
-type SupabaseAdminClient =
-  any;
+type SupabaseAdminClient = any;
 
 // -------------------------------------------------------
 // CONSTANTS
@@ -200,13 +198,13 @@ const DAY_MS =
 
 const SUPPORTED_PLATFORMS:
   SupportedPlatform[] = [
-  "instagram",
-  "facebook",
-  "tiktok",
-  "youtube",
-  "threads",
-  "linkedin",
-];
+    "instagram",
+    "facebook",
+    "tiktok",
+    "youtube",
+    "threads",
+    "linkedin",
+  ];
 
 // -------------------------------------------------------
 // RESPONSE / AUTH
@@ -229,109 +227,59 @@ function jsonError(
   );
 }
 
-function sanitizeHeaderId(
-  raw: string
-) {
-  return String(
-    raw || ""
-  )
-    .trim()
-    .replace(
-      /^"+|"+$/g,
-      ""
-    )
-    .replace(
-      /^'+|'+$/g,
-      ""
-    );
-}
-
 function isUuid(
   value:
     | string
     | null
     | undefined
 ) {
-  if (
-    !value
-  ) {
+  if (!value) {
     return false;
   }
 
-  const cleaned =
-    sanitizeHeaderId(
-      value
-    );
-
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    cleaned
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value.trim()
   );
 }
 
-async function getEffectiveUserId(
-  req: Request
-) {
-  try {
-    return await requireUserId(
-      req
+/**
+ * Growth Hub uses the same authenticated identity model
+ * as /api/social/sync:
+ *
+ * NextAuth session
+ * -> session.user.id
+ * -> canonical Supabase UUID
+ *
+ * No client-provided user ID and no production dev-header
+ * fallback are accepted here.
+ */
+async function getEffectiveUserId() {
+  const session =
+    await getServerSession(
+      authOptions
     );
-  } catch {
-    if (
-      process.env
-        .NODE_ENV ===
-      "production"
-    ) {
-      throw new Error(
-        "UNAUTHORIZED"
-      );
-    }
 
-    const headerUserId =
-      sanitizeHeaderId(
-        req.headers.get(
-          "x-autoaffi-user-id"
-        ) || ""
-      );
+  const sessionUserId =
+    session?.user?.id;
 
-    const devUserId =
-      sanitizeHeaderId(
-        (
-          process.env
-            .NEXT_PUBLIC_DEV_USER_ID ||
-          ""
-        ).trim() ||
-          (
-            process.env
-              .DEV_USER_ID ||
-            ""
-          ).trim() ||
-          (
-            process.env
-              .AUTOAFFI_DEV_USER_ID ||
-            ""
-          ).trim()
-      );
-
-    if (
-      isUuid(
-        headerUserId
-      )
-    ) {
-      return headerUserId;
-    }
-
-    if (
-      isUuid(
-        devUserId
-      )
-    ) {
-      return devUserId;
-    }
-
+  if (!sessionUserId) {
     throw new Error(
       "UNAUTHORIZED"
     );
   }
+
+  const userId =
+    String(
+      sessionUserId
+    ).trim();
+
+  if (!isUuid(userId)) {
+    throw new Error(
+      "UNAUTHORIZED"
+    );
+  }
+
+  return userId;
 }
 
 // -------------------------------------------------------
@@ -416,9 +364,7 @@ function safeDate(
     | null
     | undefined
 ) {
-  if (
-    !value
-  ) {
+  if (!value) {
     return null;
   }
 
@@ -638,10 +584,8 @@ function lastSyncMode(
 }
 
 /*
- * IMPORTANT:
- *
- * Only a real successful provider sync should count
- * as a Growth Hub sync.
+ * Only a real successful provider sync should count as
+ * a Growth Hub sync.
  *
  * account.updated_at may change because of OAuth,
  * profile updates or other account maintenance.
@@ -706,9 +650,7 @@ function accountTimezone(
           ?.iana_timezone
     );
 
-  if (
-    !timezone
-  ) {
+  if (!timezone) {
     return null;
   }
 
@@ -793,9 +735,7 @@ function normalizeTitle(
       caption
     );
 
-  if (
-    !value
-  ) {
+  if (!value) {
     return fallback;
   }
 
@@ -902,9 +842,7 @@ function engagementValue(
     | SocialMetricRow
     | undefined
 ): number | null {
-  if (
-    !metric
-  ) {
+  if (!metric) {
     return null;
   }
 
@@ -937,9 +875,7 @@ function metricValueForKind(
     | undefined,
   kind: MetricKind
 ): number | null {
-  if (
-    !metric
-  ) {
+  if (!metric) {
     return null;
   }
 
@@ -978,9 +914,7 @@ function hasAnyPerformanceMetric(
     | SocialMetricRow
     | undefined
 ) {
-  if (
-    !metric
-  ) {
+  if (!metric) {
     return false;
   }
 
@@ -1015,12 +949,12 @@ function getPreferredMetricKind(
       MetricKind,
       number
     > = {
-    views: 0,
-    plays: 0,
-    reach: 0,
-    impressions: 0,
-    engagements: 0,
-  };
+      views: 0,
+      plays: 0,
+      reach: 0,
+      impressions: 0,
+      engagements: 0,
+    };
 
   for (
     const post of
@@ -1080,12 +1014,12 @@ function getPreferredMetricKind(
 
   const priority:
     MetricKind[] = [
-    "views",
-    "plays",
-    "reach",
-    "impressions",
-    "engagements",
-  ];
+      "views",
+      "plays",
+      "reach",
+      "impressions",
+      "engagements",
+    ];
 
   return [
     ...priority,
@@ -1681,9 +1615,7 @@ function rankTopPostsPerPlatform(
     const top =
       sorted[0];
 
-    if (
-      !top
-    ) {
+    if (!top) {
       continue;
     }
 
@@ -2414,9 +2346,7 @@ function calculatePublishingWindow(
       account
     );
 
-  if (
-    !timezone
-  ) {
+  if (!timezone) {
     return null;
   }
 
@@ -3195,79 +3125,79 @@ Simple, focused content is easier to understand, easier to save and easier to re
 
   const dailyContent:
     DailyGrowthContent = {
-    contentDate:
-      new Date()
-        .toISOString(),
+      contentDate:
+        new Date()
+          .toISOString(),
 
-    generationVersion:
-      "growth-hub-backend-v2",
+      generationVersion:
+        "growth-hub-backend-v2",
 
-    sourceType,
-    confidenceLevel,
-    publishingWindow,
+      sourceType,
+      confidenceLevel,
+      publishingWindow,
 
-    post: {
-      platform,
-      mode,
-      topic,
-      reason,
-      algorithmNote,
-      hook:
-        postHook,
+      post: {
+        platform,
+        mode,
+        topic,
+        reason,
+        algorithmNote,
+        hook:
+          postHook,
 
-      alternativeHooks,
+        alternativeHooks,
 
-      caption:
-        postCaption,
+        caption:
+          postCaption,
 
-      cta:
-        postCta,
+        cta:
+          postCta,
 
-      commentQuestion:
-        conversationStarter,
+        commentQuestion:
+          conversationStarter,
 
-      hashtags,
-      visualIdea,
-      imagePrompt,
+        hashtags,
+        visualIdea,
+        imagePrompt,
 
-      offerMeta:
-        null,
-    },
+        offerMeta:
+          null,
+      },
 
-    reel: {
-      platform,
-      mode,
-      topic,
-      reason,
-      algorithmNote,
+      reel: {
+        platform,
+        mode,
+        topic,
+        reason,
+        algorithmNote,
 
-      durationSeconds:
-        28,
+        durationSeconds:
+          28,
 
-      hook:
-        reelHook,
+        hook:
+          reelHook,
 
-      alternativeHooks,
+        alternativeHooks,
 
-      voiceover:
-        reelVoiceover,
+        voiceover:
+          reelVoiceover,
 
-      scenes,
+        scenes,
 
-      caption:
-        `${postCaption}
+        caption:
+          `${postCaption}
 
 ${postCta}`,
 
-      cta:
-        postCta,
+        cta:
+          postCta,
 
-      coverText,
+        coverText,
 
-      offerMeta:
-        null,
-    },
-  };
+        offerMeta:
+          null,
+      },
+    };
 
   return dailyContent;
 }
@@ -3277,13 +3207,11 @@ ${postCta}`,
 // -------------------------------------------------------
 
 export async function GET(
-  req: Request
+  _req: Request
 ) {
   try {
     const userId =
-      await getEffectiveUserId(
-        req
-      );
+      await getEffectiveUserId();
 
     const supabase =
       getSupabaseAdmin() as
