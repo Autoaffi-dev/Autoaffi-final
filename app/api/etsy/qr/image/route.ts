@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,33 +23,12 @@ function jsonError(status: number, payload: any) {
   return NextResponse.json(payload, { status });
 }
 
-async function getEffectiveUserId(req: Request) {
-  const url = new URL(req.url);
-
-  // 1) header (Thunder/POSTMAN + fetch)
-  const hdr = req.headers.get("x-autoaffi-user-id")?.trim();
-  if (hdr) return hdr;
-
-  // 2) query param uid (IMG tag kan inte skicka custom header)
-  const uid = (url.searchParams.get("uid") || "").trim();
-  if (uid) return uid;
-
-  // 3) dev env fallback (optional)
-  const dev = (process.env.NEXT_PUBLIC_DEV_USER_ID || "").trim();
-  if (dev) return dev;
-
-  return null;
-}
-
 export async function GET(req: Request) {
   try {
     const supabase = getAdminSupabase();
     const url = new URL(req.url);
 
-    const userId = await getEffectiveUserId(req);
-    if (!userId) {
-      return jsonError(401, { ok: false, error: "UNAUTHORIZED", hint: "Missing user id" });
-    }
+    const userId = await requireUserId(req);
 
     const path = (url.searchParams.get("path") || "").trim();
     if (!path) {
@@ -89,6 +69,10 @@ export async function GET(req: Request) {
       },
     });
   } catch (e: any) {
-    return jsonError(500, { ok: false, error: "SERVER_ERROR", details: e?.message || String(e) });
+    const msg = e?.message || String(e);
+    if (msg === "UNAUTHORIZED") {
+      return jsonError(401, { ok: false, error: "UNAUTHORIZED" });
+    }
+    return jsonError(500, { ok: false, error: "SERVER_ERROR", details: msg });
   }
 }

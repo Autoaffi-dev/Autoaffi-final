@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserId } from "@/lib/auth/server";
 
 function getAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -13,10 +14,11 @@ function getAdminSupabase() {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const userId = await requireUserId(req);
     const { id } = await params;
     const supabase = getAdminSupabase();
 
@@ -31,6 +33,10 @@ export async function GET(
         { ok: false, error: pushError?.message || "Push not found." },
         { status: 404 }
       );
+    }
+
+    if (String(pushRow.user_id) !== userId) {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
     }
 
     const { data: days, error: daysError } = await supabase
@@ -84,8 +90,12 @@ export async function GET(
 
     return NextResponse.json({ ok: true, push: result });
   } catch (error: any) {
+    const msg = error?.message || "Failed to load push.";
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
     return NextResponse.json(
-      { ok: false, error: error?.message || "Failed to load push." },
+      { ok: false, error: msg },
       { status: 500 }
     );
   }

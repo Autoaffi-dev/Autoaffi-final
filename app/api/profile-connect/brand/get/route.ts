@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getServerSession } from "next-auth";
 
-import { authOptions } from "@/lib/authOptions"; // justera path om din authOptions ligger annanstans
+import { requireUserId } from "@/lib/auth/server";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -10,17 +9,7 @@ const supabase = createClient(
 );
 
 async function getUserId(req: Request): Promise<string> {
-  const devHeader = req.headers.get("x-autoaffi-user-id");
-  if (devHeader) return devHeader;
-
-  const devEnv = process.env.NEXT_PUBLIC_DEV_USER_ID;
-  if (devEnv) return devEnv;
-
-  const session = await getServerSession(authOptions);
-  const userId = (session as any)?.user?.id;
-
-  if (!userId) throw new Error("Unauthorized");
-  return userId;
+  return requireUserId(req);
 }
 
 export async function GET(req: Request) {

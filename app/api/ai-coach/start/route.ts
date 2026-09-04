@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserId } from "@/lib/auth/server";
 
 export async function POST(req: NextRequest) {
   const supabaseUrl = process.env.SUPABASE_URL;
@@ -15,17 +16,10 @@ export async function POST(req: NextRequest) {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
+    const userId = await requireUserId(req);
     const body = await req.json().catch(() => ({}));
-    const userId = body.userId;
+    void body?.userId;
 
-    if (!userId) {
-      return NextResponse.json(
-        { success: false, error: "Missing userId" },
-        { status: 400 }
-      );
-    }
-
-    // 🔥 Exempel: logga AI Coach start
     await supabase.from("ai_coach_events").insert({
       user_id: userId,
       event_type: "coach_started",
@@ -37,8 +31,15 @@ export async function POST(req: NextRequest) {
       message: "AI Coach started",
     });
   } catch (err: any) {
+    const msg = err?.message;
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json(
+        { success: false, error: "UNAUTHORIZED" },
+        { status: 401 }
+      );
+    }
     return NextResponse.json(
-      { success: false, error: err.message },
+      { success: false, error: msg },
       { status: 500 }
     );
   }

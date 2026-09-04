@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { GeneratedPush, PushInput, PushDay } from "@/app/login/dashboard/autoaffi-pushes/types";
 import { generatePush } from "@/lib/autoaffi-pushes/generatePush";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
@@ -96,12 +97,12 @@ function persistRows(userId: string, input: PushInput, push: GeneratedPush) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const userId = String(body?.userId || "").trim();
+    const userId = await requireUserId(req);
     const input = body?.input as PushInput | undefined;
 
-    if (!userId || !input) {
+    if (!input) {
       return NextResponse.json(
-        { ok: false, error: "Missing userId or input." },
+        { ok: false, error: "Missing input." },
         { status: 400 }
       );
     }
@@ -177,8 +178,12 @@ export async function POST(req: Request) {
       push: bestPush,
     });
   } catch (err: any) {
+    const msg = err?.message || "Unknown server error.";
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
     return NextResponse.json(
-      { ok: false, error: err?.message || "Unknown server error." },
+      { ok: false, error: msg },
       { status: 500 }
     );
   }

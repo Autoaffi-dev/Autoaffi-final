@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import QRCode from "qrcode";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,21 +23,6 @@ function getAdminSupabase() {
   );
 }
 
-function sanitizeHeaderId(raw: string) {
-  return String(raw || "").trim().replace(/^"+|"+$/g, "");
-}
-
-function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-}
-
-function getEffectiveUserId(req: Request) {
-  const hdr = sanitizeHeaderId(req.headers.get("x-autoaffi-user-id") || "");
-  const devUuid = (process.env.NEXT_PUBLIC_DEV_USER_ID || "").trim();
-  const userId = isUuid(hdr) ? hdr : isUuid(devUuid) ? devUuid : "";
-  return userId || null;
-}
-
 function randToken(len = 16) {
   const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let out = "";
@@ -48,13 +34,7 @@ export async function POST(req: Request) {
   try {
     const supabase = getAdminSupabase();
 
-    const userId = getEffectiveUserId(req);
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "UNAUTHORIZED", hint: "Missing/invalid UUID header (x-autoaffi-user-id) or NEXT_PUBLIC_DEV_USER_ID." },
-        { status: 401 }
-      );
-    }
+    const userId = await requireUserId(req);
 
     const body = await req.json().catch(() => ({}));
     const offer_key = String(body?.offer_key || "").trim();
@@ -125,6 +105,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, asset }, { status: 200 });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 500 });
+    const msg = e?.message || String(e);
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

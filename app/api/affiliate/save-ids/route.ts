@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
@@ -21,27 +22,12 @@ function getSupabaseAdmin() {
   });
 }
 
-function pickUserId(req: Request, body: any) {
-  return (
-    req.headers.get("x-autoaffi-user-id") ||
-    body?.user_id ||
-    body?.userId ||
-    null
-  );
-}
-
 export async function POST(req: Request) {
   try {
     const supabase = getSupabaseAdmin();
     const body = await req.json().catch(() => ({}));
 
-    const userId = pickUserId(req, body);
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "Missing user_id (send in body.user_id eller header x-autoaffi-user-id)" },
-        { status: 400 }
-      );
-    }
+    const userId = await requireUserId(req);
 
     // ⚠️ Om din tabell heter något annat, byt bara denna sträng.
     const TABLE = "user_affiliate_ids";
@@ -100,8 +86,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, data: inserted.data, fallback: "insert" });
     }
   } catch (error: any) {
+    const msg = error?.message ?? String(error);
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
     return NextResponse.json(
-      { ok: false, error: error?.message ?? String(error) },
+      { ok: false, error: msg },
       { status: 500 }
     );
   }

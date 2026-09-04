@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserId } from "@/lib/auth/server";
 
 function getAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -14,15 +15,7 @@ function getAdminSupabase() {
 
 export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "Missing userId." },
-        { status: 400 }
-      );
-    }
+    const userId = await requireUserId(req);
 
     const supabase = getAdminSupabase();
 
@@ -104,8 +97,12 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, pushes: result });
   } catch (error: any) {
+    const msg = error?.message || "Failed to load pushes.";
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
     return NextResponse.json(
-      { ok: false, error: error?.message || "Failed to load pushes." },
+      { ok: false, error: msg },
       { status: 500 }
     );
   }
@@ -114,12 +111,12 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const userId = body?.userId;
+    const userId = await requireUserId(req);
     const push = body?.push;
 
-    if (!userId || !push) {
+    if (!push) {
       return NextResponse.json(
-        { ok: false, error: "Missing userId or push." },
+        { ok: false, error: "Missing push." },
         { status: 400 }
       );
     }
@@ -190,8 +187,12 @@ export async function POST(req: Request) {
       createdAt: pushRow.created_at,
     });
   } catch (error: any) {
+    const msg = error?.message || "Failed to save push.";
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
     return NextResponse.json(
-      { ok: false, error: error?.message || "Failed to save push." },
+      { ok: false, error: msg },
       { status: 500 }
     );
   }

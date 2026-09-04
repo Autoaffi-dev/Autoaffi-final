@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,21 +19,6 @@ function getAdminSupabase() {
   );
 }
 
-function sanitizeHeaderId(raw: string) {
-  return String(raw || "").trim().replace(/^"+|"+$/g, "");
-}
-
-function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-}
-
-function getEffectiveUserId(req: Request) {
-  const hdr = sanitizeHeaderId(req.headers.get("x-autoaffi-user-id") || "");
-  const devUuid = (process.env.NEXT_PUBLIC_DEV_USER_ID || "").trim();
-  const userId = isUuid(hdr) ? hdr : isUuid(devUuid) ? devUuid : "";
-  return userId || null;
-}
-
 function jsonError(status: number, payload: any) {
   return NextResponse.json(payload, { status });
 }
@@ -45,14 +31,7 @@ export async function GET(req: Request) {
   try {
     const supabase = getAdminSupabase();
 
-    const userId = getEffectiveUserId(req);
-    if (!userId) {
-      return jsonError(401, {
-        ok: false,
-        error: "UNAUTHORIZED",
-        hint: "Send x-autoaffi-user-id as Supabase UUID or set NEXT_PUBLIC_DEV_USER_ID.",
-      });
-    }
+    const userId = await requireUserId(req);
 
     const url = new URL(req.url);
     const offer_key = (url.searchParams.get("offer_key") || "").trim();
@@ -193,6 +172,10 @@ export async function GET(req: Request) {
       items: enriched,
     });
   } catch (e: any) {
-    return jsonError(500, { ok: false, error: "SERVER_ERROR", details: e?.message || String(e) });
+    const msg = e?.message || String(e);
+    if (msg === "UNAUTHORIZED") {
+      return jsonError(401, { ok: false, error: "UNAUTHORIZED" });
+    }
+    return jsonError(500, { ok: false, error: "SERVER_ERROR", details: msg });
   }
 }

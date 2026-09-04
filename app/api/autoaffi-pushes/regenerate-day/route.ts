@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { PushInput, PushDay } from "@/app/login/dashboard/autoaffi-pushes/types";
 import { generateUniqueDayVariant } from "@/lib/autoaffi-pushes/generatePush";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
@@ -75,14 +76,13 @@ function getCTAKind(cta: string): "comment" | "save" | "follow" | "click" | "oth
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-
-    const userId = String(body?.userId || "").trim();
+    const userId = await requireUserId(req);
     const input = body?.input as PushInput | undefined;
     const dayNumber = Number(body?.dayNumber || 0);
 
-    if (!userId || !input || !dayNumber) {
+    if (!input || !dayNumber) {
       return NextResponse.json(
-        { ok: false, error: "Missing userId, input or dayNumber." },
+        { ok: false, error: "Missing input or dayNumber." },
         { status: 400 }
       );
     }
@@ -174,8 +174,12 @@ export async function POST(req: Request) {
       day: chosenDay,
     });
   } catch (err: any) {
+    const msg = err?.message || "Unknown server error.";
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
     return NextResponse.json(
-      { ok: false, error: err?.message || "Unknown server error." },
+      { ok: false, error: msg },
       { status: 500 }
     );
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,13 +20,7 @@ export async function GET(req: Request) {
   try {
     const supabase = getAdminSupabase();
 
-    const userId = req.headers.get("x-autoaffi-user-id")?.trim();
-    if (!userId) {
-      return jsonError(401, {
-        error: "UNAUTHORIZED",
-        hint: "Missing header: x-autoaffi-user-id",
-      });
-    }
+    const userId = await requireUserId(req);
 
     const url = new URL(req.url);
 
@@ -65,6 +60,10 @@ export async function GET(req: Request) {
       items: data || [],
     });
   } catch (e: any) {
-    return jsonError(500, { error: "SERVER_ERROR", details: e?.message || String(e) });
+    const msg = e?.message || String(e);
+    if (msg === "UNAUTHORIZED") {
+      return jsonError(401, { error: "UNAUTHORIZED" });
+    }
+    return jsonError(500, { error: "SERVER_ERROR", details: msg });
   }
 }

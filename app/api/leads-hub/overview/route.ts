@@ -34,71 +34,6 @@ function jsonError(status: number, payload: any) {
   return NextResponse.json(payload, { status });
 }
 
-function sanitizeHeaderId(raw: string) {
-  return String(raw || "")
-    .trim()
-    .replace(/^"+|"+$/g, "")
-    .replace(/^'+|'+$/g, "");
-}
-
-/**
- * More tolerant UUID check for local/dev user IDs.
- * We only need a clean UUID-shaped string here, not strict UUID version validation.
- */
-function isUuid(value: string | null | undefined): boolean {
-  if (!value) return false;
-
-  const cleaned = sanitizeHeaderId(String(value));
-
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    cleaned
-  );
-}
-
-/**
- * Production:
- * - requires a real authenticated user through requireUserId(req)
- *
- * Local/dev:
- * - tries requireUserId(req) first
- * - then allows x-autoaffi-user-id header
- * - then allows NEXT_PUBLIC_DEV_USER_ID / DEV_USER_ID / AUTOAFFI_DEV_USER_ID
- *
- * This lets you test locally in the browser without weakening production auth.
- */
-async function getEffectiveUserId(req: Request) {
-  try {
-    return await requireUserId(req);
-  } catch {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("UNAUTHORIZED");
-    }
-
-    const headerUserId = sanitizeHeaderId(
-      req.headers.get("x-autoaffi-user-id") || ""
-    );
-
-    const devUserId = sanitizeHeaderId(
-      (process.env.NEXT_PUBLIC_DEV_USER_ID || "").trim() ||
-        (process.env.DEV_USER_ID || "").trim() ||
-        (process.env.AUTOAFFI_DEV_USER_ID || "").trim()
-    );
-
-    if (isUuid(headerUserId)) return headerUserId;
-    if (isUuid(devUserId)) return devUserId;
-
-    console.log("LEADS HUB AUTH DEBUG", {
-      nodeEnv: process.env.NODE_ENV,
-      headerUserId,
-      nextPublicDevUserId: process.env.NEXT_PUBLIC_DEV_USER_ID,
-      devUserId: process.env.DEV_USER_ID,
-      autoaffiDevUserId: process.env.AUTOAFFI_DEV_USER_ID,
-    });
-
-    throw new Error("UNAUTHORIZED");
-  }
-}
-
 function asString(value: unknown, fallback = "") {
   if (typeof value === "string") return value.trim();
   if (value === null || value === undefined) return fallback;
@@ -152,7 +87,7 @@ function safeDescription(...values: unknown[]) {
 
 export async function GET(req: Request) {
   try {
-    const userId = await getEffectiveUserId(req);
+    const userId = await requireUserId(req);
     const supabase = getSupabaseAdmin();
 
     const url = new URL(req.url);

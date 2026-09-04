@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
@@ -57,7 +58,6 @@ export async function GET(req: NextRequest) {
 
     const offerId = (searchParams.get("offerId") ?? "").trim();
     const external_id = (searchParams.get("external_id") ?? "").trim();
-    const userId = (searchParams.get("userId") ?? "").trim();
     const src = (searchParams.get("src") ?? "").trim();
 
     const id = offerId || external_id;
@@ -65,9 +65,8 @@ export async function GET(req: NextRequest) {
     if (!id) {
       return NextResponse.json({ success: false, error: "Missing offerId/external_id" }, { status: 400 });
     }
-    if (!userId) {
-      return NextResponse.json({ success: false, error: "Missing userId" }, { status: 400 });
-    }
+
+    const userId = await requireUserId(req);
 
     const supabase = getSupabaseAdmin();
 
@@ -109,8 +108,12 @@ export async function GET(req: NextRequest) {
     });
   } catch (err: any) {
     console.error("[affiliate/warriorplus/link] error:", err);
+    const msg = err?.message ?? "Failed to generate affiliate link";
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ success: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
     return NextResponse.json(
-      { success: false, error: err?.message ?? "Failed to generate affiliate link" },
+      { success: false, error: msg },
       { status: 500 }
     );
   }
@@ -122,12 +125,10 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as any;
 
     const offerId = String(body?.offerId ?? body?.external_id ?? "").trim();
-    const userId = String(body?.userId ?? "").trim();
     const src = String(body?.src ?? "").trim();
 
     const url = new URL(req.url);
     url.searchParams.set("offerId", offerId);
-    url.searchParams.set("userId", userId);
     if (src) url.searchParams.set("src", src);
 
     // reuse GET

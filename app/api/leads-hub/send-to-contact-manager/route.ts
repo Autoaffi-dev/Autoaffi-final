@@ -50,48 +50,6 @@ function jsonError(status: number, payload: any) {
   return NextResponse.json(payload, { status });
 }
 
-function sanitizeHeaderId(raw: string) {
-  return String(raw || "")
-    .trim()
-    .replace(/^"+|"+$/g, "")
-    .replace(/^'+|'+$/g, "");
-}
-
-function isUuid(value: string | null | undefined): boolean {
-  if (!value) return false;
-
-  const cleaned = sanitizeHeaderId(String(value));
-
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    cleaned
-  );
-}
-
-async function getEffectiveUserId(req: Request) {
-  try {
-    return await requireUserId(req);
-  } catch {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("UNAUTHORIZED");
-    }
-
-    const headerUserId = sanitizeHeaderId(
-      req.headers.get("x-autoaffi-user-id") || ""
-    );
-
-    const devUserId = sanitizeHeaderId(
-      (process.env.NEXT_PUBLIC_DEV_USER_ID || "").trim() ||
-        (process.env.DEV_USER_ID || "").trim() ||
-        (process.env.AUTOAFFI_DEV_USER_ID || "").trim()
-    );
-
-    if (isUuid(headerUserId)) return headerUserId;
-    if (isUuid(devUserId)) return devUserId;
-
-    throw new Error("UNAUTHORIZED");
-  }
-}
-
 function asString(value: unknown, fallback = "") {
   if (typeof value === "string") return value.trim();
   if (value === null || value === undefined) return fallback;
@@ -543,7 +501,7 @@ async function buildContactPayload(params: {
 
 export async function POST(req: Request) {
   try {
-    const userId = await getEffectiveUserId(req);
+    const userId = await requireUserId(req);
     const supabase = getSupabaseAdmin() as SupabaseAdminClient;
 
     const body = await req.json().catch(() => null);

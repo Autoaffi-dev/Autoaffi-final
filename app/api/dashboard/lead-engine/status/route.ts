@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-
-import { authOptions } from "@/lib/authOptions";
+import { tryRequireUserId } from "@/lib/auth/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -40,20 +38,7 @@ function isAllowedStatus(status: unknown): status is LeadStatus {
 }
 
 async function getUserId(req: NextRequest) {
-  const devHeaderUserId = req.headers.get("x-autoaffi-user-id");
-
-  if (
-    process.env.NODE_ENV !== "production" &&
-    devHeaderUserId &&
-    devHeaderUserId.length > 10
-  ) {
-    return devHeaderUserId;
-  }
-
-  const session = await getServerSession(authOptions);
-  const sessionUserId = (session?.user as { id?: string } | undefined)?.id;
-
-  return sessionUserId || null;
+  return tryRequireUserId(req);
 }
 
 function claimStatusFromLeadStatus(status: LeadStatus) {

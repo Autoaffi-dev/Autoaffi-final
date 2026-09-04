@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 
@@ -21,19 +22,9 @@ function getAdminClient() {
   });
 }
 
-function getUserIdFromRequest(req: Request) {
-  return req.headers.get("x-autoaffi-user-id")?.trim() || null;
-}
-
 export async function POST(req: Request) {
   try {
-    const userId = getUserIdFromRequest(req);
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, error: "Missing required header: x-autoaffi-user-id" },
-        { status: 401 }
-      );
-    }
+    const userId = await requireUserId(req);
 
     const body = await req.json();
     const targetId =
@@ -155,11 +146,15 @@ export async function POST(req: Request) {
       pipelineStatus: "RELEASED",
     });
   } catch (err: any) {
+    const msg = err?.message ?? null;
+    if (msg === "UNAUTHORIZED") {
+      return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
+    }
     return NextResponse.json(
       {
         ok: false,
         error: "Invalid request",
-        details: err?.message ?? null,
+        details: msg,
       },
       { status: 400 }
     );

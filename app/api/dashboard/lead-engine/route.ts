@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { tryRequireUserId } from "@/lib/auth/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -371,18 +370,7 @@ function buildFollowUp(temperature: "HOT" | "WARM" | "COLD") {
 }
 
 async function resolveUserId(req: Request) {
-  const devHeaderUserId = req.headers.get("x-autoaffi-user-id");
-
-  if (
-    process.env.NODE_ENV !== "production" &&
-    devHeaderUserId &&
-    devHeaderUserId.length > 10
-  ) {
-    return devHeaderUserId;
-  }
-
-  const session = await getServerSession(authOptions);
-  return session?.user?.id || null;
+  return tryRequireUserId(req);
 }
 
 export async function GET(req: Request) {

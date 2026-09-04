@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/options";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,30 +40,6 @@ function mergeMessage(existing: string | null, incoming: string | null) {
 
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
-}
-
-function allowDevHeader(req: Request) {
-  const host = (req.headers.get("host") || "").toLowerCase();
-  const isLocalhost =
-    host.startsWith("localhost:") ||
-    host.startsWith("127.0.0.1:") ||
-    host === "localhost" ||
-    host === "127.0.0.1";
-
-  return process.env.NODE_ENV !== "production" && isLocalhost;
-}
-
-async function requireUserId(req: Request): Promise<string | null> {
-  const session = await getServerSession(authOptions);
-  const sessionUserId = (session as any)?.user?.id ? String((session as any).user.id) : "";
-  if (sessionUserId.trim()) return sessionUserId.trim();
-
-  if (allowDevHeader(req)) {
-    const h = (req.headers.get("x-autoaffi-user-id") || "").trim();
-    if (h) return h;
-  }
-
-  return null;
 }
 
 type ProductType = "hoodie" | "sticker" | "phonecase";
@@ -202,8 +177,10 @@ async function resolveLeadOwner(
 export async function GET(req: Request) {
   const supabase = getAdminSupabase();
 
-  const userId = await requireUserId(req);
-  if (!userId) {
+  let userId: string;
+  try {
+    userId = await requireUserId(req);
+  } catch {
     return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
   }
 

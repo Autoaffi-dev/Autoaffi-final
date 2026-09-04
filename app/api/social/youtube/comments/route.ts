@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getServerSession } from "next-auth";
-
-import { authOptions } from "@/lib/authOptions";
+import { tryRequireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -493,20 +491,7 @@ function buildSuggestedOpener(signal: {
 }
 
 async function getUserId(req: NextRequest) {
-  const devHeaderUserId = req.headers.get("x-autoaffi-user-id");
-
-  if (
-    process.env.NODE_ENV !== "production" &&
-    devHeaderUserId &&
-    devHeaderUserId.length > 10
-  ) {
-    return devHeaderUserId;
-  }
-
-  const session = await getServerSession(authOptions);
-  const sessionUserId = (session?.user as { id?: string } | undefined)?.id;
-
-  return sessionUserId || null;
+  return tryRequireUserId(req);
 }
 
 async function fetchYouTubeVideoMeta(videoId: string) {

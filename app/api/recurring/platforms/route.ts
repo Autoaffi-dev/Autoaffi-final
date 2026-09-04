@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { requireUserId } from "@/lib/auth/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -44,18 +43,6 @@ function genCode8() {
     out += chars[Math.floor(Math.random() * chars.length)];
   }
   return out;
-}
-
-function sanitizeHeaderId(raw: string) {
-  return String(raw || "")
-    .trim()
-    .replace(/^"+|"+$/g, "");
-}
-
-function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v
-  );
 }
 
 function buildPromoLink(platform: PlatformKey, tracking: string, userId: string) {
@@ -126,22 +113,18 @@ function buildPromoLink(platform: PlatformKey, tracking: string, userId: string)
 }
 
 async function resolveUserIds(req: Request) {
-  const hdr = sanitizeHeaderId(req.headers.get("x-autoaffi-user-id") || "");
-  const devUuid = (process.env.NEXT_PUBLIC_DEV_USER_ID || "").trim();
-
-  let resolvedUserId: string | null = null;
-  if (isUuid(hdr)) resolvedUserId = hdr;
-  else if (isUuid(devUuid)) resolvedUserId = devUuid;
-
-  const session = await getServerSession(authOptions);
-  const sessionUserId = ((session as any)?.user?.id as string | undefined) || null;
-
-  if (!resolvedUserId && sessionUserId) resolvedUserId = sessionUserId;
-
-  return {
-    resolvedUserId,
-    sessionUserId,
-  };
+  try {
+    const userId = await requireUserId(req);
+    return {
+      resolvedUserId: userId,
+      sessionUserId: userId,
+    };
+  } catch {
+    return {
+      resolvedUserId: null,
+      sessionUserId: null,
+    };
+  }
 }
 
 const ALL_PLATFORMS: PlatformKey[] = [

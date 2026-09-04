@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { createClient } from "@supabase/supabase-js";
 
-import { authOptions } from "@/lib/authOptions";
+import { requireUserId } from "@/lib/auth/server";
 import { buildExportKit } from "@/lib/profile-connect/engine/export-kit";
 import { getCustomerAutoaffiLink } from "@/lib/profile-connect/engine/getCustomerAutoaffiLink";
 import { resolveProfileConnectLink } from "@/lib/profile-connect/engine/resolveProfileConnectLink";
@@ -27,17 +26,7 @@ function getAdminSupabase() {
 }
 
 async function getUserId(req: Request) {
-  const devHeader = req.headers.get("x-autoaffi-user-id");
-  if (devHeader) return devHeader;
-
-  const devEnv = process.env.NEXT_PUBLIC_DEV_USER_ID;
-  if (devEnv) return devEnv;
-
-  const session = await getServerSession(authOptions);
-  const userId = (session as any)?.user?.id;
-
-  if (!userId) throw new Error("Unauthorized");
-  return userId as string;
+  return requireUserId(req);
 }
 
 function safeJsonParse<T>(value: unknown, fallback: T): T {
