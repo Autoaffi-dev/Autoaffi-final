@@ -80,12 +80,17 @@ export type CanonicalUserIdInput = {
 export function resolveCanonicalUserId(input: CanonicalUserIdInput): string | null {
   const sessionUserId = sanitizeId(input.sessionUserId);
 
-  if (sessionUserId) {
-    return sessionUserId;
-  }
-
   // Explicitly unused: client claims never authorize.
   void input.clientClaimedUserId;
+
+  if (sessionUserId) {
+    // A present session identity must be UUID-shaped. Malformed values
+    // fail closed and must not fall through to developer headers.
+    if (isUuid(sessionUserId)) {
+      return sessionUserId;
+    }
+    return null;
+  }
 
   const host = input.host ?? input.headers.get("host");
   const nodeEnv = input.nodeEnv ?? process.env.NODE_ENV;

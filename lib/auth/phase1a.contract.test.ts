@@ -61,6 +61,24 @@ describe("Phase 1A route contracts", () => {
     assert.match(growth, /async function getEffectiveUserId/);
   });
 
+  it("WarriorPlus POST does not synthesize GET and ignores body/query userId", () => {
+    const src = read("app/api/affiliate/warriorplus/link/route.ts");
+    const postStart = src.indexOf("export async function POST");
+    assert.ok(postStart > 0);
+    const post = src.slice(postStart);
+
+    assert.doesNotMatch(post, /new NextRequest/);
+    assert.doesNotMatch(post, /return GET\(/);
+    assert.match(post, /requireUserId\(req\)/);
+    assert.match(src, /async function buildWarriorPlusAffiliateLink/);
+    assert.doesNotMatch(post, /searchParams\.get\([\"']userId[\"']\)/);
+    assert.doesNotMatch(
+      post,
+      /const userId = String\(body\?\.userId/
+    );
+    assert.match(post, /void body\?\.userId/);
+  });
+
   it("GDPR placeholders fail closed and ignore client userId", () => {
     const exp = read("pages/api/data/export.ts");
     const del = read("pages/api/data/delete.ts");

@@ -129,6 +129,52 @@ describe("Phase 1A canonical user identity", () => {
     }
   });
 
+  it("malformed sessionUserId is unauthorized", () => {
+    const userId = resolveCanonicalUserId({
+      sessionUserId: "not-a-uuid",
+      nodeEnv: "production",
+      headers: headers({ host: "autoaffi.com" }),
+    });
+    assert.equal(userId, null);
+  });
+
+  it("malformed sessionUserId does not fall through to a valid localhost developer header", () => {
+    const userId = resolveCanonicalUserId({
+      sessionUserId: "google-oauth-sub-12345",
+      nodeEnv: "development",
+      headers: headers({
+        host: "localhost:3000",
+        "x-autoaffi-user-id": HEADER_UUID,
+      }),
+    });
+    assert.equal(userId, null);
+    assert.throws(
+      () =>
+        requireCanonicalUserId({
+          sessionUserId: "google-oauth-sub-12345",
+          nodeEnv: "development",
+          headers: headers({
+            host: "localhost:3000",
+            "x-autoaffi-user-id": HEADER_UUID,
+          }),
+        }),
+      /UNAUTHORIZED/
+    );
+  });
+
+  it("valid session UUID wins over a conflicting header", () => {
+    const userId = resolveCanonicalUserId({
+      sessionUserId: SESSION_UUID,
+      nodeEnv: "development",
+      headers: headers({
+        host: "localhost:3000",
+        "x-autoaffi-user-id": HEADER_UUID,
+      }),
+    });
+    assert.equal(userId, SESSION_UUID);
+    assert.notEqual(userId, HEADER_UUID);
+  });
+
   it("requireCanonicalUserId throws UNAUTHORIZED when logged out", () => {
     assert.throws(
       () =>
