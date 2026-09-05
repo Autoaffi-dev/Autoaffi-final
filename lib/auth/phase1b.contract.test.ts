@@ -146,6 +146,43 @@ describe("Phase 1B cost and tracking route contracts", () => {
     assert.ok(authAt >= 0 && youtubeCallAt > authAt);
   });
 
+  it("9. payout endpoint cannot be unlocked by x-user-id", () => {
+    const src = read("app/api/dashboard/payouts/route.ts");
+    assert.match(src, /PAYOUTS_DISABLED/);
+    assert.doesNotMatch(src, /x-user-id/);
+    assert.doesNotMatch(src, /requestPayout/);
+  });
+
+  it("10. affiliate webhook performs no inserts", () => {
+    const src = read("app/api/affiliate/webhook/route.ts");
+    assert.match(src, /AFFILIATE_WEBHOOK_DISABLED/);
+    assert.doesNotMatch(src, /\.insert\(/);
+    assert.doesNotMatch(src, /console\.log/);
+    assert.doesNotMatch(src, /req\.json/);
+  });
+
+  it("18. product search cannot return unapproved items through approved=false", () => {
+    const src = read("app/api/products/search/route.ts");
+    assert.match(src, /const approvedOnly = true/);
+    assert.doesNotMatch(src, /approvedParam === \"false\"/);
+  });
+
+  it("20. Growth Hub/Social Accounts remain outside Phase 1B identity rewrite", () => {
+    const growth = read("app/api/growth-hub/overview/route.ts");
+    const social = read("app/api/social/accounts/route.ts");
+    assert.match(growth, /async function getEffectiveUserId/);
+    assert.match(social, /getServerSession/);
+  });
+
+  it("network proxy and mock revenue ingest are fail-closed", () => {
+    const proxy = read("app/api/network/[network]/route.ts");
+    const ingest = read("app/api/network/autoaffi/route.ts");
+    assert.match(proxy, /NETWORK_PROXY_DISABLED/);
+    assert.doesNotMatch(proxy, /DIGISTORE24_API_KEY/);
+    assert.match(ingest, /AUTOAFFI_NETWORK_INGEST_DISABLED/);
+    assert.doesNotMatch(ingest, /manager\.ingest/);
+  });
+
   it("cron helpers fail closed and media-utils no longer fail-open", () => {
     const helper = read("lib/auth/cronAuth.ts");
     const media = read("app/api/cron/_shared/media-utils.ts");

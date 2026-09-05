@@ -1450,11 +1450,8 @@ async function fetchRows(params: {
         "is_approved",
       ].join(",")
     )
-    .eq("is_active", true);
-
-  if (params.approvedOnly) {
-    qb = qb.eq("is_approved", true);
-  }
+    .eq("is_active", true)
+    .eq("is_approved", true);
 
   if (params.sources && params.sources.length > 0) {
     qb = qb.in("source", params.sources);
@@ -1482,7 +1479,7 @@ async function fetchRows(params: {
 /**
  * GET /api/products/search?q=keyword&sources=warriorplus&limit=20
  * Optional: &geo=worldwide
- * Optional: &approved=false (default true)
+ * Unapproved offers cannot be requested via client parameters.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -1493,9 +1490,8 @@ export async function GET(req: NextRequest) {
 
     const sourcesParam = (searchParams.get("sources") ?? "").trim();
     const geoParam = (searchParams.get("geo") ?? "").trim();
-
-    const approvedParam = (searchParams.get("approved") ?? "").trim().toLowerCase();
-    const approvedOnly = approvedParam === "false" ? false : true;
+    void searchParams.get("approved");
+    const approvedOnly = true;
 
     const sources = sourcesParam
       ? sourcesParam
