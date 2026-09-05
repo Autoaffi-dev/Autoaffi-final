@@ -14,10 +14,16 @@ type SubJobResult = {
 async function callInternal(req: Request, path: string, secret: string): Promise<SubJobResult> {
   const url = new URL(req.url);
   url.pathname = path;
-  url.searchParams.set("secret", secret);
+  url.search = "";
 
   try {
-    const res = await fetch(url.toString(), { cache: "no-store" });
+    const res = await fetch(url.toString(), {
+      cache: "no-store",
+      headers: {
+        "x-cron-secret": secret,
+        accept: "application/json",
+      },
+    });
 
     let body: any = null;
     try {
@@ -53,7 +59,8 @@ export async function GET(req: Request) {
 
     const secret =
       req.headers.get("x-cron-secret") ||
-      new URL(req.url).searchParams.get("secret") ||
+      req.headers.get("x-autoaffi-cron") ||
+      (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "") ||
       "";
 
     const results: SubJobResult[] = [];

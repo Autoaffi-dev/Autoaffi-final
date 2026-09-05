@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -156,8 +157,12 @@ function buildReadiness(bot: TelegramBotInfo, webhook: TelegramWebhookInfo | nul
   };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const auth = await requireUserIdOr401(req);
+    if ("response" in auth) return auth.response;
+    void auth.userId;
+
     if (!TELEGRAM_BOT_TOKEN) {
       return jsonError("Missing TELEGRAM_BOT_TOKEN in .env.local", 500, {
         envName: "TELEGRAM_BOT_TOKEN",

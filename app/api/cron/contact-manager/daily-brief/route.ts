@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -362,17 +363,7 @@ function buildDailyBriefForUser(
 }
 
 function isAuthorized(req: Request) {
-  if (process.env.NODE_ENV !== "production") return true;
-
-  const expectedSecret =
-    process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "";
-
-  if (!expectedSecret) return false;
-
-  const authHeader = req.headers.get("authorization") || "";
-  const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
-
-  return bearer === expectedSecret;
+  return isCronRequestAuthorized(req);
 }
 
 export async function GET(req: Request) {

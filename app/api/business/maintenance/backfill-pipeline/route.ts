@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { scoreTarget } from "@/lib/business/scoring";
 import { recommendContactStrategy } from "@/lib/business/contactStrategy";
 import type { NormalizedBusinessTarget } from "@/lib/business/types";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 
@@ -60,6 +61,10 @@ function toNormalizedTarget(target: TargetRow): NormalizedBusinessTarget {
 
 export async function POST(req: Request) {
   try {
+    if (!isCronRequestAuthorized(req)) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json().catch(() => ({}));
     const limit = Math.min(500, Math.max(1, Number(body?.limit ?? 100)));
     const onlyEmpty = body?.onlyEmpty !== false; // default true

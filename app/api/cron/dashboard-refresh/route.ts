@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 
@@ -39,11 +40,7 @@ const CREATOR_MODES: CreatorMode[] = ["beginner", "consistent", "growth"];
 const PLANS: Plan[] = ["basic", "pro", "elite"];
 
 function checkCronAuth(req: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true;
-
-  const authHeader = req.headers.get("authorization");
-  return authHeader === `Bearer ${cronSecret}`;
+  return isCronRequestAuthorized(req);
 }
 
 function getStockholmNow() {

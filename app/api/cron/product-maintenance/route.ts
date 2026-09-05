@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,13 +17,7 @@ export const dynamic = "force-dynamic";
  */
 
 function isAuthorized(req: Request) {
-  const headerSecret = req.headers.get("x-autoaffi-cron");
-  const url = new URL(req.url);
-  const querySecret = url.searchParams.get("key");
-  const secret = process.env.CRON_SECRET;
-
-  if (!secret) return false;
-  return headerSecret === secret || querySecret === secret;
+  return isCronRequestAuthorized(req);
 }
 
 function jsonNoStore(body: any, init?: ResponseInit) {

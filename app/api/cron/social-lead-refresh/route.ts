@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -276,11 +277,7 @@ const REDDIT_SAVE_THRESHOLD_STRICT = 82;
 const REDDIT_SAVE_THRESHOLD_LOOSE = 76;
 
 function checkCronAuth(req: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true;
-
-  const authHeader = req.headers.get("authorization");
-  return authHeader === `Bearer ${cronSecret}`;
+  return isCronRequestAuthorized(req);
 }
 
 function jsonError(message: string, status = 400, details?: unknown) {

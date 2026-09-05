@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test:auth": "node --experimental-strip-types --test lib/auth/canonicalUserId.test.ts lib/auth/phase1a.contract.test.ts lib/auth/phase1b.contract.test.ts"
+    "test:auth": "node --experimental-strip-types --test lib/auth/canonicalUserId.test.ts lib/auth/phase1a.contract.test.ts lib/auth/phase1b.contract.test.ts lib/auth/cronAuth.test.ts",
+    "test:phase1b": "node --experimental-strip-types --test lib/auth/phase1b.contract.test.ts lib/auth/cronAuth.test.ts"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",

@@ -1,8 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { AutoaffiDistributor } from "@/lib/integrations/autoaffiDistributor";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
-// Helper: choose whichever method your class actually has
 function pickRunnableMethod(instance: any) {
   if (typeof instance?.runFullCycle === "function") return instance.runFullCycle.bind(instance);
   if (typeof instance?.distributeRevenues === "function") return instance.distributeRevenues.bind(instance);
@@ -12,12 +12,8 @@ function pickRunnableMethod(instance: any) {
 export async function GET(request: Request) {
   console.log("🚀 [Autoaffi Cron] Start");
 
-  // Optional token guard: set CRON_SECRET in your .env.local to enable
   try {
-    const url = new URL(request.url);
-    const token = url.searchParams.get("token");
-    const required = process.env.CRON_SECRET;
-    if (required && token !== required) {
+    if (!isCronRequestAuthorized(request)) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 

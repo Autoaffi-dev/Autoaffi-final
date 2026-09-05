@@ -1,26 +1,11 @@
 import { NextResponse } from "next/server";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function isAuthorized(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-
-  const url = new URL(req.url);
-
-  const headerSecret =
-    req.headers.get("x-autoaffi-cron") ||
-    req.headers.get("x-cron-secret") ||
-    req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ||
-    null;
-
-  const querySecret =
-    url.searchParams.get("secret") ||
-    url.searchParams.get("key") ||
-    null;
-
-  return headerSecret === secret || querySecret === secret;
+  return isCronRequestAuthorized(req);
 }
 
 function jsonNoStore(body: any, init?: ResponseInit) {

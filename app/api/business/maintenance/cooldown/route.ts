@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { runCooldownMaintenance } from "@/lib/business/services/cooldownService";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
+    if (!isCronRequestAuthorized(req)) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json().catch(() => ({}));
 
     const result = await runCooldownMaintenance({

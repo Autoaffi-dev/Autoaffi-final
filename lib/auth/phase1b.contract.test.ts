@@ -145,4 +145,18 @@ describe("Phase 1B cost and tracking route contracts", () => {
     const youtubeCallAt = post.indexOf("fetchYouTubeVideoMeta");
     assert.ok(authAt >= 0 && youtubeCallAt > authAt);
   });
+
+  it("cron helpers fail closed and media-utils no longer fail-open", () => {
+    const helper = read("lib/auth/cronAuth.ts");
+    const media = read("app/api/cron/_shared/media-utils.ts");
+    const hourly = read("app/api/cron/hourly/route.ts");
+    const music = read("app/api/cron/music-bank/route.ts");
+    assert.match(helper, /if \(!expected\) return false/);
+    assert.match(media, /isCronRequestAuthorized/);
+    assert.doesNotMatch(media, /if \(!expected\) return true/);
+    assert.match(hourly, /isCronRequestAuthorized/);
+    assert.doesNotMatch(hourly, /if \(required && token !== required\)/);
+    assert.match(music, /isCronRequestAuthorized/);
+    assert.doesNotMatch(music, /hasAuthHeader/);
+  });
 });

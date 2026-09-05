@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 
@@ -9,14 +10,7 @@ export function assertEnv(name: string) {
 }
 
 export function checkCronSecret(req: Request) {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return true;
-
-  const secret =
-    req.headers.get("x-cron-secret") ||
-    new URL(req.url).searchParams.get("secret");
-
-  return secret === expected;
+  return isCronRequestAuthorized(req);
 }
 
 export function supabaseAdmin() {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,7 +8,6 @@ export const dynamic = "force-dynamic";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const FREESOUND_API_KEY = process.env.FREESOUND_API_KEY!;
-const CRON_SECRET = process.env.CRON_SECRET || "";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -397,26 +397,13 @@ async function cleanupOldRows() {
 
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const urlSecret = req.nextUrl.searchParams.get("secret");
-    const headerSecret = req.headers.get("x-cron-secret");
     const dryRun = req.nextUrl.searchParams.get("dryRun") === "1";
 
-    const isAuthorized =
-      (CRON_SECRET && authHeader === `Bearer ${CRON_SECRET}`) ||
-      (CRON_SECRET && urlSecret === CRON_SECRET) ||
-      (CRON_SECRET && headerSecret === CRON_SECRET);
-
-    if (CRON_SECRET && !isAuthorized) {
+    if (!isCronRequestAuthorized(req)) {
       return NextResponse.json(
         {
           ok: false,
           error: "Unauthorized",
-          debug: {
-            hasAuthHeader: Boolean(authHeader),
-            hasUrlSecret: Boolean(urlSecret),
-            hasXCronSecret: Boolean(headerSecret),
-          },
         },
         { status: 401 }
       );
