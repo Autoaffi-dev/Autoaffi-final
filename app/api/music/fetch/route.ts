@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -504,7 +505,12 @@ async function fetchPixabayMusic(
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireUserIdOr401(req);
+    if ("response" in auth) return auth.response;
+    void auth.userId;
+
     const body = (await req.json().catch(() => ({}))) as MusicFetchBody;
+    void (body as { userId?: unknown }).userId;
 
     const baseUrl = getBaseUrl(req);
     const limit = normalizeNumber(body.limit, 8, 1, 20);

@@ -1,19 +1,25 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 
 export const runtime = "nodejs";
 
 /**
  * POST /api/products/event
  * body: { productId, eventType: "view"|"click"|"attach", userId?: string, meta?: object }
+ * Ownership always comes from canonical session UUID.
  */
 export async function POST(req: Request) {
   try {
+    const auth = await requireUserIdOr401(req);
+    if ("response" in auth) return auth.response;
+    const sessionUserId = auth.userId;
+
     const body = await req.json();
 
     const productId = body?.productId;
     const eventType = body?.eventType;
-    const userId = body?.userId ?? null;
+    void body?.userId;
     const meta = body?.meta ?? {};
 
     if (!productId || !eventType) {
@@ -29,7 +35,7 @@ export async function POST(req: Request) {
     const supabase = createClient(supabaseUrl, serviceKey);
 
     const { error } = await supabase.from("product_events").insert({
-      user_id: userId,
+      user_id: sessionUserId,
       product_id: productId,
       event_type: eventType,
       source: meta?.source ?? "unknown",

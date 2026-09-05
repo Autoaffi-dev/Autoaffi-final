@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
+import { copyCallerAuthHeaders } from "@/lib/auth/forwardCallerAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -3449,7 +3451,12 @@ function hardenParsedResponse(params: {
 
 export async function POST(req: Request) {
   try {
+    const auth = await requireUserIdOr401(req);
+    if ("response" in auth) return auth.response;
+    void auth.userId;
+
     const body = (await req.json()) as GenerateBody;
+    void (body as { userId?: unknown }).userId;
 
     const genre = safeString(body.genre, "motivation");
     const tone = safeString(body.tone, "energetic");
@@ -3542,7 +3549,7 @@ export async function POST(req: Request) {
 
     const mediaRes = await fetch(`${baseUrl}/api/media/fetch`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: copyCallerAuthHeaders(req, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         query: mediaQuery,
         type: mediaType,
@@ -3845,7 +3852,6 @@ NO comments.
     console.log("[REELS GENERATE] OpenAI raw response", {
       hasContent: !!raw,
       rawLength: raw.length,
-      preview: raw.slice(0, 300),
     });
 
     const tryParse = (txt: string) => {

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import crypto from "crypto";
 
-import { authOptions } from "@/lib/authOptions";
+import { requireUserId, UNAUTHORIZED_ERROR } from "@/lib/auth/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildAffiliateLink } from "@/lib/affiliate/buildAffiliateLink";
 
@@ -123,14 +122,18 @@ function buildDisplayLink(savedOfferId: string | null | undefined) {
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions as any);
-    const userId = (session as any)?.user?.id as string | undefined;
-
-    if (!userId) {
-      return jsonNoStore({ ok: false, error: "UNAUTHORIZED" }, 401);
+    let userId: string;
+    try {
+      userId = await requireUserId(req);
+    } catch (err: any) {
+      if (err?.message === UNAUTHORIZED_ERROR || err?.message === "UNAUTHORIZED") {
+        return jsonNoStore({ ok: false, error: "UNAUTHORIZED" }, 401);
+      }
+      throw err;
     }
 
     const body = await req.json().catch(() => null);
+    void body?.userId;
     const payload: IncomingItem | null = body?.item || body || null;
 
     if (!payload) {

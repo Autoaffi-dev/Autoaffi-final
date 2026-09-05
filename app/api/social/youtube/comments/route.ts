@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { tryRequireUserId } from "@/lib/auth/server";
+import { requireUserId } from "@/lib/auth/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -490,10 +490,6 @@ function buildSuggestedOpener(signal: {
     : "I saw your comment and thought it was relevant. If you are trying to build online income, I’d focus on one clear offer, simple content, and proper tracking before adding more platforms.";
 }
 
-async function getUserId(req: NextRequest) {
-  return tryRequireUserId(req);
-}
-
 async function fetchYouTubeVideoMeta(videoId: string) {
   const url = new URL("https://www.googleapis.com/youtube/v3/videos");
   url.searchParams.set("key", YOUTUBE_API_KEY || "");
@@ -695,6 +691,13 @@ async function saveSignalsToSupabase(params: {
 
 export async function POST(req: NextRequest) {
   try {
+    let userId: string;
+    try {
+      userId = await requireUserId(req);
+    } catch {
+      return jsonError("UNAUTHORIZED", 401);
+    }
+
     if (!YOUTUBE_API_KEY) {
       return jsonError("Missing YOUTUBE_API_KEY in .env.local", 500);
     }
@@ -719,12 +722,7 @@ export async function POST(req: NextRequest) {
     const maxResults = clampNumber(body.maxResults, 10, 100, 50);
     const order = body.order === "time" ? "time" : "relevance";
     const shouldSave = body.save === true;
-
-    const userId = shouldSave ? await getUserId(req) : null;
-
-    if (shouldSave && !userId) {
-      return jsonError("Unauthorized. Could not resolve user_id.", 401);
-    }
+    void (body as { userId?: unknown }).userId;
 
     const videoMeta = await fetchYouTubeVideoMeta(videoId);
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 
 export const runtime = "nodejs";
 
@@ -2863,7 +2864,12 @@ function ensureAtLeastOneFunnelWowClip(
 
 export async function POST(req: Request) {
   try {
+    const auth = await requireUserIdOr401(req);
+    if ("response" in auth) return auth.response;
+    void auth.userId;
+
     const body = await req.json().catch(() => null);
+    void body?.userId;
 
     const rawQuery = safeString(body?.query);
     const type = normalizeMediaType(body?.type);

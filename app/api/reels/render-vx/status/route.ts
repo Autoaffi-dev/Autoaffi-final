@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 
 export const runtime = "nodejs";
 
@@ -14,8 +15,13 @@ function pickJobId(url: URL): string {
 
 export async function GET(req: Request) {
   try {
+    const auth = await requireUserIdOr401(req);
+    if ("response" in auth) return auth.response;
+    const userId = auth.userId;
+
     const url = new URL(req.url);
     const jobId = pickJobId(url);
+    void url.searchParams.get("userId");
 
     if (!jobId) {
       return NextResponse.json(
@@ -33,6 +39,7 @@ export async function GET(req: Request) {
       .from("render_jobs")
       .select("job_id, status, progress, video_url, error_message, created_at, updated_at")
       .eq("job_id", jobId)
+      .eq("user_id", userId)
       .maybeSingle();
 
     if (error) {
@@ -81,10 +88,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         ok: false,
-        error:
-          err instanceof Error
-            ? err.message
-            : "Render-VX status route failed",
+        error: "Render-VX status route failed",
       },
       { status: 500 }
     );

@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
+import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 
 export async function POST(req: Request) {
   try {
-    const { topic, tone = "inspirerande", audience = "allmän", platform = "instagram" } = await req.json();
+    const auth = await requireUserIdOr401(req);
+    if ("response" in auth) return auth.response;
+
+    const { topic, tone = "inspirerande", audience = "allmän", platform = "instagram", userId: bodyUserId } = await req.json();
+    void bodyUserId;
+    void auth.userId;
 
     console.log("🧠 Genererar caption för:", { topic, tone, audience, platform });
 
@@ -36,7 +42,6 @@ export async function POST(req: Request) {
     });
 
     const data = await res.json();
-    console.log("📩 OpenAI svar:", data);
 
     const caption = data.choices?.[0]?.message?.content || "Kunde inte generera text.";
     return NextResponse.json({ caption });

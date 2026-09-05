@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
+import { copyCallerAuthHeaders } from "@/lib/auth/forwardCallerAuth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -172,6 +174,7 @@ function resolveJobId(body: LooseRecord): string {
 
 async function upsertRenderJob(params: {
   jobId: string;
+  userId: string;
   status: RenderJobStatus;
   progress?: number;
   errorMessage?: string | null;
@@ -187,6 +190,7 @@ async function upsertRenderJob(params: {
 
     const payload: Record<string, unknown> = {
       job_id: params.jobId,
+      user_id: params.userId,
       status: params.status,
       progress:
         typeof params.progress === "number"
@@ -2994,7 +2998,7 @@ async function fetchFallbackMedia(
   try {
     const mediaRes = await fetch(`${baseUrl}/api/media/fetch`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: copyCallerAuthHeaders(req, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         query: params.query,
         type: params.mediaType,
@@ -3056,7 +3060,7 @@ async function fetchFallbackMusic(req: Request, query: string): Promise<unknown[
   try {
     const musicRes = await fetch(`${baseUrl}/api/music/fetch`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: copyCallerAuthHeaders(req, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         query,
       }),
@@ -3402,14 +3406,21 @@ function enforceFinalFreedomRecurringGuard(
 
 export async function POST(req: Request) {
   let jobId = "";
+  let userId = "";
 
   try {
+    const auth = await requireUserIdOr401(req);
+    if ("response" in auth) return auth.response;
+    userId = auth.userId;
+
     const body = (await req.json().catch(() => ({}))) as LooseRecord;
+    void body.userId;
     const baseUrl = getRequestBaseUrl(req);
-    jobId = resolveJobId(body);
+    jobId = createRenderJobId();
 
     await upsertRenderJob({
       jobId,
+      userId,
       status: "processing",
       progress: 10,
       errorMessage: null,
@@ -3423,6 +3434,7 @@ export async function POST(req: Request) {
 
       await upsertRenderJob({
         jobId,
+        userId,
         status: "failed",
         progress: 0,
         errorMessage: "Missing RENDER_WORKER_URL",
@@ -3461,6 +3473,7 @@ export async function POST(req: Request) {
 
     await upsertRenderJob({
       jobId,
+      userId,
       status: "processing",
       progress: 15,
       errorMessage: null,
@@ -4182,9 +4195,10 @@ export async function POST(req: Request) {
 
       await upsertRenderJob({
         jobId,
+        userId,
         status: "failed",
         progress: 0,
-        errorMessage: text || "WORKER_ERROR",
+        errorMessage: "WORKER_ERROR",
         videoUrl: null,
         offerMode: offerMeta.mode,
         offerName: offerMeta.name,
@@ -4192,7 +4206,6 @@ export async function POST(req: Request) {
         renderPayload: payload,
         workerResponse: {
           status,
-          workerMessage: text || null,
         },
       });
 
@@ -4200,8 +4213,6 @@ export async function POST(req: Request) {
         {
           ok: false,
           error: "WORKER_ERROR",
-          status,
-          workerMessage: text || null,
           jobId,
         },
         { status: 500 }
@@ -4213,6 +4224,7 @@ export async function POST(req: Request) {
 
     await upsertRenderJob({
       jobId,
+      userId,
       status: "completed",
       progress: 100,
       errorMessage: null,
@@ -4260,13 +4272,13 @@ export async function POST(req: Request) {
     if (jobId) {
       await upsertRenderJob({
         jobId,
+        userId,
         status: "failed",
         progress: 0,
-        errorMessage: err instanceof Error ? err.message : "Render-VX route failed",
+        errorMessage: "Render-VX route failed",
         videoUrl: null,
         workerResponse: {
           crash: true,
-          message: err instanceof Error ? err.message : "Render-VX route failed",
         },
       });
     }
@@ -4274,7 +4286,7 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         ok: false,
-        error: err instanceof Error ? err.message : "Render-VX route failed",
+        error: "Render-VX route failed",
         jobId: jobId || null,
       },
       { status: 500 }
