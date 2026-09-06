@@ -183,6 +183,48 @@ describe("Phase 1B cost and tracking route contracts", () => {
     assert.doesNotMatch(ingest, /manager\.ingest/);
   });
 
+  it("12. /api/media/fetch and /api/music/fetch remain canonical-auth protected", () => {
+    const media = read("app/api/media/fetch/route.ts");
+    const music = read("app/api/music/fetch/route.ts");
+    assert.match(handlerPrefix(media, "POST"), /requireUserIdOr401/);
+    assert.match(handlerPrefix(music, "POST"), /requireUserIdOr401/);
+  });
+
+  it("13. caller cookies/auth headers are not sent to external providers", () => {
+    const generate = read("app/api/reels/generate/route.ts");
+    const render = read("app/api/reels/render-vx/route.ts");
+    const pexels = read("app/api/pexels/search/route.ts");
+    const openai = read("app/api/openai/generate/route.ts");
+
+    assert.match(generate, /copyCallerAuthHeaders\(req/);
+    assert.match(render, /copyCallerAuthHeaders\(req/);
+    assert.match(generate, /\$\{baseUrl\}\/api\/media\/fetch/);
+    assert.match(render, /\$\{baseUrl\}\/api\/media\/fetch/);
+    assert.match(render, /\$\{baseUrl\}\/api\/music\/fetch/);
+
+    const workerAt = render.indexOf("const res = await fetch(workerEndpoint");
+    assert.ok(workerAt >= 0);
+    const workerFetch = render.slice(workerAt, workerAt + 450);
+    assert.match(workerFetch, /"Content-Type": "application\/json"/);
+    assert.doesNotMatch(workerFetch, /copyCallerAuthHeaders/);
+    assert.doesNotMatch(workerFetch, /cookie/);
+
+    assert.doesNotMatch(generate, /copyCallerAuthHeaders\([^\n]*openai/i);
+    assert.doesNotMatch(pexels, /copyCallerAuthHeaders/);
+    assert.doesNotMatch(openai, /copyCallerAuthHeaders/);
+    assert.match(pexels, /Authorization: process\.env\.PEXELS_API_KEY/);
+  });
+
+  it("Reels internal fetch uses trusted origin helper instead of request Host", () => {
+    const generate = read("app/api/reels/generate/route.ts");
+    const render = read("app/api/reels/render-vx/route.ts");
+    for (const src of [generate, render]) {
+      assert.match(src, /requireTrustedInternalOrigin\(req\)/);
+      assert.doesNotMatch(src, /req\.headers\.get\("x-forwarded-host"\)/);
+      assert.doesNotMatch(src, /return "https:\/\/www\.autoaffi\.com"/);
+    }
+  });
+
   it("cron helpers fail closed and media-utils no longer fail-open", () => {
     const helper = read("lib/auth/cronAuth.ts");
     const media = read("app/api/cron/_shared/media-utils.ts");

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 import { copyCallerAuthHeaders } from "@/lib/auth/forwardCallerAuth";
+import { requireTrustedInternalOrigin } from "@/lib/auth/internalAppOrigin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -253,42 +254,7 @@ function clampScore(value: unknown, fallback = 80): number {
 }
 
 function getRequestBaseUrl(req: Request): string {
-  const explicitBaseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    process.env.APP_URL ||
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-    process.env.VERCEL_URL ||
-    "";
-
-  if (explicitBaseUrl) {
-    const normalizedExplicit = /^https?:\/\//i.test(explicitBaseUrl)
-      ? explicitBaseUrl
-      : `https://${explicitBaseUrl}`;
-
-    if (!/localhost/i.test(normalizedExplicit)) {
-      return normalizedExplicit.replace(/\/+$/, "");
-    }
-  }
-
-  const proto =
-    req.headers.get("x-forwarded-proto") ||
-    (req.url.startsWith("https://") ? "https" : "http");
-
-  const host =
-    req.headers.get("x-forwarded-host") ||
-    req.headers.get("host");
-
-  if (host && !/localhost/i.test(host)) {
-    return `${proto}://${host}`.replace(/\/+$/, "");
-  }
-
-  const originHeader = req.headers.get("origin");
-  if (originHeader && !/localhost/i.test(originHeader)) {
-    return originHeader.replace(/\/+$/, "");
-  }
-
-  return "https://www.autoaffi.com";
+  return requireTrustedInternalOrigin(req);
 }
 
 function createTimeoutSignal(ms: number): AbortSignal | undefined {
