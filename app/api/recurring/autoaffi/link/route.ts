@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireUserId } from "@/lib/auth/server";
+import {
+  PUBLIC_ORIGIN_NOT_CONFIGURED,
+  requirePublicAppOrigin,
+} from "@/lib/auth/publicAppOrigin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,12 +74,8 @@ export async function GET(req: Request) {
       }
     }
 
-    const base =
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.QR_PUBLIC_BASE_URL ||
-      "http://localhost:3000";
-
-    const affiliate_link = `${base.replace(/\/$/, "")}/?ref=${encodeURIComponent(code)}`;
+    const origin = requirePublicAppOrigin();
+    const affiliate_link = `${origin}/?ref=${encodeURIComponent(code)}`;
 
     return NextResponse.json({ ok: true, userId, code, affiliate_link }, { status: 200 });
   } catch (e: any) {
@@ -83,8 +83,14 @@ export async function GET(req: Request) {
     if (msg === "UNAUTHORIZED") {
       return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
     }
+    if (msg === PUBLIC_ORIGIN_NOT_CONFIGURED) {
+      return NextResponse.json(
+        { ok: false, error: PUBLIC_ORIGIN_NOT_CONFIGURED },
+        { status: 500 }
+      );
+    }
     return NextResponse.json(
-      { ok: false, error: msg },
+      { ok: false, error: "INTERNAL_ERROR" },
       { status: 500 }
     );
   }

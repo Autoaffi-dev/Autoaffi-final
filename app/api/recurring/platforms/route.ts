@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/auth/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  PUBLIC_ORIGIN_NOT_CONFIGURED,
+  requirePublicAppOrigin,
+} from "@/lib/auth/publicAppOrigin";
 
 export const runtime = "nodejs";
 
@@ -36,6 +40,14 @@ function jsonNoStore(data: any, status = 200) {
   });
 }
 
+function publicOriginFailure(err: unknown) {
+  const msg = err instanceof Error ? err.message : "";
+  if (msg === PUBLIC_ORIGIN_NOT_CONFIGURED) {
+    return jsonNoStore({ error: PUBLIC_ORIGIN_NOT_CONFIGURED }, 500);
+  }
+  return null;
+}
+
 function genCode8() {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let out = "";
@@ -48,14 +60,8 @@ function genCode8() {
 function buildPromoLink(platform: PlatformKey, tracking: string, userId: string) {
   switch (platform) {
     case "autoaffi": {
-      const base =
-        process.env.NEXT_PUBLIC_APP_URL ||
-        process.env.QR_PUBLIC_BASE_URL ||
-        process.env.NEXT_PUBLIC_BASE_URL ||
-        process.env.NEXTAUTH_URL ||
-        "http://localhost:3000";
-
-      return `${base.replace(/\/$/, "")}/?ref=${encodeURIComponent(tracking)}`;
+      const origin = requirePublicAppOrigin();
+      return `${origin}/?ref=${encodeURIComponent(tracking)}`;
     }
 
     case "syllaby":
@@ -152,6 +158,7 @@ async function fetchExternalRows(userId: string) {
 }
 
 export async function GET(req: Request) {
+  try {
   const { resolvedUserId, sessionUserId } = await resolveUserIds(req);
   if (!resolvedUserId) return jsonNoStore({ error: "Unauthorized" }, 401);
 
@@ -237,9 +244,15 @@ export async function GET(req: Request) {
   }
 
   return jsonNoStore({ platforms: map });
+  } catch (err) {
+    const failed = publicOriginFailure(err);
+    if (failed) return failed;
+    throw err;
+  }
 }
 
 export async function POST(req: Request) {
+  try {
   const { resolvedUserId } = await resolveUserIds(req);
   if (!resolvedUserId) return jsonNoStore({ error: "Unauthorized" }, 401);
 
@@ -371,4 +384,9 @@ export async function POST(req: Request) {
   };
 
   return jsonNoStore({ platform: result });
+  } catch (err) {
+    const failed = publicOriginFailure(err);
+    if (failed) return failed;
+    throw err;
+  }
 }
