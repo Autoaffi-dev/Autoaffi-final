@@ -88,6 +88,28 @@ describe("Phase 1B cost and tracking route contracts", () => {
     );
   });
 
+  it("client-facing render success jobId stays app-owned", () => {
+    const src = read("app/api/reels/render-vx/route.ts");
+    const ui = read("components/reels/RenderVX.tsx");
+    const status = read("app/api/reels/render-vx/status/route.ts");
+
+    assert.match(src, /jobId = createRenderJobId\(\)/);
+    assert.match(src, /job_id: params\.jobId/);
+    assert.match(src, /\.\.\.json,\s*jobId,/);
+    assert.match(src, /videoUrl: finalVideoUrl/);
+    assert.doesNotMatch(
+      src,
+      /jobId: normalizeText\(\(json as LooseRecord\)\?\.jobId/
+    );
+
+    assert.match(ui, /setCurrentJobId\(result\.jobId\)/);
+    assert.match(
+      ui,
+      /\/api\/reels\/render-vx\/status\?jobId=\$\{encodeURIComponent\(jobId\)\}/
+    );
+    assert.match(status, /\.eq\("job_id", jobId\)/);
+  });
+
   it("8. render status queries jobId AND canonical user_id", () => {
     const src = read("app/api/reels/render-vx/status/route.ts");
     assert.match(src, /requireUserIdOr401/);

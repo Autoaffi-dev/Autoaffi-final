@@ -4205,7 +4205,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         ...json,
-        jobId: normalizeText((json as LooseRecord)?.jobId, "") || jobId,
+        jobId,
+        videoUrl: finalVideoUrl,
         debug: {
           jobId,
           baseUrl,
