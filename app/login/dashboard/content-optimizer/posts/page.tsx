@@ -1240,22 +1240,17 @@ export default function PostOptimizerPage() {
   const [selectedFunnelId, setSelectedFunnelId] = useState<string | null>(null);
 
   async function loadFunnels() {
-    if (!user?.id) return;
+    const res = await fetch("/api/user-funnels", { cache: "no-store" });
+    if (!res.ok) return;
 
-    const { data, error } = await supabase
-      .from("user_funnels")
-      .select("*")
-      .eq("user_id", user.id);
+    const json = await res.json().catch(() => null);
+    const rows = (json?.funnels || []) as FunnelRow[];
+    setUserFunnels(rows);
 
-    if (!error && data) {
-      const rows = data as FunnelRow[];
-      setUserFunnels(rows);
-
-      setSelectedFunnelId((prev) => {
-        if (prev && rows.some((row) => row.id === prev)) return prev;
-        return rows[0]?.id || null;
-      });
-    }
+    setSelectedFunnelId((prev) => {
+      if (prev && rows.some((row) => row.id === prev)) return prev;
+      return rows[0]?.id || null;
+    });
   }
 
   async function loadRecurringPlatforms() {
@@ -1279,8 +1274,7 @@ export default function PostOptimizerPage() {
 
   useEffect(() => {
     loadFunnels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, supabase]);
+  }, []);
 
   useEffect(() => {
     loadRecurringPlatforms();

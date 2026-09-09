@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@supabase/supabase-js";
 
 type FunnelRow = {
   id: string;
@@ -12,13 +11,7 @@ type FunnelRow = {
   created_at: string;
 };
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
 export default function FunnelBuildersPage() {
-  const [user, setUser] = useState<any>(null);
   const [funnels, setFunnels] = useState<FunnelRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -28,34 +21,24 @@ export default function FunnelBuildersPage() {
   const [error, setError] = useState<string | null>(null);
 
   // -----------------------------
-  // LOAD USER
-  // -----------------------------
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data?.user ?? null);
-    });
-  }, []);
-
-  // -----------------------------
   // LOAD FUNNELS
   // -----------------------------
-  useEffect(() => {
-    if (!user?.id) return;
-
-    async function loadFunnels() {
-      setLoading(true);
-      const { data } = await supabase
-        .from("user_funnels")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      setFunnels((data || []) as FunnelRow[]);
+  async function loadFunnels() {
+    setLoading(true);
+    const res = await fetch("/api/user-funnels", { cache: "no-store" });
+    if (!res.ok) {
+      setFunnels([]);
       setLoading(false);
+      return;
     }
+    const json = await res.json().catch(() => null);
+    setFunnels((json?.funnels || []) as FunnelRow[]);
+    setLoading(false);
+  }
 
+  useEffect(() => {
     loadFunnels();
-  }, [user]);
+  }, []);
 
   // -----------------------------
   // ADD FUNNEL
@@ -71,25 +54,22 @@ export default function FunnelBuildersPage() {
     }
 
     try {
-      const { error } = await supabase.from("user_funnels").insert({
-        user_id: user.id,
-        name: name.trim(),
-        funnel_url: url.trim(),
+      const res = await fetch("/api/user-funnels", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(),
+          funnel_url: url.trim(),
+        }),
       });
 
-      if (error) throw error;
+      if (!res.ok) throw new Error("save_failed");
 
+      const json = await res.json().catch(() => null);
       setStatus("connected");
       setName("");
       setUrl("");
-
-      const { data } = await supabase
-        .from("user_funnels")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      setFunnels((data || []) as FunnelRow[]);
+      setFunnels((json?.funnels || []) as FunnelRow[]);
     } catch {
       setStatus("error");
       setError(
@@ -102,7 +82,11 @@ export default function FunnelBuildersPage() {
   // DELETE FUNNEL
   // -----------------------------
   async function handleDelete(id: string) {
-    await supabase.from("user_funnels").delete().eq("id", id);
+    const res = await fetch(
+      `/api/user-funnels?id=${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    );
+    if (!res.ok) return;
     setFunnels((prev) => prev.filter((f) => f.id !== id));
   }
 

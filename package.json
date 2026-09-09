@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test:auth": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs --test lib/auth/canonicalUserId.test.ts lib/auth/phase1a.contract.test.ts lib/auth/phase1b.contract.test.ts lib/auth/cronAuth.test.ts lib/auth/internalFetch.phase1b.test.ts lib/auth/publicAppOrigin.test.ts lib/auth/recurringPublicOrigin.contract.test.ts",
+    "test:auth": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs --test lib/auth/canonicalUserId.test.ts lib/auth/phase1a.contract.test.ts lib/auth/phase1b.contract.test.ts lib/auth/phase1c.contract.test.ts lib/user-funnels/phase1c.userFunnels.test.ts lib/auth/cronAuth.test.ts lib/auth/internalFetch.phase1b.test.ts lib/auth/publicAppOrigin.test.ts lib/auth/recurringPublicOrigin.contract.test.ts",
+    "test:phase1c": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs --test lib/auth/phase1c.contract.test.ts lib/user-funnels/phase1c.userFunnels.test.ts",
     "test:phase1b": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs --test lib/auth/phase1b.contract.test.ts lib/auth/cronAuth.test.ts lib/auth/internalFetch.phase1b.test.ts lib/auth/publicAppOrigin.test.ts lib/auth/recurringPublicOrigin.contract.test.ts"
   },
   "dependencies": {
