@@ -173,3 +173,25 @@ describe("Phase 1C winner RPC execute hardening", () => {
     assert.match(productIndex, /runProductIndexer/);
   });
 });
+
+describe("user_funnels name schema hotfix", () => {
+  const sql = read("supabase/migrations/20260911_user_funnels_add_name.sql");
+  const sqlBody = sql
+    .split("\n")
+    .filter((line) => line.trim() && !line.trim().startsWith("--"))
+    .join("\n");
+
+  it("adds nullable name text only", () => {
+    assert.equal(
+      sqlBody.trim(),
+      "ALTER TABLE public.user_funnels\nADD COLUMN IF NOT EXISTS name text;"
+    );
+    assert.doesNotMatch(sqlBody, /funnel_platform/);
+    assert.doesNotMatch(sqlBody, /not null/i);
+    assert.doesNotMatch(sqlBody, /default/i);
+    assert.doesNotMatch(sqlBody, /index/i);
+    assert.doesNotMatch(sqlBody, /policy/i);
+    assert.doesNotMatch(sqlBody, /grant/i);
+    assert.doesNotMatch(sqlBody, /revoke/i);
+  });
+});
