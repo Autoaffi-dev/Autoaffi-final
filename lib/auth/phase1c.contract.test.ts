@@ -92,11 +92,14 @@ describe("Phase 1C user_funnels RLS migration", () => {
   );
   const sqlBody = sql
     .split("\n")
-    .filter((line) => !line.trim().startsWith("--"))
+    .filter((line) => line.trim() && !line.trim().startsWith("--"))
     .join("\n");
 
   it("20-21. Migration retargets Allow read own funnel to authenticated auth.uid()", () => {
-    assert.match(sql, /drop policy if exists \"Allow read own funnel\" on public\.user_funnels;/);
+    assert.match(
+      sql,
+      /drop policy if exists \"Allow read own funnel\" on public\.user_funnels;/
+    );
     assert.match(sql, /create policy \"Allow read own funnel\"/);
     assert.match(sql, /for select/);
     assert.match(sql, /to authenticated/);
@@ -122,10 +125,15 @@ describe("Phase 1C winner RPC execute hardening", () => {
   const sql = read(
     "supabase/migrations/20260909_phase1c_winner_policy_execute.sql"
   );
-  const original = read("supabase/migrations/20260217_product_index_beast.sql");
+  const original = read(
+    "supabase/migrations/20260217_product_index_beast.sql"
+  );
 
   it("28-33. Exact signature revoke PUBLIC/anon/authenticated; grant service_role", () => {
-    assert.match(original, /grant execute on function public\.product_index_apply_winner_policy\(int,int,int,int,int\) to service_role;/);
+    assert.match(
+      original,
+      /grant execute on function public\.product_index_apply_winner_policy\(int,int,int,int,int\) to service_role;/
+    );
     assert.match(
       sql,
       /revoke execute on function public\.product_index_apply_winner_policy\(int,int,int,int,int\) from public;/
@@ -150,6 +158,7 @@ describe("Phase 1C winner RPC execute hardening", () => {
       .split("\n")
       .filter((line) => !line.trim().startsWith("--"))
       .join("\n");
+
     assert.doesNotMatch(sqlBody, /create or replace function/i);
     assert.doesNotMatch(sqlBody, /security definer/i);
     assert.doesNotMatch(sqlBody, /search_path/);
@@ -176,7 +185,9 @@ describe("Phase 1C winner RPC execute hardening", () => {
 
 describe("user_funnels name schema hotfix", () => {
   const sql = read("supabase/migrations/20260911_user_funnels_add_name.sql");
+
   const sqlBody = sql
+    .replace(/\r\n/g, "\n")
     .split("\n")
     .filter((line) => line.trim() && !line.trim().startsWith("--"))
     .join("\n");
