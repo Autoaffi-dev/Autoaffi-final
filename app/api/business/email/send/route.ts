@@ -1,5 +1,10 @@
 import { Buffer } from "buffer";
 import { NextResponse } from "next/server";
+import {
+  encryptInboxToken,
+  encryptInboxTokenNullable,
+  revealStoredInboxTokens,
+} from "@/lib/inboxTokenCrypto";
 import { getSupabaseAdmin, requireUserId } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -42,6 +47,7 @@ type TokenRow = {
 type GoogleRefreshResponse = {
   access_token?: string;
   expires_in?: number;
+  refresh_token?: string;
   scope?: string;
   token_type?: string;
   error?: string;
@@ -214,7 +220,7 @@ async function getActiveTokenForInbox(inboxId: string, userId: string): Promise<
     throw new Error("NO_ACTIVE_PROVIDER_TOKEN");
   }
 
-  return data as TokenRow;
+  return revealStoredInboxTokens(data as TokenRow);
 }
 
 async function refreshGoogleAccessToken(tokenRow: TokenRow): Promise<{
@@ -262,7 +268,10 @@ async function refreshGoogleAccessToken(tokenRow: TokenRow): Promise<{
   const { error } = await supabase
     .from("user_connected_inbox_tokens")
     .update({
-      access_token: json.access_token,
+      access_token: encryptInboxToken(json.access_token),
+      ...(json.refresh_token
+        ? { refresh_token: encryptInboxTokenNullable(json.refresh_token) }
+        : {}),
       token_type: json.token_type ?? "Bearer",
       scope: json.scope ?? tokenRow.scope ?? null,
       expires_at: expiresAt,

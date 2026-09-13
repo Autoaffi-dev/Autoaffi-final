@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  encryptInboxToken,
+  encryptInboxTokenNullable,
+} from "@/lib/inboxTokenCrypto";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -281,8 +285,8 @@ export async function GET(req: Request) {
         provider: "gmail",
         provider_account_id: providerEmail,
         provider_user_id: providerUserId,
-        access_token: tokenJson.access_token,
-        refresh_token: tokenJson.refresh_token ?? null,
+        access_token: encryptInboxToken(tokenJson.access_token),
+        refresh_token: encryptInboxTokenNullable(tokenJson.refresh_token),
         token_type: tokenJson.token_type ?? "Bearer",
         scope: tokenJson.scope ?? null,
         expires_at: expiresAt,

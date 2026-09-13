@@ -1,4 +1,9 @@
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import {
+  encryptInboxToken,
+  encryptInboxTokenNullable,
+  revealStoredInboxTokens,
+} from "@/lib/inboxTokenCrypto";
 import { recordBusinessEvent } from "./eventsService";
 
 type ActiveInboxRow = {
@@ -28,6 +33,7 @@ type ActiveTokenRow = {
 type GoogleRefreshResponse = {
   access_token?: string;
   expires_in?: number;
+  refresh_token?: string;
   scope?: string;
   token_type?: string;
   error?: string;
@@ -248,7 +254,7 @@ async function getActiveToken(inboxId: string, userId: string): Promise<ActiveTo
     throw new Error("NO_ACTIVE_REPLY_SYNC_TOKEN");
   }
 
-  return data as ActiveTokenRow;
+  return revealStoredInboxTokens(data as ActiveTokenRow);
 }
 
 async function refreshGoogleAccessToken(tokenRow: ActiveTokenRow) {
@@ -291,7 +297,10 @@ async function refreshGoogleAccessToken(tokenRow: ActiveTokenRow) {
   const { error } = await supabase
     .from("user_connected_inbox_tokens")
     .update({
-      access_token: json.access_token,
+      access_token: encryptInboxToken(json.access_token),
+      ...(json.refresh_token
+        ? { refresh_token: encryptInboxTokenNullable(json.refresh_token) }
+        : {}),
       token_type: json.token_type ?? "Bearer",
       scope: json.scope ?? tokenRow.scope ?? null,
       expires_at: expiresAt,
