@@ -9,9 +9,18 @@ function read(rel: string) {
   return fs.readFileSync(path.join(root, rel), "utf8");
 }
 
+const SKIP_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  ".vercel",
+  "coverage",
+  "dist",
+]);
+
 function walk(dir: string, files: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === "node_modules" || entry.name === ".git") continue;
+    if (SKIP_DIRS.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       walk(full, files);
@@ -30,10 +39,39 @@ const TOKEN_TABLE_FILES = [
 ] as const;
 
 describe("Phase 1D-A inbox token encryption contracts", () => {
-  it("OAuth callback encrypts tokens before DB INSERT", () => {
+  it("OAuth callback encrypts tokens before inbox/token DB mutation", () => {
     const src = read("app/api/business/email/callback/route.ts");
-    assert.match(src, /encryptInboxToken\(tokenJson\.access_token\)/);
-    assert.match(src, /encryptInboxTokenNullable\(tokenJson\.refresh_token\)/);
+    const encryptAccessIdx = src.indexOf(
+      "const encryptedAccessToken = encryptInboxToken(tokenJson.access_token)"
+    );
+    const encryptRefreshIdx = src.indexOf(
+      "const encryptedRefreshToken = encryptInboxTokenNullable("
+    );
+    const firstUpdateIdx = src.indexOf(".update(");
+    const firstInsertIdx = src.indexOf(".insert(");
+
+    assert.ok(encryptAccessIdx >= 0, "missing encryptedAccessToken");
+    assert.ok(encryptRefreshIdx >= 0, "missing encryptedRefreshToken");
+    assert.ok(firstUpdateIdx >= 0, "missing inbox/token update");
+    assert.ok(firstInsertIdx >= 0, "missing token insert");
+    assert.ok(
+      encryptAccessIdx < firstUpdateIdx,
+      "encryptedAccessToken must be computed before the first DB update"
+    );
+    assert.ok(
+      encryptRefreshIdx < firstUpdateIdx,
+      "encryptedRefreshToken must be computed before the first DB update"
+    );
+    assert.ok(
+      encryptAccessIdx < firstInsertIdx,
+      "encryptedAccessToken must be computed before token INSERT"
+    );
+
+    const insertBlock = src.slice(firstInsertIdx, firstInsertIdx + 700);
+    assert.match(insertBlock, /access_token:\s*encryptedAccessToken/);
+    assert.match(insertBlock, /refresh_token:\s*encryptedRefreshToken/);
+    assert.doesNotMatch(insertBlock, /access_token:\s*tokenJson\.access_token/);
+    assert.doesNotMatch(insertBlock, /refresh_token:\s*encryptInboxTokenNullable/);
     assert.doesNotMatch(
       src,
       /insert\(\{[\s\S]*access_token:\s*tokenJson\.access_token/
@@ -132,7 +170,8 @@ describe("Phase 1D-A inbox token encryption contracts", () => {
     assert.match(crypto, /randomBytes\(IV_LENGTH\)/);
     assert.match(crypto, /IV_LENGTH = 12/);
     assert.match(crypto, /INBOX_TOKEN_CIPHER_PREFIX = \"v1:\"/);
-    assert.doesNotMatch(crypto, /createHash\(\"sha256\"\)/);
+    assert.match(crypto, /decoded\.toString\(\"base64\"\) !== encoded/);
+    assert.match(crypto, /STANDARD_BASE64/);
 
     const pkg = read("package.json");
     assert.doesNotMatch(pkg, /\"type\"\s*:\s*\"module\"/);

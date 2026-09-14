@@ -16,19 +16,47 @@ export class InboxTokenCryptoError extends Error {
   }
 }
 
+const STANDARD_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function decodeCanonicalBase64(encoded: string): Buffer {
+  if (typeof encoded !== "string" || encoded.length === 0) {
+    throw new InboxTokenCryptoError();
+  }
+
+  if (/\s/.test(encoded) || encoded.length % 4 !== 0) {
+    throw new InboxTokenCryptoError();
+  }
+
+  if (!STANDARD_BASE64.test(encoded)) {
+    throw new InboxTokenCryptoError();
+  }
+
+  const paddingIndex = encoded.indexOf("=");
+  if (paddingIndex !== -1 && !/^=+$/.test(encoded.slice(paddingIndex))) {
+    throw new InboxTokenCryptoError();
+  }
+
+  let decoded: Buffer;
+  try {
+    decoded = Buffer.from(encoded, "base64");
+  } catch {
+    throw new InboxTokenCryptoError();
+  }
+
+  if (decoded.length === 0 || decoded.toString("base64") !== encoded) {
+    throw new InboxTokenCryptoError();
+  }
+
+  return decoded;
+}
+
 function getInboxTokenKey(): Buffer {
   const encoded = process.env.INBOX_TOKEN_ENC_KEY;
   if (!encoded) {
     throw new InboxTokenCryptoError();
   }
 
-  let key: Buffer;
-  try {
-    key = Buffer.from(encoded, "base64");
-  } catch {
-    throw new InboxTokenCryptoError();
-  }
-
+  const key = decodeCanonicalBase64(encoded);
   if (key.length !== KEY_LENGTH) {
     throw new InboxTokenCryptoError();
   }
@@ -76,12 +104,7 @@ export function revealInboxToken(storedValue: string): string {
     throw new InboxTokenCryptoError();
   }
 
-  let raw: Buffer;
-  try {
-    raw = Buffer.from(payloadB64, "base64");
-  } catch {
-    throw new InboxTokenCryptoError();
-  }
+  const raw = decodeCanonicalBase64(payloadB64);
 
   if (raw.length < IV_LENGTH + AUTH_TAG_LENGTH + 1) {
     throw new InboxTokenCryptoError();

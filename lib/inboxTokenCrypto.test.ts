@@ -72,6 +72,46 @@ describe("inboxTokenCrypto", () => {
     assert.throws(() => revealInboxToken(tampered), InboxTokenCryptoError);
   });
 
+  it("malformed and non-canonical Base64 encryption keys fail closed", () => {
+    process.env.INBOX_TOKEN_ENC_KEY = FAKE_KEY_B64;
+    const stored = encryptInboxToken(FAKE_ACCESS_TOKEN);
+
+    process.env.INBOX_TOKEN_ENC_KEY = `${FAKE_KEY_B64.slice(0, 8)}!${FAKE_KEY_B64.slice(8)}`;
+    assert.throws(() => encryptInboxToken(FAKE_ACCESS_TOKEN), InboxTokenCryptoError);
+    assert.throws(() => revealInboxToken(stored), InboxTokenCryptoError);
+
+    process.env.INBOX_TOKEN_ENC_KEY = `${FAKE_KEY_B64}\n`;
+    assert.throws(() => encryptInboxToken(FAKE_ACCESS_TOKEN), InboxTokenCryptoError);
+
+    process.env.INBOX_TOKEN_ENC_KEY = FAKE_KEY_B64.replace(/=+$/, "");
+    assert.notEqual(process.env.INBOX_TOKEN_ENC_KEY, FAKE_KEY_B64);
+    assert.throws(() => encryptInboxToken(FAKE_ACCESS_TOKEN), InboxTokenCryptoError);
+
+    const urlSafeSource = Buffer.from(
+      Uint8Array.from({ length: 32 }, (_, i) => (i * 37 + 13) & 0xff)
+    ).toString("base64");
+    const urlSafe = urlSafeSource.replace(/\+/g, "-").replace(/\//g, "_");
+    assert.notEqual(urlSafe, urlSafeSource);
+    process.env.INBOX_TOKEN_ENC_KEY = urlSafe;
+    assert.throws(() => encryptInboxToken(FAKE_ACCESS_TOKEN), InboxTokenCryptoError);
+
+    const nonCanonicalAlphabet = `${FAKE_KEY_B64.slice(0, -2)}AA`;
+    if (nonCanonicalAlphabet !== FAKE_KEY_B64) {
+      process.env.INBOX_TOKEN_ENC_KEY = nonCanonicalAlphabet;
+      assert.throws(() => encryptInboxToken(FAKE_ACCESS_TOKEN), InboxTokenCryptoError);
+    }
+  });
+
+  it("malformed non-canonical v1 payload fails closed even if Node would ignore invalid chars", () => {
+    process.env.INBOX_TOKEN_ENC_KEY = FAKE_KEY_B64;
+    const valid = encryptInboxToken(FAKE_ACCESS_TOKEN);
+    const payload = valid.slice("v1:".length);
+    const malformed = `v1:${payload.slice(0, 8)}!${payload.slice(8)}`;
+
+    assert.notEqual(malformed, valid);
+    assert.throws(() => revealInboxToken(malformed), InboxTokenCryptoError);
+  });
+
   it("encrypted token with missing or invalid key fails closed", () => {
     process.env.INBOX_TOKEN_ENC_KEY = FAKE_KEY_B64;
     const stored = encryptInboxToken(FAKE_ACCESS_TOKEN);

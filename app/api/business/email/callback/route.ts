@@ -198,6 +198,11 @@ export async function GET(req: Request) {
         ? new Date(Date.now() + tokenJson.expires_in * 1000).toISOString()
         : null;
 
+    const encryptedAccessToken = encryptInboxToken(tokenJson.access_token);
+    const encryptedRefreshToken = encryptInboxTokenNullable(
+      tokenJson.refresh_token
+    );
+
     // 4) Deactivate any currently active inbox rows for this user
     const { error: deactivateInboxError } = await supabase
       .from("user_connected_inboxes")
@@ -285,8 +290,8 @@ export async function GET(req: Request) {
         provider: "gmail",
         provider_account_id: providerEmail,
         provider_user_id: providerUserId,
-        access_token: encryptInboxToken(tokenJson.access_token),
-        refresh_token: encryptInboxTokenNullable(tokenJson.refresh_token),
+        access_token: encryptedAccessToken,
+        refresh_token: encryptedRefreshToken,
         token_type: tokenJson.token_type ?? "Bearer",
         scope: tokenJson.scope ?? null,
         expires_at: expiresAt,
