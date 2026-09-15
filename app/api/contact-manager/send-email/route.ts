@@ -90,7 +90,7 @@ function isUuid(value: string | null | undefined): boolean {
 
   const cleaned = sanitizeHeaderId(String(value));
 
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     cleaned
   );
 }

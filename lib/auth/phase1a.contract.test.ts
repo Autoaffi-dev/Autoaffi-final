@@ -17,6 +17,37 @@ describe("Phase 1A route contracts", () => {
     assert.doesNotMatch(src, /NEXT_PUBLIC_DEV_USER_ID/);
   });
 
+  it("Contact Manager send-email UUID validator accepts canonical 8-4-4-4-12 ids", () => {
+    const src = read("app/api/contact-manager/send-email/route.ts");
+    const canonical =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const malformedEightFourFourTwelve =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    assert.match(
+      src,
+      /return \/\^\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{12\}\$\/i\.test/
+    );
+    assert.doesNotMatch(
+      src,
+      /\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{12\}/
+    );
+
+    assert.equal(canonical.test("11111111-1111-4111-8111-111111111111"), true);
+    assert.equal(
+      malformedEightFourFourTwelve.test("11111111-1111-4111-8111-111111111111"),
+      false
+    );
+    assert.equal(canonical.test("11111111-1111-4111-111111111111"), false);
+    assert.equal(canonical.test("not-a-uuid"), false);
+    assert.equal(canonical.test("contact_123"), false);
+
+    assert.match(src, /const userId = await requireUserId\(req\)/);
+    assert.match(src, /\.eq\(\"id\", contactId\)/);
+    assert.match(src, /\.eq\(\"user_id\", userId\)/);
+    assert.match(src, /error: \"CONTACT_ID_REQUIRED\"/);
+  });
+
   it("8. Contact Manager / Leads Hub use canonical requireUserId", () => {
     const contact = read("app/api/contact-manager/overview/route.ts");
     const leads = read("app/api/leads-hub/overview/route.ts");
