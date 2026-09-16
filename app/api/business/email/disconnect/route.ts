@@ -11,7 +11,60 @@ export async function POST(req: Request) {
     const supabase = getSupabaseAdmin();
     const nowIso = new Date().toISOString();
 
-    const { data: disconnectedRows, error } = await supabase
+    const { data: activeRows, error: selectError } = await supabase
+      .from("user_connected_inboxes")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("is_active", true);
+
+    if (selectError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          connected: false,
+          error: "DISCONNECT_FAILED",
+          details: selectError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    const inboxIds = disconnectedInboxIds(activeRows);
+
+    if (inboxIds.length === 0) {
+      return NextResponse.json(
+        {
+          ok: true,
+          mode: "live",
+          connected: false,
+          disconnectedAt: nowIso,
+        },
+        { status: 200 }
+      );
+    }
+
+    const { error: tokenDeactivateError } = await supabase
+      .from("user_connected_inbox_tokens")
+      .update({
+        is_active: false,
+      })
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .in("inbox_id", inboxIds);
+
+    if (tokenDeactivateError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          connected: false,
+          error: "TOKEN_DEACTIVATE_FAILED",
+          details: tokenDeactivateError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    const { error: disconnectError } = await supabase
       .from("user_connected_inboxes")
       .update({
         is_active: false,
@@ -22,43 +75,18 @@ export async function POST(req: Request) {
       })
       .eq("user_id", userId)
       .eq("is_active", true)
-      .select("id");
+      .in("id", inboxIds);
 
-    if (error) {
+    if (disconnectError) {
       return NextResponse.json(
         {
           ok: false,
           connected: false,
           error: "DISCONNECT_FAILED",
-          details: error.message,
+          details: disconnectError.message,
         },
         { status: 500 }
       );
-    }
-
-    const inboxIds = disconnectedInboxIds(disconnectedRows);
-
-    if (inboxIds.length > 0) {
-      const { error: tokenDeactivateError } = await supabase
-        .from("user_connected_inbox_tokens")
-        .update({
-          is_active: false,
-        })
-        .eq("user_id", userId)
-        .eq("is_active", true)
-        .in("inbox_id", inboxIds);
-
-      if (tokenDeactivateError) {
-        return NextResponse.json(
-          {
-            ok: false,
-            connected: false,
-            error: "TOKEN_DEACTIVATE_FAILED",
-            details: tokenDeactivateError.message,
-          },
-          { status: 500 }
-        );
-      }
     }
 
     return NextResponse.json(

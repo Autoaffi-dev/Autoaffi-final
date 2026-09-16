@@ -10,33 +10,50 @@ function read(rel: string) {
 }
 
 describe("Phase 1D-B Gmail lifecycle contracts", () => {
-  it("disconnect scopes inbox+token deactivation to the canonical user and returned inbox ids", () => {
+  it("disconnect selects active inbox ids, deactivates tokens, then disconnects those inboxes", () => {
     const src = read("app/api/business/email/disconnect/route.ts");
     assert.match(src, /requireUserId\(req\)/);
     assert.match(src, /from \"@\/lib\/supabase\/server\"/);
     assert.doesNotMatch(src, /x-autoaffi-user-id/);
     assert.doesNotMatch(src, /body\?\.userId/);
 
-    const inboxFrom = src.indexOf('.from("user_connected_inboxes")');
+    const selectIdx = src.indexOf('.select("id")');
     const tokenFrom = src.indexOf('.from("user_connected_inbox_tokens")');
-    assert.ok(inboxFrom >= 0);
-    assert.ok(tokenFrom > inboxFrom);
+    const inboxDisconnectIdx = src.indexOf('status: "disconnected"');
+    assert.ok(selectIdx >= 0, "missing active inbox id select");
+    assert.ok(tokenFrom >= 0, "missing token deactivate");
+    assert.ok(inboxDisconnectIdx >= 0, "missing inbox disconnect update");
+    assert.ok(
+      selectIdx < tokenFrom,
+      "active inbox ids must be selected before token deactivation"
+    );
+    assert.ok(
+      tokenFrom < inboxDisconnectIdx,
+      "token deactivation must occur before inbox disconnect"
+    );
+    assert.ok(
+      src.indexOf("TOKEN_DEACTIVATE_FAILED") < inboxDisconnectIdx,
+      "token failure must return before inbox disconnect mutation"
+    );
 
-    const inboxUpdate = src.slice(inboxFrom, tokenFrom);
-    assert.match(inboxUpdate, /status: \"disconnected\"/);
-    assert.match(inboxUpdate, /is_active: false/);
-    assert.match(inboxUpdate, /send_enabled: false/);
-    assert.match(inboxUpdate, /sync_replies_enabled: false/);
-    assert.match(inboxUpdate, /\.eq\(\"user_id\", userId\)/);
-    assert.match(inboxUpdate, /\.eq\(\"is_active\", true\)/);
-    assert.match(inboxUpdate, /\.select\(\"id\"\)/);
-
-    const tokenUpdate = src.slice(tokenFrom);
+    const tokenUpdate = src.slice(tokenFrom, inboxDisconnectIdx);
     assert.match(tokenUpdate, /is_active: false/);
     assert.match(tokenUpdate, /\.eq\(\"user_id\", userId\)/);
     assert.match(tokenUpdate, /\.eq\(\"is_active\", true\)/);
     assert.match(tokenUpdate, /\.in\(\"inbox_id\", inboxIds\)/);
     assert.doesNotMatch(tokenUpdate, /\.delete\(/);
+
+    const inboxUpdateStart = src.indexOf("const { error: disconnectError }");
+    assert.ok(inboxUpdateStart > tokenFrom);
+    const inboxUpdate = src.slice(inboxUpdateStart);
+    assert.match(inboxUpdate, /is_active: false/);
+    assert.match(inboxUpdate, /status: \"disconnected\"/);
+    assert.match(inboxUpdate, /send_enabled: false/);
+    assert.match(inboxUpdate, /sync_replies_enabled: false/);
+    assert.match(inboxUpdate, /\.eq\(\"user_id\", userId\)/);
+    assert.match(inboxUpdate, /\.eq\(\"is_active\", true\)/);
+    assert.match(inboxUpdate, /\.in\(\"id\", inboxIds\)/);
+
     assert.doesNotMatch(src, /oauth2\.googleapis\.com\/revoke/);
     assert.doesNotMatch(src, /\.delete\(/);
     assert.doesNotMatch(src, /revealInboxToken/);
@@ -86,6 +103,16 @@ describe("Phase 1D-B Gmail lifecycle contracts", () => {
     assert.doesNotMatch(lookup, /\.eq\(\"status\", \"pending\"\)/);
     assert.doesNotMatch(src, /requireUserId\(req\)/);
     assert.doesNotMatch(src, /searchParams\.get\([\"']userId[\"']\)/);
+  });
+
+  it("successful callback consumes oauth_state so the same state is not left matchable", () => {
+    const src = read("app/api/business/email/callback/route.ts");
+    const activateUpdate = src.slice(
+      src.indexOf("// 5) Activate/update Gmail inbox row")
+    );
+    assert.match(activateUpdate, /oauth_state: null/);
+    assert.match(activateUpdate, /\.\.\.\(inbox\.metadata \?\? \{\}\)/);
+    assert.match(src, /\.contains\(\"metadata\", \{ oauth_state: state \}\)/);
   });
 
   it("successful callback still encrypts tokens before mutation and rotates token rows", () => {
