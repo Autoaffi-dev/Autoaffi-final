@@ -1,5 +1,9 @@
 import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
+import {
+  isWorkingGmailConnection,
+  mergeInboxOauthAttemptMetadata,
+} from "@/lib/business/email/gmailLifecycle";
 import { getSupabaseAdmin, requireUserId } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -104,35 +108,77 @@ export async function POST(req: Request) {
     const state = randomBytes(24).toString("hex");
     const nowIso = new Date().toISOString();
 
-    const { error: stateInsertError } = await supabase
+    const { data: existingInbox, error: existingInboxError } = await supabase
       .from("user_connected_inboxes")
-      .upsert(
-        {
-          user_id: userId,
-          provider: "gmail",
-          status: "pending",
-          is_active: false,
-          send_enabled: false,
-          sync_replies_enabled: false,
-          metadata: {
-            oauth_state: state,
-            oauth_started_at: nowIso,
-            oauth_redirect_uri: redirectUri,
-          },
-          updated_at: nowIso,
-        },
-        {
-          onConflict: "user_id,provider",
-        }
-      );
+      .select("id,status,is_active,metadata")
+      .eq("user_id", userId)
+      .eq("provider", "gmail")
+      .maybeSingle();
 
-    if (stateInsertError) {
+    if (existingInboxError) {
       return NextResponse.json(
         {
           ok: false,
           connected: false,
           error: "OAUTH_STATE_SAVE_FAILED",
-          details: stateInsertError.message,
+          details: existingInboxError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    const oauthAttempt = {
+      oauth_state: state,
+      oauth_started_at: nowIso,
+      oauth_redirect_uri: redirectUri,
+    };
+
+    let stateSaveError: { message: string } | null = null;
+
+    if (isWorkingGmailConnection(existingInbox)) {
+      const { error: reconnectStateError } = await supabase
+        .from("user_connected_inboxes")
+        .update({
+          metadata: mergeInboxOauthAttemptMetadata(
+            existingInbox?.metadata as Record<string, unknown> | null,
+            oauthAttempt
+          ),
+          updated_at: nowIso,
+        })
+        .eq("id", existingInbox!.id)
+        .eq("user_id", userId)
+        .eq("provider", "gmail");
+
+      stateSaveError = reconnectStateError;
+    } else {
+      const { error: stateInsertError } = await supabase
+        .from("user_connected_inboxes")
+        .upsert(
+          {
+            user_id: userId,
+            provider: "gmail",
+            status: "pending",
+            is_active: false,
+            send_enabled: false,
+            sync_replies_enabled: false,
+            metadata: oauthAttempt,
+            updated_at: nowIso,
+          },
+          {
+            onConflict: "user_id,provider",
+          }
+        );
+
+      stateSaveError = stateInsertError;
+    }
+
+    if (stateSaveError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          connected: false,
+          error: "OAUTH_STATE_SAVE_FAILED",
+          details: stateSaveError.message,
         },
         { status: 500 }
       );

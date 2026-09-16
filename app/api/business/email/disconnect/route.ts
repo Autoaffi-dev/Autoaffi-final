@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { disconnectedInboxIds } from "@/lib/business/email/gmailLifecycle";
 import { getSupabaseAdmin, requireUserId } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -10,15 +11,18 @@ export async function POST(req: Request) {
     const supabase = getSupabaseAdmin();
     const nowIso = new Date().toISOString();
 
-    const { error } = await supabase
+    const { data: disconnectedRows, error } = await supabase
       .from("user_connected_inboxes")
       .update({
         is_active: false,
         status: "disconnected",
         disconnected_at: nowIso,
+        send_enabled: false,
+        sync_replies_enabled: false,
       })
       .eq("user_id", userId)
-      .eq("is_active", true);
+      .eq("is_active", true)
+      .select("id");
 
     if (error) {
       return NextResponse.json(
@@ -30,6 +34,31 @@ export async function POST(req: Request) {
         },
         { status: 500 }
       );
+    }
+
+    const inboxIds = disconnectedInboxIds(disconnectedRows);
+
+    if (inboxIds.length > 0) {
+      const { error: tokenDeactivateError } = await supabase
+        .from("user_connected_inbox_tokens")
+        .update({
+          is_active: false,
+        })
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .in("inbox_id", inboxIds);
+
+      if (tokenDeactivateError) {
+        return NextResponse.json(
+          {
+            ok: false,
+            connected: false,
+            error: "TOKEN_DEACTIVATE_FAILED",
+            details: tokenDeactivateError.message,
+          },
+          { status: 500 }
+        );
+      }
     }
 
     return NextResponse.json(

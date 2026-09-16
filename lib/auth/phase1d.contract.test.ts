@@ -33,6 +33,7 @@ function walk(dir: string, files: string[] = []): string[] {
 
 const TOKEN_TABLE_FILES = [
   "app/api/business/email/callback/route.ts",
+  "app/api/business/email/disconnect/route.ts",
   "app/api/business/email/send/route.ts",
   "app/api/contact-manager/send-email/route.ts",
   "lib/business/services/emailReplySyncService.ts",
@@ -138,7 +139,7 @@ describe("Phase 1D-A inbox token encryption contracts", () => {
     }
   });
 
-  it("token table access stays limited to the four live Gmail consumers", () => {
+  it("token table access stays limited to the live Gmail consumers plus disconnect", () => {
     const files = walk(root);
     const hits = files.filter((file) => {
       const rel = file.replace(root + path.sep, "");

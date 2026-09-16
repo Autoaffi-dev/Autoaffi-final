@@ -107,14 +107,15 @@ export async function GET(req: Request) {
     const googleClientSecret = mustGetEnv("GOOGLE_CLIENT_SECRET");
     const redirectUri = `${baseUrl}/api/business/email/callback`;
 
-    // 1) Find the pending Gmail inbox row that owns this oauth_state
+    // 1) Find the Gmail inbox row that owns this oauth_state
+    // (first-time pending connect, or already-connected reconnect).
     const { data: pendingRows, error: pendingError } = await supabase
       .from("user_connected_inboxes")
       .select(
         "id,user_id,provider,provider_account_id,provider_user_id,email,display_name,status,is_active,metadata"
       )
       .eq("provider", "gmail")
-      .eq("status", "pending")
+      .in("status", ["pending", "connected"])
       .contains("metadata", { oauth_state: state });
 
     if (pendingError) {
