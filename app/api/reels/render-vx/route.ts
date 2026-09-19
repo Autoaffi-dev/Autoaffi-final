@@ -3414,6 +3414,27 @@ export async function POST(req: Request) {
       );
     }
 
+    const workerSecret =
+      String(process.env.RENDER_WORKER_SHARED_SECRET || "").trim();
+    if (!workerSecret) {
+      console.error("[RENDER-VX ROUTE] Worker authentication is not configured");
+
+      await upsertRenderJob({
+        jobId,
+        userId,
+        status: "failed",
+        progress: 0,
+        errorMessage: "WORKER_UNAVAILABLE",
+        videoUrl: null,
+        renderPayload: body,
+      });
+
+      return NextResponse.json(
+        { ok: false, error: "WORKER_UNAVAILABLE", jobId },
+        { status: 500 }
+      );
+    }
+
     const genre = normalizeText(body.genre, "motivation");
     const mediaType = normalizeMediaType(body.mediaType);
 
@@ -4144,6 +4165,7 @@ export async function POST(req: Request) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-Autoaffi-Worker-Secret": workerSecret,
       },
       signal,
       cache: "no-store",
