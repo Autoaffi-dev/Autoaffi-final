@@ -11,6 +11,11 @@ import {
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import { runExactFixEngine } from "@/components/content-optimizer/ExactFixEngine";
+import {
+  buildPostsFinalLink,
+  resolvePostsCtaOfferType,
+  type PostsCtaDestinationMode,
+} from "@/lib/content-optimizer/postsCtaLinks";
 
 type Mode = "content_only" | "content_and_offer";
 type InputStyle = "manual" | "scan_link";
@@ -54,10 +59,10 @@ type SavedOffer = {
 
 type RecurringPlatformRow = {
   id: string;
-  user_id: string;
   platform: string;
-  autoaffi_user_code: string | null;
-  created_at: string;
+  active: boolean;
+  tracking_code: string | null;
+  promo_link: string | null;
 };
 
 type FunnelRow = {
@@ -1161,32 +1166,23 @@ function buildFinalLink({
   mode,
   offerType,
   productAffiliateUrl,
-  recurringPlatform,
-  recurringUserCode,
-  funnelSlug,
+  recurringPromoLink,
+  funnelLink,
 }: {
   mode: "content_only" | "content_and_offer";
   offerType?: "product" | "recurring" | "funnel";
   productAffiliateUrl?: string;
-  recurringPlatform?: string;
-  recurringUserCode?: string;
-  funnelSlug?: string;
+  recurringPromoLink?: string;
+  funnelLink?: string;
 }): string {
-  if (mode === "content_only") return "";
-
-  if (offerType === "product" && productAffiliateUrl) {
-    return productAffiliateUrl;
-  }
-
-  if (offerType === "recurring" && recurringPlatform && recurringUserCode) {
-    return `https://${recurringPlatform}.com/?ref=${recurringUserCode}`;
-  }
-
-  if (offerType === "funnel" && funnelSlug) {
-    return `https://autoaffi.io/f/${funnelSlug}`;
-  }
-
-  return "";
+  // offerType === "funnel" uses stored funnelLink from funnel.funnel_url.
+  return buildPostsFinalLink({
+    mode,
+    offerType,
+    productAffiliateUrl,
+    recurringPromoLink,
+    funnelLink,
+  });
 }
 
 function resolveLinkHint(finalCTA: string, finalLink: string) {
@@ -1235,6 +1231,8 @@ export default function PostOptimizerPage() {
 
   const [activeRecurring, setActiveRecurring] = useState<RecurringPlatformRow[]>([]);
   const [selectedRecurringId, setSelectedRecurringId] = useState<string | null>(null);
+  const [destinationMode, setDestinationMode] =
+    useState<PostsCtaDestinationMode>("product");
 
   const [userFunnels, setUserFunnels] = useState<FunnelRow[]>([]);
   const [selectedFunnelId, setSelectedFunnelId] = useState<string | null>(null);
@@ -1249,26 +1247,45 @@ export default function PostOptimizerPage() {
 
     setSelectedFunnelId((prev) => {
       if (prev && rows.some((row) => row.id === prev)) return prev;
-      return rows[0]?.id || null;
+      return null;
     });
   }
 
   async function loadRecurringPlatforms() {
-    if (!user?.id) return;
+    try {
+      const res = await fetch("/api/recurring/platforms", {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!res.ok) return;
 
-    const { data, error } = await supabase
-      .from("user_recurring_platforms")
-      .select("*")
-      .eq("user_id", user.id);
+      const data = await res.json().catch(() => null);
+      const rawMap = data?.platforms ?? {};
+      const all = Object.values(rawMap) as Array<{
+        key: string;
+        active: boolean;
+        tracking_code: string | null;
+        promo_link: string | null;
+      }>;
 
-    if (!error && data) {
-      const rows = data as RecurringPlatformRow[];
+      const rows: RecurringPlatformRow[] = all
+        .filter((p) => p.key === "autoaffi" || p.active === true)
+        .map((p) => ({
+          id: p.key,
+          platform: p.key,
+          active: p.active === true,
+          tracking_code: p.tracking_code ?? null,
+          promo_link: p.promo_link ?? null,
+        }));
+
       setActiveRecurring(rows);
 
       setSelectedRecurringId((prev) => {
         if (prev && rows.some((row) => row.id === prev)) return prev;
-        return rows[0]?.id || null;
+        return null;
       });
+    } catch (err) {
+      console.error("[POSTS] /api/recurring/platforms failed", err);
     }
   }
 
@@ -1278,8 +1295,7 @@ export default function PostOptimizerPage() {
 
   useEffect(() => {
     loadRecurringPlatforms();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, supabase]);
+  }, [user?.id]);
 
   const hasRecurringStack =
     Array.isArray(activeRecurring) && activeRecurring.length > 0;
@@ -1701,26 +1717,6 @@ export default function PostOptimizerPage() {
     "Share this with a friend",
   ];
 
-  const selectedOfferType:
-    | "product"
-    | "recurring"
-    | "funnel"
-    | undefined =
-    activeVaultOffer || selectedSearchSavedOffer
-      ? "product"
-      : selectedRecurringPlatform
-      ? "recurring"
-      : selectedFunnelId
-      ? "funnel"
-      : undefined;
-
-  const postMode: "content_only" | "content_and_offer" =
-    mode === "content_only"
-      ? "content_only"
-      : selectedOfferType
-      ? "content_and_offer"
-      : "content_only";
-
   const productAffiliateUrl: string | undefined =
     activeVaultOffer?.affiliate_link ||
     activeVaultOffer?.product_url ||
@@ -1730,13 +1726,29 @@ export default function PostOptimizerPage() {
     selectedProduct?.productUrl ||
     undefined;
 
-  const recurringPlatform: string | undefined =
-    selectedRecurringPlatform?.platform ?? undefined;
+  const selectedOfferType:
+    | "product"
+    | "recurring"
+    | "funnel"
+    | undefined = resolvePostsCtaOfferType({
+    destinationMode,
+    hasProduct: Boolean(
+      activeVaultOffer ||
+        selectedSearchSavedOffer ||
+        selectedProduct ||
+        productAffiliateUrl
+    ),
+  });
 
-  const autoaffiUserCode: string | undefined =
-    selectedRecurringPlatform?.autoaffi_user_code ?? undefined;
+  const postMode: "content_only" | "content_and_offer" =
+    mode === "content_only"
+      ? "content_only"
+      : selectedOfferType
+      ? "content_and_offer"
+      : "content_only";
 
-  const funnelSlug: string | undefined = selectedFunnelId ?? undefined;
+  const recurringPromoLink: string | undefined =
+    selectedRecurringPlatform?.promo_link ?? undefined;
 
   const finalCTA = selectedCTA || recommendedCTA;
 
@@ -1753,9 +1765,8 @@ export default function PostOptimizerPage() {
           mode: postMode,
           offerType: normalizedOfferType,
           productAffiliateUrl,
-          recurringPlatform,
-          recurringUserCode: autoaffiUserCode,
-          funnelSlug,
+          recurringPromoLink,
+          funnelLink,
         });
 
   const linkHint = resolveLinkHint(finalCTA, finalLink);
@@ -2474,6 +2485,7 @@ export default function PostOptimizerPage() {
                                 setSelectedProductId(null);
                                 setSelectedSearchSavedOffer(null);
                                 setLastSyncedProductKey("");
+                                setDestinationMode("product");
                               }}
                               className={`rounded-full border px-3 py-1 text-[11px] transition ${
                                 active
@@ -2595,6 +2607,7 @@ export default function PostOptimizerPage() {
                             onClick={() => {
                               setSelectedProductId(product.id);
                               setSelectedVaultOfferId(null);
+                              setDestinationMode("product");
                             }}
                             className={`group rounded-xl border px-3 py-2 text-left transition ${
                               isActive
@@ -2681,8 +2694,10 @@ export default function PostOptimizerPage() {
                               setSelectedFunnelId(funnel.id);
                               setUseFunnelMode(true);
                               setFunnelLink(funnel.funnel_url || "");
+                              setDestinationMode("funnel");
                             }}
                             className={`rounded-full border px-3 py-1 text-[11px] transition ${
+                              destinationMode === "funnel" &&
                               selectedFunnelId === funnel.id
                                 ? "border-purple-300 bg-purple-300 text-slate-900"
                                 : "border-purple-500/50 text-purple-100 hover:border-purple-300/80"
@@ -2738,8 +2753,12 @@ export default function PostOptimizerPage() {
                           <button
                             key={rec.id}
                             type="button"
-                            onClick={() => setSelectedRecurringId(rec.id)}
+                            onClick={() => {
+                              setSelectedRecurringId(rec.id);
+                              setDestinationMode("recurring");
+                            }}
                             className={`rounded-full border px-3 py-1 text-[11px] transition ${
+                              destinationMode === "recurring" &&
                               selectedRecurringId === rec.id
                                 ? "border-emerald-400 bg-emerald-400 text-slate-900"
                                 : "border-emerald-600/40 text-emerald-300 hover:border-emerald-400/70"
