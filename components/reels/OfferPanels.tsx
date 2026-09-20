@@ -56,7 +56,18 @@ interface OfferPanelsProps {
   generateAffiliateLinkForRecurring: (id: string) => void;
 
   funnelUrl: string;
-  setFunnelUrl: (v: string) => void;
+  savedFunnels: Array<{
+    id: string;
+    name: string;
+    funnel_url: string;
+  }>;
+  selectedFunnelId: string | null;
+  onSelectSavedFunnel: (funnel: {
+    id: string;
+    name: string;
+    funnel_url: string;
+  }) => void;
+  onFunnelUrlChange: (value: string) => void;
 }
 
 const PRODUCT_CATEGORIES = [
@@ -98,7 +109,10 @@ export default function OfferPanels({
   generateAffiliateLinkForRecurring,
 
   funnelUrl,
-  setFunnelUrl,
+  savedFunnels,
+  selectedFunnelId,
+  onSelectSavedFunnel,
+  onFunnelUrlChange,
 }: OfferPanelsProps) {
   return (
     <section className="mb-8 rounded-2xl border border-emerald-400/40 bg-slate-900 p-5 text-sm">
@@ -285,17 +299,43 @@ export default function OfferPanels({
 
       {offerMode === "funnel" && (
         <div className="space-y-3">
-          <label className="text-xs font-semibold">Funnel URL (rawid)</label>
+          <div>
+            <label className="text-xs font-semibold">Saved funnels</label>
+            {savedFunnels.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {savedFunnels.map((funnel) => (
+                  <button
+                    key={funnel.id}
+                    type="button"
+                    onClick={() => onSelectSavedFunnel(funnel)}
+                    className={`rounded-full border px-3 py-1 text-[11px] transition ${
+                      selectedFunnelId === funnel.id
+                        ? "border-emerald-400 bg-emerald-400 text-slate-900"
+                        : "border-slate-600 text-slate-200 hover:border-emerald-400/70"
+                    }`}
+                  >
+                    {funnel.name || "Saved funnel"}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-[11px] text-slate-400">
+                No saved funnels yet. Paste a funnel URL below.
+              </p>
+            )}
+          </div>
+
+          <label className="text-xs font-semibold">Funnel URL</label>
           <input
             type="text"
             value={funnelUrl}
-            onChange={(e) => setFunnelUrl(e.target.value)}
+            onChange={(e) => onFunnelUrlChange(e.target.value)}
             placeholder="https://your-funnel.com"
             className="w-full rounded-lg bg-slate-800 border border-slate-600 text-xs px-3 py-2 text-slate-200"
           />
 
           <p className="text-[10px] text-slate-400">
-            Autoaffi will sync this funnel ID to hooks, CTA, timeline & affiliate tracking.
+            This exact funnel URL is used as the reel destination. It is not rewritten.
           </p>
         </div>
       )}

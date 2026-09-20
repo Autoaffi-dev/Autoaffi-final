@@ -350,6 +350,14 @@ export default function Page() {
   const [recurringPlatforms, setRecurringPlatforms] = useState<any[]>([]);
 
   const [funnelUrl, setFunnelUrl] = useState("");
+  const [savedFunnels, setSavedFunnels] = useState<
+    Array<{
+      id: string;
+      name: string;
+      funnel_url: string;
+    }>
+  >([]);
+  const [selectedFunnelId, setSelectedFunnelId] = useState<string | null>(null);
   const [offerMeta, setOfferMeta] = useState<any | null>(null);
 
   const [selectedProductResolvedLink, setSelectedProductResolvedLink] =
@@ -680,6 +688,78 @@ export default function Page() {
   React.useEffect(() => {
     setOfferMeta(resolvedOfferMeta);
   }, [resolvedOfferMeta]);
+
+  React.useEffect(() => {
+    let isMounted = true;
+
+    const loadSavedFunnels = async () => {
+      try {
+        const res = await fetch("/api/user-funnels", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        if (!res.ok) {
+          if (isMounted) {
+            setSavedFunnels([]);
+            setSelectedFunnelId(null);
+          }
+          return;
+        }
+
+        const json = await res.json().catch(() => null);
+        const rows = Array.isArray(json?.funnels) ? json.funnels : [];
+        const mapped = rows
+          .map((row: any) => ({
+            id: String(row?.id || ""),
+            name: String(row?.name || "").trim(),
+            funnel_url: String(row?.funnel_url || ""),
+          }))
+          .filter((row: { id: string }) => row.id);
+
+        if (!isMounted) return;
+
+        setSavedFunnels(mapped);
+        setSelectedFunnelId((prev) =>
+          prev && mapped.some((row: { id: string }) => row.id === prev)
+            ? prev
+            : null
+        );
+      } catch (err) {
+        console.error("[REELS] /api/user-funnels failed", err);
+        if (isMounted) {
+          setSavedFunnels([]);
+          setSelectedFunnelId(null);
+        }
+      }
+    };
+
+    loadSavedFunnels();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  function handleSelectSavedFunnel(funnel: {
+    id: string;
+    name: string;
+    funnel_url: string;
+  }) {
+    setSelectedFunnelId(funnel.id);
+    setFunnelUrl(funnel.funnel_url || "");
+  }
+
+  function handleFunnelUrlChange(next: string) {
+    setFunnelUrl(next);
+    const selected = savedFunnels.find((row) => row.id === selectedFunnelId);
+    if (
+      selected &&
+      next.trim() !== String(selected.funnel_url || "").trim()
+    ) {
+      setSelectedFunnelId(null);
+    }
+  }
 
   React.useEffect(() => {
     let isMounted = true;
@@ -1409,7 +1489,10 @@ export default function Page() {
         recurringPlatforms={recurringPlatforms}
         generateAffiliateLinkForRecurring={handleSelectRecurringPlatform}
         funnelUrl={funnelUrl}
-        setFunnelUrl={setFunnelUrl}
+        savedFunnels={savedFunnels}
+        selectedFunnelId={selectedFunnelId}
+        onSelectSavedFunnel={handleSelectSavedFunnel}
+        onFunnelUrlChange={handleFunnelUrlChange}
       />
 
       {offerMode === "product" && savingSelectedProduct && (
@@ -1564,7 +1647,7 @@ export default function Page() {
           {offerMode === "funnel" && funnelUrl && (
             <div className="p-6 rounded-xl bg-emerald-900/20 border border-emerald-500/30">
               <h3 className="text-emerald-300 font-semibold mb-2">
-                Funnel Tracking Enabled
+                Funnel destination attached
               </h3>
               <p className="text-gray-200 text-sm break-all">{funnelUrl}</p>
             </div>
