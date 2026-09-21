@@ -144,9 +144,13 @@ describe("Reels saved funnels integration", () => {
     assert.match(reels, /Funnel destination attached/);
   });
 
-  it("generate route is not modified by this integration", () => {
+  it("generate route keeps saved-funnel destination but locks affiliateUrl to canonical input", () => {
     const generate = read(generateRel);
     assert.match(
+      generate,
+      /affiliateUrl: selectedOfferResolved\.affiliateUrl \|\| ""/
+    );
+    assert.doesNotMatch(
       generate,
       /affiliateUrl: safeString\(parsed\.offerMeta\?\.affiliateUrl, selectedOfferResolved\.affiliateUrl\)/
     );

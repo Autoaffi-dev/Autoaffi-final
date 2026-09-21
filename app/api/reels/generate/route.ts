@@ -3147,11 +3147,11 @@ function hardenParsedResponse(params: {
 
   parsed.offerMeta = offerMetaToResolvedOffer({
     name: safeString(parsed.offerMeta?.name, selectedOfferResolved.name),
-    mode: safeString(parsed.offerMeta?.mode, selectedOfferResolved.mode),
+    mode: selectedOfferResolved.mode,
     commissionRate: safeString(parsed.offerMeta?.commissionRate, selectedOfferResolved.commissionRate),
     epc: typeof parsed.offerMeta?.epc === "number" ? parsed.offerMeta.epc : selectedOfferResolved.epc,
     category: safeString(parsed.offerMeta?.category, selectedOfferResolved.category),
-    affiliateUrl: safeString(parsed.offerMeta?.affiliateUrl, selectedOfferResolved.affiliateUrl),
+    affiliateUrl: selectedOfferResolved.affiliateUrl || "",
   });
 
   parsed.selectedOffer = { ...parsed.offerMeta };
@@ -3376,7 +3376,7 @@ function hardenParsedResponse(params: {
 
   parsed.renderHints = {
     ...(typeof parsed.renderHints === "object" && parsed.renderHints ? parsed.renderHints : {}),
-    offerMode: parsed.offerMeta?.mode || selectedOfferResolved.mode,
+    offerMode: selectedOfferResolved.mode,
     offerName: parsed.offerMeta?.name || selectedOfferResolved.name,
     offerCategory: parsed.offerMeta?.category || selectedOfferResolved.category,
     freedomRecurring,
@@ -3387,20 +3387,20 @@ function hardenParsedResponse(params: {
     scriptAngle,
     clipStrategy: freedomRecurring
       ? "freedom-journey-problem-solution-payoff"
-      : parsed.offerMeta?.mode === "product"
+      : selectedOfferResolved.mode === "product"
       ? "product-demo-proof-payoff"
-      : parsed.offerMeta?.mode === "funnel"
+      : selectedOfferResolved.mode === "funnel"
       ? "problem-funnel-conversion-payoff"
       : "problem-solution-payoff",
     preferNatureFreedomFirst: freedomRecurring,
     avoidOfficeBusinessVisuals: freedomRecurring,
     selectedOffer: {
       name: parsed.offerMeta?.name || selectedOfferResolved.name,
-      mode: parsed.offerMeta?.mode || selectedOfferResolved.mode,
+      mode: selectedOfferResolved.mode,
       category: parsed.offerMeta?.category || selectedOfferResolved.category,
       commissionRate:
         parsed.offerMeta?.commissionRate || selectedOfferResolved.commissionRate,
-      affiliateUrl: parsed.offerMeta?.affiliateUrl || selectedOfferResolved.affiliateUrl,
+      affiliateUrl: selectedOfferResolved.affiliateUrl || "",
       epc:
         typeof parsed.offerMeta?.epc === "number"
           ? parsed.offerMeta.epc
