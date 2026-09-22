@@ -1,10 +1,13 @@
 export type ProductIdentitySource =
   | "title"
   | "shortened_title"
-  | "description"
   | "merchant_category"
   | "category"
+  | "description"
   | "unknown";
+
+const PROMO_COPY_RE =
+  /\b(best|amazing|awesome|incredible|fantastic|perfect|guarantee|guaranteed|fast shipping|free shipping|anyone who|must[- ]have|bargain|deal|click|buy now|limited|hot sale|quality and|premium quality)\b/i;
 
 export type ProductDisplayIdentity = {
   displayName: string;
@@ -121,9 +124,35 @@ export function shortenVerifiedProductTitle(title: string, maxWords = 6): string
   return words.slice(0, maxWords).join(" ");
 }
 
+export function isPromotionalProductCopy(text: unknown): boolean {
+  return PROMO_COPY_RE.test(normalizeWhitespace(text));
+}
+
+export const PRODUCT_IDENTITY_INSUFFICIENT_CODE = "PRODUCT_IDENTITY_INSUFFICIENT";
+
+export const PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE =
+  "Autoaffi does not have enough product information to create a relevant Reel. Choose another product.";
+
+export function isConciseProductIdentification(text: unknown): boolean {
+  const clean = normalizeWhitespace(text);
+  if (!clean || isIdentifierLikeProductTitle(clean) || isPromotionalProductCopy(clean)) {
+    return false;
+  }
+
+  const sentence = (clean.split(/[.!?]/)[0] || clean).trim();
+  const words = tokenizeWords(sentence).filter((word) => !STOP_WORDS.has(word.toLowerCase()));
+  const alphaWords = words.filter((word) => /[A-Za-z]{3,}/.test(word));
+
+  if (words.length < 2 || words.length > 8) return false;
+  if (alphaWords.length < 2) return false;
+  if (/[!?]{2,}|\$\d|%\s*off/i.test(sentence)) return false;
+
+  return true;
+}
+
 function firstDescriptionLabel(description: string): string {
   const clean = normalizeWhitespace(description);
-  if (!clean || isIdentifierLikeProductTitle(clean)) return "";
+  if (!isConciseProductIdentification(clean)) return "";
   const sentence = clean.split(/[.!?]/)[0] || clean;
   return shortenVerifiedProductTitle(sentence, 6);
 }
@@ -140,7 +169,13 @@ export function deriveProductDisplayIdentity(input: {
   const merchantName = normalizeWhitespace(input.merchantName);
   const categoryLabel = isUnknownProductCategory(category) ? "" : category;
 
-  if (title && isHumanReadableTitle(title) && tokenizeWords(title).length <= 8 && !isIdentifierLikeProductTitle(title)) {
+  if (
+    title &&
+    isHumanReadableTitle(title) &&
+    tokenizeWords(title).length <= 8 &&
+    !isIdentifierLikeProductTitle(title) &&
+    !isPromotionalProductCopy(title)
+  ) {
     return {
       displayName: title,
       source: "title",
@@ -149,7 +184,7 @@ export function deriveProductDisplayIdentity(input: {
     };
   }
 
-  if (title && isHumanReadableTitle(title)) {
+  if (title && isHumanReadableTitle(title) && !isPromotionalProductCopy(title)) {
     const shortened = shortenVerifiedProductTitle(title, 6);
     if (shortened) {
       return {
@@ -159,16 +194,6 @@ export function deriveProductDisplayIdentity(input: {
         categoryLabel,
       };
     }
-  }
-
-  const fromDescription = firstDescriptionLabel(description);
-  if (fromDescription) {
-    return {
-      displayName: fromDescription,
-      source: "description",
-      unknown: false,
-      categoryLabel,
-    };
   }
 
   if (merchantName && categoryLabel && !isIdentifierLikeProductTitle(merchantName)) {
@@ -186,6 +211,16 @@ export function deriveProductDisplayIdentity(input: {
     return {
       displayName: categoryLabel,
       source: "category",
+      unknown: false,
+      categoryLabel,
+    };
+  }
+
+  const fromDescription = firstDescriptionLabel(description);
+  if (fromDescription) {
+    return {
+      displayName: fromDescription,
+      source: "description",
       unknown: false,
       categoryLabel,
     };
@@ -214,4 +249,10 @@ export function parseOptionalCommission(value: unknown): number | null {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function hasTrustworthyProductIdentity(
+  identity: ProductDisplayIdentity
+): boolean {
+  return !identity.unknown && Boolean(identity.displayName.trim());
 }

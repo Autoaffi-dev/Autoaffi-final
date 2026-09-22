@@ -5,6 +5,7 @@ import React from "react";
 interface Props {
   handleGenerate: () => void;
   isGenerating: boolean;
+  generateBlocked?: boolean;
   error: string;
 
   genre: string;
@@ -29,6 +30,7 @@ export default function GenerateControls({
   tone,
   setTone,
   isGenerating,
+  generateBlocked = false,
   handleGenerate,
   error,
 }: Props) {
@@ -86,10 +88,10 @@ export default function GenerateControls({
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={isGenerating}
+          disabled={isGenerating || generateBlocked}
           className={`rounded-xl px-5 py-2 text-xs font-semibold transition
             ${
-              isGenerating
+              isGenerating || generateBlocked
                 ? "bg-slate-800 text-slate-500 cursor-not-allowed"
                 : "bg-emerald-600 hover:bg-emerald-500 text-white"
             }

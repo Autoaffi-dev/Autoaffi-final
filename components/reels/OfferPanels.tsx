@@ -182,27 +182,32 @@ export default function OfferPanels({
                 No products found for this category/search yet.
               </div>
             ) : (
-              currentProducts.map((p) => (
+              currentProducts.map((p) => {
+                const unavailable = Boolean(p.identityUnknown);
+                return (
                 <div
                   key={p.id}
                   onClick={() => {
+                    if (unavailable) return;
                     setSelectedProduct(p);
                     generateAffiliateLinkForProduct(p.id);
                   }}
-                  className={`p-3 rounded-xl border cursor-pointer transition ${
-                    selectedProduct?.id === p.id
-                      ? "border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-                      : "border-slate-700 bg-slate-900 hover:bg-slate-800"
+                  className={`p-3 rounded-xl border transition ${
+                    unavailable
+                      ? "border-slate-800 bg-slate-950/60 opacity-70 cursor-not-allowed"
+                      : selectedProduct?.id === p.id
+                      ? "border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.3)] cursor-pointer"
+                      : "border-slate-700 bg-slate-900 hover:bg-slate-800 cursor-pointer"
                   }`}
                 >
                   <p className="text-sm font-semibold text-slate-100">
-                    {p.identityUnknown
+                    {unavailable
                       ? "Unknown product identity"
                       : p.displayName || p.name}
                   </p>
-                  {p.identityUnknown && p.rawTitle ? (
+                  {unavailable ? (
                     <p className="text-[10px] text-slate-500">
-                      Network title is not a usable product name.
+                      Unavailable for Reels. Choose another product.
                     </p>
                   ) : null}
 
@@ -230,7 +235,8 @@ export default function OfferPanels({
                     )}
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
 

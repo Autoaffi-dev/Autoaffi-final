@@ -3,7 +3,12 @@ import OpenAI from "openai";
 import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 import { copyCallerAuthHeaders } from "@/lib/auth/forwardCallerAuth";
 import { requireTrustedInternalOrigin } from "@/lib/auth/internalAppOrigin";
-import { deriveProductDisplayIdentity } from "@/lib/content-optimizer/reelsProductIdentity";
+import {
+  deriveProductDisplayIdentity,
+  hasTrustworthyProductIdentity,
+  PRODUCT_IDENTITY_INSUFFICIENT_CODE,
+  PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
+} from "@/lib/content-optimizer/reelsProductIdentity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -119,6 +124,8 @@ interface OfferMeta {
   category?: string;
   affiliateUrl?: string;
   rating?: number;
+  description?: string;
+  identityUnknown?: boolean;
 }
 
 interface BeatMark {
@@ -781,6 +788,8 @@ function offerMetaToResolvedOffer(offerMetaInput: OfferMetaInput): OfferMeta {
     ),
     affiliateUrl: safeString(offerMetaInput.affiliateUrl, ""),
     rating: 4.7,
+    description: safeString(offerMetaInput.description, ""),
+    identityUnknown: Boolean(offerMetaInput.identityUnknown) || (mode === "product" && !safeString(offerMetaInput.name, "")),
   };
 }
 
@@ -3197,13 +3206,20 @@ function hardenParsedResponse(params: {
 
   ensureMinSocialHints(parsed, offerMetaInput?.mode);
 
+  const productCategory =
+    selectedOfferResolved.mode === "product"
+      ? selectedOfferResolved.category || ""
+      : safeString(parsed.offerMeta?.category, selectedOfferResolved.category);
+
   parsed.offerMeta = offerMetaToResolvedOffer({
     name: selectedOfferResolved.name,
     mode: selectedOfferResolved.mode,
     commissionRate: selectedOfferResolved.commissionRate,
     epc: typeof parsed.offerMeta?.epc === "number" ? parsed.offerMeta.epc : selectedOfferResolved.epc,
-    category: safeString(parsed.offerMeta?.category, selectedOfferResolved.category),
+    category: productCategory,
     affiliateUrl: selectedOfferResolved.affiliateUrl || "",
+    description: selectedOfferResolved.description || "",
+    identityUnknown: Boolean(selectedOfferResolved.identityUnknown),
   });
 
   parsed.selectedOffer = { ...parsed.offerMeta };
@@ -3430,7 +3446,10 @@ function hardenParsedResponse(params: {
     ...(typeof parsed.renderHints === "object" && parsed.renderHints ? parsed.renderHints : {}),
     offerMode: selectedOfferResolved.mode,
     offerName: parsed.offerMeta?.name || selectedOfferResolved.name,
-    offerCategory: parsed.offerMeta?.category || selectedOfferResolved.category,
+    offerCategory:
+      selectedOfferResolved.mode === "product"
+        ? selectedOfferResolved.category || ""
+        : parsed.offerMeta?.category || selectedOfferResolved.category,
     freedomRecurring,
     forceNatureFreedomClip: freedomRecurring,
     maxSegments: smartRenderMaxSegments,
@@ -3449,9 +3468,14 @@ function hardenParsedResponse(params: {
     selectedOffer: {
       name: selectedOfferResolved.name,
       mode: selectedOfferResolved.mode,
-      category: parsed.offerMeta?.category || selectedOfferResolved.category,
+      category:
+        selectedOfferResolved.mode === "product"
+          ? selectedOfferResolved.category || ""
+          : parsed.offerMeta?.category || selectedOfferResolved.category,
       commissionRate: selectedOfferResolved.commissionRate || "",
       affiliateUrl: selectedOfferResolved.affiliateUrl || "",
+      description: selectedOfferResolved.description || "",
+      identityUnknown: Boolean(selectedOfferResolved.identityUnknown),
       epc:
         typeof parsed.offerMeta?.epc === "number"
           ? parsed.offerMeta.epc
@@ -3488,6 +3512,29 @@ export async function POST(req: Request) {
 
     const offerMetaInput = normalizeOfferMetaInput(rawOfferMeta);
     const selectedOfferResolved = offerMetaToResolvedOffer(offerMetaInput);
+
+    if (getSafeOfferMode(offerMetaInput.mode) === "product") {
+      const identity = deriveProductDisplayIdentity({
+        title: offerMetaInput.name,
+        description: offerMetaInput.description,
+        category: offerMetaInput.category,
+      });
+      const identityUnknown =
+        Boolean(offerMetaInput.identityUnknown) ||
+        Boolean(selectedOfferResolved.identityUnknown) ||
+        !hasTrustworthyProductIdentity(identity);
+
+      if (identityUnknown) {
+        return NextResponse.json(
+          {
+            error: PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
+            code: PRODUCT_IDENTITY_INSUFFICIENT_CODE,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const freedomRecurring = looksLikeFreedomRecurring(body, offerMetaInput);
 
     const generationId =

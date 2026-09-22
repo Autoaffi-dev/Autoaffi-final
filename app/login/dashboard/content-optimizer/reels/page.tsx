@@ -25,7 +25,16 @@ import {
   deriveProductDisplayIdentity,
   formatCreatorCommissionPercent,
   parseOptionalCommission,
+  PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
 } from "@/lib/content-optimizer/reelsProductIdentity";
+
+function firstUsableProductForGeneration(products: any[]) {
+  return (
+    (products || []).find(
+      (p: any) => p?.id && !p?.identityUnknown && String(p?.displayName || p?.name || "").trim()
+    ) ?? null
+  );
+}
 
 // ============================================================================
 // HELPERS
@@ -335,8 +344,8 @@ function buildResolvedSelectedOffer(params: {
     epc: meta.epc ?? null,
     category: meta.category ?? "",
     affiliateUrl: meta.affiliateUrl ?? "",
-    ...(meta.identityUnknown ? { identityUnknown: true } : {}),
-    ...(meta.description ? { description: meta.description } : {}),
+    identityUnknown: Boolean(meta.identityUnknown),
+    description: meta.description ?? "",
     ...(meta.source ? { source: meta.source } : {}),
     ...(meta.productKind ? { productKind: meta.productKind } : {}),
     ...(meta.subId ? { subId: meta.subId } : {}),
@@ -633,18 +642,21 @@ export default function Page() {
 
         const normalizedResults = results
           .map(normalizeProductForReels)
-          .filter((p: any) => p.id && p.name);
+          .filter((p: any) => p.id);
 
         if (!isMounted) return;
 
         setCurrentProducts(normalizedResults);
 
         setSelectedProduct((prev: any) => {
-          if (!prev) return normalizedResults[0] ?? null;
+          const firstUsable = firstUsableProductForGeneration(normalizedResults);
+
+          if (!prev) return firstUsable;
 
           const stillExists = normalizedResults.find((p: any) => p.id === prev.id);
+          if (stillExists && !stillExists.identityUnknown) return stillExists;
 
-          return stillExists ?? normalizedResults[0] ?? null;
+          return firstUsable;
         });
       } catch (err) {
         console.error("[REELS] loadProducts crash", err);
@@ -956,7 +968,20 @@ export default function Page() {
         }
 
         if (!selectedProduct) {
-          setError("Please select a product before generating.");
+          const hasOnlyUnknown =
+            currentProducts.length > 0 &&
+            currentProducts.every((p: any) => p.identityUnknown);
+          setError(
+            hasOnlyUnknown
+              ? PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE
+              : "Please select a product before generating."
+          );
+          setIsGenerating(false);
+          return;
+        }
+
+        if (selectedProduct.identityUnknown) {
+          setError(PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE);
           setIsGenerating(false);
           return;
         }
@@ -975,6 +1000,15 @@ export default function Page() {
 
       if (!selectedOffer || !nextOfferMeta) {
         setError("Please complete your offer setup before generating.");
+        setIsGenerating(false);
+        return;
+      }
+
+      if (
+        offerMode === "product" &&
+        (nextOfferMeta.identityUnknown || selectedOffer.identityUnknown)
+      ) {
+        setError(PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE);
         setIsGenerating(false);
         return;
       }
@@ -1142,6 +1176,14 @@ export default function Page() {
           ok: false,
           videoUrl: null,
           error: "Please select a product before rendering.",
+        };
+      }
+
+      if (selectedProduct.identityUnknown) {
+        return {
+          ok: false,
+          videoUrl: null,
+          error: PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
         };
       }
 
@@ -1550,6 +1592,9 @@ export default function Page() {
       <GenerateControls
         handleGenerate={handleGenerate}
         isGenerating={isGenerating}
+        generateBlocked={
+          offerMode === "product" && Boolean(selectedProduct?.identityUnknown)
+        }
         error={error}
         genre={genre}
         setGenre={setGenre}
