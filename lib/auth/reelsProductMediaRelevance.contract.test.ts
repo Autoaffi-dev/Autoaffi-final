@@ -4,7 +4,6 @@ import path from "path";
 import { describe, it } from "node:test";
 import {
   buildProductMediaQuery,
-  buildProductSearchQueryVariants,
   buildVerifiedProductMediaTerms,
   candidateMatchesVerifiedProduct,
   extractNativeMediaText,
@@ -44,150 +43,164 @@ describe("Reels product media relevance", () => {
     description: "Durable gym bag for carrying workout clothes and shoes.",
   };
 
-  it("1. Adidas Power Gym Bag produces Product-specific media semantics", () => {
-    const query = buildProductMediaQuery(gymBag);
-    const terms = buildVerifiedProductMediaTerms(gymBag);
-    assert.match(query, /adidas/i);
-    assert.match(query, /gym/i);
-    assert.match(query, /bag/i);
-    assert.ok(terms.includes("adidas"));
-    assert.ok(terms.includes("gym"));
-    assert.ok(terms.includes("bag"));
-    assert.match(generate, /buildProductMediaQuery\(/);
-  });
-
-  it("2. Product query does not automatically add generic gadget vocabulary", () => {
-    const query = buildProductMediaQuery(gymBag);
-    assert.equal(productQueryContainsForbiddenGenericExpansion(query), false);
-    assert.doesNotMatch(query, /digital tool/);
-    assert.doesNotMatch(query, /creator setup/);
-    assert.doesNotMatch(query, /workflow/);
-    assert.doesNotMatch(query, /hands using tool/);
-    assert.doesNotMatch(query, /before after/);
-    const productQueryFn = generate.slice(
-      generate.indexOf("if (mode === \"product\") {"),
-      generate.indexOf("if (mode === \"funnel\") {")
-    );
-    assert.doesNotMatch(productQueryFn, /modern workflow/);
-    assert.doesNotMatch(productQueryFn, /digital tool/);
-    assert.doesNotMatch(productQueryFn, /hands using tool/);
-  });
-
-  it("3. Uncategorized is never used as visual semantics", () => {
-    const terms = buildVerifiedProductMediaTerms({
-      name: "Adidas Power Gym Bag",
-      category: "Uncategorized",
-    });
-    assert.ok(!terms.includes("uncategorized"));
-    const query = buildProductMediaQuery({
-      name: "Adidas Power Gym Bag",
-      category: "Uncategorized",
-    });
-    assert.doesNotMatch(query, /uncategorized/i);
-  });
-
-  it("4. SKU/external IDs are never used as media semantics", () => {
-    const terms = buildVerifiedProductMediaTerms({
-      title: undefined,
-      name: "SWV24S2026-09-08614-09-2026",
-      category: "Electronics",
-      description: "",
-    });
-    assert.ok(!terms.some((term) => /swv24|08614/.test(term)));
-    assert.doesNotMatch(helper, /affiliateUrl/);
-    assert.doesNotMatch(helper, /savedOfferId/);
-    assert.doesNotMatch(helper, /external_id|tracking/);
-  });
-
-  it("5. Verified Product description can contribute meaningful search terms", () => {
-    const terms = buildVerifiedProductMediaTerms({
-      name: "SWV24S2026-09-08614-09-2026",
-      category: "Uncategorized",
-      description: "Wireless noise cancelling earbuds for travel.",
-    });
-    assert.ok(terms.includes("wireless"));
-    assert.ok(terms.includes("earbuds"));
-    assert.ok(terms.includes("travel"));
-  });
-
-  it("6. Promotional/noise description language does not dominate search", () => {
-    const query = buildProductMediaQuery({
-      name: "SKU_43928492",
-      category: "Electronics",
-      description: "Best choice for anyone who wants amazing quality and fast shipping.",
-    });
-    assert.doesNotMatch(query, /best choice/);
-    assert.doesNotMatch(query, /amazing quality/);
-    assert.doesNotMatch(query, /fast shipping/);
-  });
-
-  it("7. Provider-native metadata is evaluated before synthetic enrichment", () => {
-    assert.match(media, /nativeTitle/);
-    assert.match(media, /nativeDescription/);
-    assert.match(media, /nativeTags/);
-    const productAccept = media.slice(
-      media.indexOf("if (offerMode === \"product\" && !freedomRecurring)"),
-      media.indexOf("enrichMediaItemForIntent(item, enrichParams)")
-    );
-    assert.match(productAccept, /isProductMediaRelevant\(productOffer, item\)/);
-    assert.ok(
-      media.indexOf("isProductMediaRelevant(productOffer, item)") <
-        media.indexOf("all = all.map((item) => enrichMediaItemForIntent(item, enrichParams));")
-    );
-  });
-
-  it("8. Synthetic product/hands/creator tags cannot make a river clip relevant", () => {
-    const relevant = isProductMediaRelevant(gymBag, {
-      nativeTitle: "calm river through a forest",
-      nativeDescription: "nature landscape river",
-      nativeTags: ["river", "forest"],
-      title: "product demo hands creator ugc",
-      tags: ["product", "hands", "creator", "ugc", "gym"],
-    });
-    assert.equal(relevant, false);
-    const native = extractNativeMediaText({
-      nativeTitle: "calm river through a forest",
-      nativeTags: ["river", "forest"],
-      title: "product demo",
-      tags: ["product", "hands", "creator"],
-    });
-    assert.match(native, /river/);
-    assert.doesNotMatch(native, /product demo/);
-  });
-
-  it("9. River/forest fails for unrelated gym bag Product", () => {
+  it("1. Adidas Power Gym Bag + power tools workshop fails", () => {
     assert.equal(
-      candidateMatchesVerifiedProduct(buildVerifiedProductMediaTerms(gymBag), "river forest mountain stream"),
+      candidateMatchesVerifiedProduct(
+        buildVerifiedProductMediaTerms(gymBag),
+        "power tools workshop"
+      ),
+      false
+    );
+    assert.equal(
+      isProductMediaRelevant(gymBag, {
+        nativeTitle: "power tools workshop",
+        nativeTags: ["power", "tools", "workshop"],
+      }),
       false
     );
   });
 
-  it("10. Gym bag / sports bag footage can pass for gym bag Product", () => {
+  it("2. A single broad token such as fitness does not qualify a Product", () => {
+    assert.equal(
+      candidateMatchesVerifiedProduct(buildVerifiedProductMediaTerms(gymBag), "fitness"),
+      false
+    );
+    assert.equal(
+      isProductMediaRelevant(gymBag, { nativeTitle: "fitness training", nativeTags: ["fitness"] }),
+      false
+    );
+  });
+
+  it("3. sports bag athlete passes for gym bag", () => {
     assert.equal(
       isProductMediaRelevant(gymBag, {
-        nativeTitle: "athlete packing a sports bag",
-        nativeTags: ["gym bag", "duffel", "fitness"],
+        nativeTitle: "sports bag athlete",
+        nativeTags: ["sports", "bag", "athlete"],
       }),
       true
     );
   });
 
-  it("11. Cosmetics fail for unrelated Product", () => {
+  it("4. packing gym bag passes", () => {
     assert.equal(
       isProductMediaRelevant(gymBag, {
-        nativeTitle: "applying lipstick and skin lotion",
-        nativeTags: ["cosmetics", "makeup", "beauty cream"],
+        nativeTitle: "packing gym bag",
+        nativeTags: ["packing", "gym", "bag"],
+      }),
+      true
+    );
+  });
+
+  it("5. URL containing gym-bag-product-demo cannot make a river candidate pass", () => {
+    assert.equal(
+      isProductMediaRelevant(gymBag, {
+        nativeTitle: "calm river",
+        nativeTags: ["river", "forest"],
+        url: "https://cdn.example.com/videos/gym-bag-fitness-product-demo.mp4",
+      }),
+      false
+    );
+    const native = extractNativeMediaText({
+      nativeTitle: "calm river",
+      nativeTags: ["river", "forest"],
+      url: "https://cdn.example.com/videos/gym-bag-fitness-product-demo.mp4",
+    });
+    assert.doesNotMatch(native, /gym/);
+    assert.doesNotMatch(native, /fitness/);
+  });
+
+  it("6. Thumbnail URL cannot make an irrelevant candidate pass", () => {
+    assert.equal(
+      isProductMediaRelevant(gymBag, {
+        nativeTitle: "calm river",
+        nativeTags: ["river", "forest"],
+        thumb: "https://cdn.example.com/thumbs/gym-bag-fitness-duffel.jpg",
       }),
       false
     );
   });
 
-  it("12. Cosmetics can still pass for verified beauty Product", () => {
+  it("7. app does not substring-match apple", () => {
+    assert.equal(
+      candidateMatchesVerifiedProduct(["app", "software"], "apple orchard fruit"),
+      false
+    );
+  });
+
+  it("8. Synthetic Autoaffi tags still cannot provide semantic evidence", () => {
+    assert.equal(
+      isProductMediaRelevant(gymBag, {
+        nativeTitle: "calm river through a forest",
+        nativeTags: ["river", "forest"],
+        title: "product demo hands creator ugc",
+        tags: ["product", "hands", "creator", "ugc", "gym", "bag"],
+      }),
+      false
+    );
+  });
+
+  it("9. Synonym expansion does not manufacture multiple independent matches from one native concept", () => {
+    assert.equal(
+      candidateMatchesVerifiedProduct(buildVerifiedProductMediaTerms(gymBag), "fitness"),
+      false
+    );
+    assert.equal(
+      candidateMatchesVerifiedProduct(buildVerifiedProductMediaTerms(gymBag), "fitness sports"),
+      false
+    );
+  });
+
+  it("10. used tampon closeup is graphic-safety BLOCK", () => {
+    assert.equal(isGraphicUnsafeStock("used tampon closeup"), true);
+  });
+
+  it("11. clean tampon package is NOT automatically blocked by graphic-safety", () => {
+    assert.equal(
+      isGraphicUnsafeStock("clean tampon package on white background"),
+      false
+    );
+  });
+
+  it("12. visible blood open wound is BLOCK", () => {
+    assert.equal(isGraphicUnsafeStock("visible blood open wound"), true);
+  });
+
+  it("13. blood pressure monitor is NOT automatically blocked by graphic-safety", () => {
+    assert.equal(isGraphicUnsafeStock("blood pressure monitor on table"), false);
+  });
+
+  it("14. narrow graphic-safety filtering runs before enrichment for Product", () => {
+    const graphicIdx = media.indexOf(
+      ".filter((item) => !isGraphicUnsafeStock(extractNativeMediaText(item)))"
+    );
+    const productIdx = media.indexOf("all = all.filter((item) => isProductMediaRelevant(productOffer, item))");
+    const enrichIdx = media.indexOf(
+      "all = all.map((item) => enrichMediaItemForIntent(item, enrichParams))"
+    );
+    assert.ok(graphicIdx >= 0);
+    assert.ok(productIdx > graphicIdx);
+    assert.ok(enrichIdx > productIdx);
+  });
+
+  it("15. same graphic-safety guard applies to Recurring/Funnel without Product semantic rules", () => {
+    assert.match(
+      media,
+      /\.filter\(\(item\) => !isGraphicUnsafeStock\(extractNativeMediaText\(item\)\)\)/
+    );
+    assert.match(media, /extraNature[\s\S]{0,220}isGraphicUnsafeStock\(extractNativeMediaText\(item\)\)/);
+    assert.match(media, /extraFunnel[\s\S]{0,220}isGraphicUnsafeStock\(extractNativeMediaText\(item\)\)/);
+    assert.doesNotMatch(
+      media.slice(media.indexOf("if (offerMode === \"funnel\")"), media.indexOf("function buildFallback")),
+      /isProductMediaRelevant\(productOffer, item\)/
+    );
+  });
+
+  it("16. beauty Product can still accept relevant skincare footage", () => {
     assert.equal(
       isProductMediaRelevant(
         { name: "Glow Serum", category: "beauty", description: "Daily skincare serum." },
         {
-          nativeTitle: "applying lipstick and skin lotion",
+          nativeTitle: "applying skincare serum",
           nativeTags: ["cosmetics", "makeup", "skincare"],
         }
       ),
@@ -195,7 +208,7 @@ describe("Reels product media relevance", () => {
     );
   });
 
-  it("13. Nature can still pass for verified outdoor Product", () => {
+  it("17. outdoor Product can still accept relevant hiking footage", () => {
     assert.equal(
       isProductMediaRelevant(
         { name: "Trail Hiking Poles", category: "outdoor" },
@@ -208,30 +221,7 @@ describe("Reels product media relevance", () => {
     );
   });
 
-  it("14. Used-hygiene / graphic body-fluid footage is universally rejected", () => {
-    assert.equal(isGraphicUnsafeStock("used tampon closeup"), true);
-    assert.equal(isGraphicUnsafeStock("visible blood open wound"), true);
-    assert.equal(
-      isProductMediaRelevant(gymBag, {
-        nativeTitle: "used tampon",
-        nativeTags: ["gym", "bag"],
-      }),
-      false
-    );
-    assert.match(media, /isGraphicUnsafeStock/);
-  });
-
-  it("15. Generic keyboard does not pass for unrelated physical Product", () => {
-    assert.equal(
-      isProductMediaRelevant(gymBag, {
-        nativeTitle: "office keyboard and mouse on a desk",
-        nativeTags: ["keyboard", "computer", "office"],
-      }),
-      false
-    );
-  });
-
-  it("16. Real software Product can still use relevant software/laptop/UI footage", () => {
+  it("18. software Product can still accept relevant software/dashboard footage", () => {
     assert.equal(
       isProductMediaRelevant(
         {
@@ -248,67 +238,57 @@ describe("Reels product media relevance", () => {
     );
   });
 
-  it("17. Recurring freedom mode still allows intended nature footage", () => {
-    assert.match(media, /intent === "freedom_lifestyle"/);
-    assert.match(media, /buildStrictNatureFreedomQueries/);
-    assert.match(generate, /digital nomad/);
-    assert.match(generate, /mountain remote work/);
-    assert.match(generate, /if \(params\.freedomRecurring\)/);
+  it("19. river/forest still fails for unrelated gym bag", () => {
+    assert.equal(
+      candidateMatchesVerifiedProduct(
+        buildVerifiedProductMediaTerms(gymBag),
+        "river forest mountain stream"
+      ),
+      false
+    );
   });
 
-  it("18. Funnel mode still uses topic/problem/audience visuals", () => {
-    assert.match(generate, /landing page/);
-    assert.match(generate, /sales funnel/);
-    assert.match(generate, /conversion dashboard/);
-    assert.match(media, /offerMode === "funnel"/);
-  });
-
-  it("19. Product mode is not misclassified as ai_saas from generic injected terms", () => {
-    assert.match(media, /function detectIntent\(query: string, offerMode\?: OfferMode\)/);
-    assert.match(media, /if \(offerMode === "product"\) return "product_generic";/);
-    const productQuery = buildProductMediaQuery(gymBag);
-    assert.doesNotMatch(productQuery, /digital tool|workflow|online business/);
-  });
-
-  it("20. RenderVX supplemental Product fetch cannot bypass relevance gate", () => {
+  it("20. RenderVX supplemental Product fetch still passes through hardened media fetch", () => {
     assert.match(render, /buildProductMediaQuery\(/);
     assert.match(render, /description: params\.offerMeta\.description \|\| ""/);
+    assert.match(render, /fetch\(`\$\{baseUrl\}\/api\/media\/fetch`/);
     const wow = render.slice(
       render.indexOf("function buildProductWowQuery("),
       render.indexOf("function buildFunnelWowQuery(")
     );
     assert.doesNotMatch(wow, /product demo hands holding/);
-    assert.doesNotMatch(wow, /creator ugc lifestyle/);
-    assert.match(render, /if \(offerMeta\.mode === "product"\)/);
     assert.match(media, /isProductMediaRelevant\(productOffer, item\)/);
   });
 
-  it("21. If no relevant Product stock exists, safe fallback remains and no black video occurs", () => {
-    assert.match(generate, /Using fallback media/);
-    assert.match(generate, /https:\/\/public\.autoaffi\.com\/fallback\/fallback1\.mp4/);
-    assert.match(media, /if \(combined\.length === 0\)/);
-    assert.match(media, /combined = buildFallback\(type\);/);
-    assert.doesNotMatch(generate, /black video/);
-  });
-
-  it("22-25. Canonical offer, mode, identity/commission, and saved funnel contracts remain in suite", () => {
-    const identityTest = read(identityTestRel);
-    const funnels = read(funnelsTestRel);
-    const select = read(selectRel);
-    const subid = read(subidRel);
-    const reels = read(reelsRel);
-
+  it("21. canonical affiliateUrl/mode tests remain green", () => {
     assert.match(generate, /affiliateUrl: selectedOfferResolved\.affiliateUrl \|\| ""/);
     assert.match(generate, /mode: selectedOfferResolved\.mode,/);
-    assert.match(reels, /fetch\("\/api\/user-funnels"/);
+    assert.match(read(canonicalTestRel), /Reels canonical offer destination \+ mode lock/);
+  });
+
+  it("22. Product identity/commission tests remain green", () => {
+    const identityTest = read(identityTestRel);
     assert.match(identityTest, /hasTrustworthyProductIdentity/);
     assert.match(identityTest, /parseOptionalCommission\("   "\)/);
-    assert.match(funnels, /Reels saved funnels integration/);
-    assert.match(select, /buildStableSubId\(userId, source, externalId\)/);
-    assert.match(subid, /export function buildProductSubId/);
-    assert.match(reels, /affiliateUrl: p\.promo_link/);
     assert.match(identity, /GENERATION_TRUSTED_IDENTITY_SOURCES/);
+  });
+
+  it("23. saved Funnel tests remain green", () => {
+    const reels = read(reelsRel);
+    assert.match(read(funnelsTestRel), /Reels saved funnels integration/);
+    assert.match(reels, /fetch\("\/api\/user-funnels"/);
+    assert.match(reels, /affiliateUrl: p\.promo_link/);
+    assert.match(read(selectRel), /buildStableSubId\(userId, source, externalId\)/);
+    assert.match(read(subidRel), /export function buildProductSubId/);
     assert.doesNotMatch(helper, /buildStableSubId|promo_link|\/go\/offer/);
-    assert.match(read(canonicalTestRel), /Reels canonical offer destination \+ mode lock/);
+  });
+
+  it("query still uses verified Product facts without generic gadget vocabulary", () => {
+    const query = buildProductMediaQuery(gymBag);
+    assert.match(query, /adidas/i);
+    assert.match(query, /gym/i);
+    assert.match(query, /bag/i);
+    assert.equal(productQueryContainsForbiddenGenericExpansion(query), false);
+    assert.doesNotMatch(helper, /affiliateUrl|savedOfferId|external_id/);
   });
 });

@@ -3048,7 +3048,9 @@ export async function POST(req: Request) {
       if (Array.isArray(batch)) all.push(...batch);
     }
 
-    all = dedupeMedia(all).filter((m) => isHttpUrl(m.url));
+    all = dedupeMedia(all)
+      .filter((m) => isHttpUrl(m.url))
+      .filter((item) => !isGraphicUnsafeStock(extractNativeMediaText(item)));
 
     const enrichParams = {
       rawQuery,
@@ -3059,15 +3061,10 @@ export async function POST(req: Request) {
     };
 
     if (offerMode === "product" && !freedomRecurring) {
-      all = all.filter((item) => {
-        const nativeText = extractNativeMediaText(item);
-        if (isGraphicUnsafeStock(nativeText)) return false;
-        return isProductMediaRelevant(productOffer, item);
-      });
-      all = all.map((item) => enrichMediaItemForIntent(item, enrichParams));
-    } else {
-      all = all.map((item) => enrichMediaItemForIntent(item, enrichParams));
+      all = all.filter((item) => isProductMediaRelevant(productOffer, item));
     }
+
+    all = all.map((item) => enrichMediaItemForIntent(item, enrichParams));
 
     if (type === "video") {
       all = all.filter((m) => m.type === "video" && m.duration >= MIN_VIDEO_DURATION);
@@ -3131,7 +3128,9 @@ export async function POST(req: Request) {
 
         all = dedupeMedia([
           ...all,
-          ...extraNature.map((item) =>
+          ...extraNature
+            .filter((item) => !isGraphicUnsafeStock(extractNativeMediaText(item)))
+            .map((item) =>
             enrichMediaItemForIntent(item, {
               rawQuery,
               intent,
@@ -3194,9 +3193,10 @@ export async function POST(req: Request) {
           pixabayKey: PIXABAY_KEY,
         });
 
-        const relevantExtra = extraProduct.filter((item) =>
-          isProductMediaRelevant(productOffer, item)
-        );
+        const relevantExtra = extraProduct.filter((item) => {
+          if (isGraphicUnsafeStock(extractNativeMediaText(item))) return false;
+          return isProductMediaRelevant(productOffer, item);
+        });
 
         all = dedupeMedia([
           ...all,
@@ -3253,7 +3253,9 @@ export async function POST(req: Request) {
 
         all = dedupeMedia([
           ...all,
-          ...extraFunnel.map((item) =>
+          ...extraFunnel
+            .filter((item) => !isGraphicUnsafeStock(extractNativeMediaText(item)))
+            .map((item) =>
             enrichMediaItemForIntent(item, {
               rawQuery,
               intent,

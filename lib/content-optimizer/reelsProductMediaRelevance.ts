@@ -135,21 +135,57 @@ const VISUAL_SYNONYMS: Record<string, string[]> = {
   computer: ["laptop", "screen", "software"],
 };
 
-export const GRAPHIC_STOCK_SAFETY_TERMS = [
-  "tampon",
-  "sanitary",
-  "menstrual",
-  "used pad",
-  "blood",
-  "bloody",
-  "gore",
-  "gory",
-  "open wound",
-  "bodily fluid",
-  "body fluid",
-  "feces",
-  "vomit",
-  "pus",
+const CONCEPT_FAMILY: Record<string, string> = {
+  gym: "gym",
+  fitness: "gym",
+  workout: "gym",
+  sports: "gym",
+  athletic: "gym",
+  bag: "bag",
+  duffel: "bag",
+  backpack: "bag",
+  beauty: "beauty",
+  cosmetics: "beauty",
+  makeup: "beauty",
+  skincare: "skincare",
+  outdoor: "outdoor",
+  nature: "outdoor",
+  forest: "outdoor",
+  camping: "outdoor",
+  tent: "outdoor",
+  hiking: "hiking",
+  trail: "hiking",
+  kitchen: "kitchen",
+  food: "kitchen",
+  cooking: "kitchen",
+  software: "software",
+  saas: "software",
+  app: "software",
+  ai: "software",
+  laptop: "computer",
+  computer: "computer",
+  dashboard: "ui",
+  screen: "ui",
+  ui: "ui",
+  mobile: "ui",
+};
+
+export const GRAPHIC_STOCK_SAFETY_PATTERNS = [
+  /\bused tampon\b/,
+  /\bused sanitary(?: pad)?\b/,
+  /\bused pad\b/,
+  /\bvisible blood\b/,
+  /\bblood stain\b/,
+  /\bblood soaked\b/,
+  /\bbloody wound\b/,
+  /\bopen wound\b/,
+  /\bgore\b/,
+  /\bgory\b/,
+  /\bbodily fluid\b/,
+  /\bbody fluid\b/,
+  /\bfeces\b/,
+  /\bvomit\b/,
+  /\bpus\b/,
 ] as const;
 
 function normalizeText(value: unknown): string {
@@ -237,6 +273,32 @@ export function buildProductSearchQueryVariants(input: ProductMediaOfferInput): 
   return uniqueTokens(variants.filter(Boolean)).slice(0, 6);
 }
 
+function conceptFamily(token: string): string {
+  return CONCEPT_FAMILY[token] || token;
+}
+
+function nativeMatchTokens(value: unknown): string[] {
+  return normalizeText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
+}
+
+function hasExplicitNativeMediaFields(item: {
+  nativeTitle?: unknown;
+  nativeDescription?: unknown;
+  nativeTags?: unknown;
+}): boolean {
+  const nativeTags = Array.isArray(item.nativeTags)
+    ? item.nativeTags.map((tag) => String(tag || "").trim()).filter(Boolean)
+    : String(item.nativeTags || "").trim();
+  return Boolean(
+    String(item.nativeTitle || "").trim() ||
+      String(item.nativeDescription || "").trim() ||
+      (Array.isArray(nativeTags) ? nativeTags.length > 0 : Boolean(nativeTags))
+  );
+}
+
 export function extractNativeMediaText(item: {
   nativeTitle?: unknown;
   nativeDescription?: unknown;
@@ -250,26 +312,26 @@ export function extractNativeMediaText(item: {
   const nativeTags = Array.isArray(item.nativeTags)
     ? item.nativeTags.join(" ")
     : String(item.nativeTags || "");
-  const fallbackTags = Array.isArray(item.tags) ? item.tags.join(" ") : String(item.tags || "");
 
+  if (hasExplicitNativeMediaFields(item)) {
+    return normalizeText([item.nativeTitle || "", item.nativeDescription || "", nativeTags].join(" "));
+  }
+
+  const fallbackTags = Array.isArray(item.tags) ? item.tags.join(" ") : String(item.tags || "");
   return normalizeText(
-    [
-      item.nativeTitle || "",
-      item.nativeDescription || "",
-      nativeTags,
-      item.nativeTitle || item.nativeDescription || nativeTags ? "" : item.title || "",
-      item.nativeTitle || item.nativeDescription || nativeTags ? "" : fallbackTags,
-      item.description || "",
-      String(item.url || ""),
-      String(item.thumb || ""),
-    ].join(" ")
+    [item.title || "", item.description || "", fallbackTags].join(" ")
   );
 }
 
 export function isGraphicUnsafeStock(text: unknown): boolean {
   const blob = normalizeText(text);
   if (!blob) return false;
-  return GRAPHIC_STOCK_SAFETY_TERMS.some((term) => blob.includes(term));
+  return GRAPHIC_STOCK_SAFETY_PATTERNS.some((pattern) => pattern.test(blob));
+}
+
+function nativeTokenMatchesVerified(nativeToken: string, verifiedTerms: string[]): boolean {
+  if (verifiedTerms.includes(nativeToken)) return true;
+  return verifiedTerms.some((term) => (VISUAL_SYNONYMS[term] || []).includes(nativeToken));
 }
 
 export function candidateMatchesVerifiedProduct(
@@ -279,17 +341,18 @@ export function candidateMatchesVerifiedProduct(
   const verified = uniqueTokens(verifiedTerms.filter((term) => !MEDIA_NOISE_TOKENS.has(term)));
   if (verified.length === 0) return false;
 
-  const nativeTokens = new Set(tokenizeMediaText(nativeText));
-  const nativeBlob = normalizeText(nativeText);
-  if (!nativeBlob) return false;
-
-  const expanded = expandVisualSynonyms(verified);
-  const overlap = expanded.filter(
-    (term) => nativeTokens.has(term) || nativeBlob.includes(term)
+  const nativeTokens = nativeMatchTokens(nativeText).filter(
+    (token) => !MEDIA_NOISE_TOKENS.has(token)
   );
+  if (nativeTokens.length === 0) return false;
 
-  const distinctive = overlap.filter((term) => term.length >= 5);
-  return distinctive.length >= 1 || overlap.length >= 2;
+  const matchedFamilies = new Set<string>();
+  for (const nativeToken of nativeTokens) {
+    if (!nativeTokenMatchesVerified(nativeToken, verified)) continue;
+    matchedFamilies.add(conceptFamily(nativeToken));
+  }
+
+  return matchedFamilies.size >= 2;
 }
 
 export function isProductMediaRelevant(
