@@ -9,6 +9,7 @@ import {
   PRODUCT_IDENTITY_INSUFFICIENT_CODE,
   PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
 } from "@/lib/content-optimizer/reelsProductIdentity";
+import { buildProductMediaQuery } from "@/lib/content-optimizer/reelsProductMediaRelevance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -2948,20 +2949,13 @@ function buildMediaQuery(params: {
   const baseContext = `${genre} ${tone} ${niche}`.trim();
 
   if (mode === "product") {
-    return [
-      name,
-      category,
-      "modern workflow",
-      "digital tool",
-      "creator setup",
-      "product demo",
-      "hands using tool",
-      "before after improvement",
-      "clean result",
-      baseContext,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    return (
+      buildProductMediaQuery({
+        name,
+        category,
+        description: safeString(params.offerMeta?.description, ""),
+      }) || name || category
+    );
   }
 
   if (mode === "funnel") {

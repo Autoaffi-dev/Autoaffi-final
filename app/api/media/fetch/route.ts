@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
+import {
+  buildProductSearchQueryVariants,
+  candidateMatchesVerifiedProduct,
+  extractNativeMediaText,
+  isGraphicUnsafeStock,
+  isProductMediaRelevant,
+  buildVerifiedProductMediaTerms,
+} from "@/lib/content-optimizer/reelsProductMediaRelevance";
 
 export const runtime = "nodejs";
 
@@ -26,6 +34,9 @@ type MediaItem = {
   tags?: string[];
   title?: string;
   type?: "video" | "image";
+  nativeTitle?: string;
+  nativeDescription?: string;
+  nativeTags?: string[];
 };
 
 type ScoredMediaItem = MediaItem & {
@@ -668,7 +679,9 @@ function isRelaxedFreedomRecurringCandidate(item: Partial<MediaItem>): boolean {
   return false;
 }
 
-function detectIntent(query: string): MediaIntent {
+function detectIntent(query: string, offerMode?: OfferMode): MediaIntent {
+  if (offerMode === "product") return "product_generic";
+
   const q = normalizeText(query);
 
   const freedomSignals = [
@@ -801,6 +814,9 @@ function buildSearchQueries(
     offerMode?: OfferMode;
     freedomRecurring?: boolean;
     forceNatureFreedomClip?: boolean;
+    offerName?: string;
+    offerCategory?: string;
+    offerDescription?: string;
   }
 ): string[] {
   const q = safeString(rawQuery, "business").trim();
@@ -826,17 +842,13 @@ function buildSearchQueries(
   }
 
   if (offerMode === "product") {
-    return uniqueStrings([
-      q,
-      "hands using product closeup premium vertical",
-      "product demo commercial ugc lifestyle creator portrait",
-      "modern lifestyle product showcase vertical centered",
-      "clean product review customer experience closeup",
-      "device use case creator lifestyle portrait",
-      "premium commercial product transformation centered",
-      "before after results creator product vertical",
-      "isolated product showcase closeup",
-    ]).slice(0, MAX_QUERY_VARIANTS);
+    return uniqueStrings(
+      buildProductSearchQueryVariants({
+        name: safeString(options?.offerName),
+        category: safeString(options?.offerCategory),
+        description: safeString(options?.offerDescription),
+      }).concat(q)
+    ).slice(0, MAX_QUERY_VARIANTS);
   }
 
   if (offerMode === "funnel") {
@@ -961,18 +973,19 @@ function buildStrictNatureFreedomQueries(rawQuery: string): string[] {
   ]).slice(0, MAX_QUERY_VARIANTS);
 }
 
-function buildStrictProductWowQueries(rawQuery: string): string[] {
+function buildStrictProductWowQueries(rawQuery: string, offer?: {
+  name?: string;
+  category?: string;
+  description?: string;
+}): string[] {
   const q = safeString(rawQuery, "").trim();
-
-  return uniqueStrings([
-    q,
-    "hands using product closeup premium vertical",
-    "product demo lifestyle creator ugc portrait",
-    "showcase product review customer use case centered",
-    "premium product commercial results transformation vertical",
-    "before after product creator vertical closeup",
-    "isolated product showcase macro portrait",
-  ]).slice(0, MAX_QUERY_VARIANTS);
+  return uniqueStrings(
+    [q, ...buildProductSearchQueryVariants({
+      name: offer?.name,
+      category: offer?.category,
+      description: offer?.description,
+    })]
+  ).slice(0, MAX_QUERY_VARIANTS);
 }
 
 function buildStrictFunnelWowQueries(rawQuery: string): string[] {
@@ -1186,13 +1199,20 @@ function scoreMediaItem(
     offerMode?: OfferMode;
     freedomRecurring?: boolean;
     forceNatureFreedomClip?: boolean;
+    offerName?: string;
+    offerCategory?: string;
+    offerDescription?: string;
   }
 ): number {
-  const text = extractTerms(item);
-  const q = normalizeText(rawQuery);
   const offerMode = normalizeOfferMode(options?.offerMode);
   const freedomRecurring = !!options?.freedomRecurring;
   const forceNatureFreedomClip = !!options?.forceNatureFreedomClip;
+  const text =
+    offerMode === "product"
+      ? extractNativeMediaText(item)
+      : extractTerms(item);
+
+  const q = normalizeText(rawQuery);
 
   let score = 0;
 
@@ -1653,6 +1673,17 @@ function scoreMediaItem(
     }
   }
 
+  if (offerMode === "product") {
+    const verified = buildVerifiedProductMediaTerms({
+      name: options?.offerName,
+      category: options?.offerCategory,
+      description: options?.offerDescription,
+    });
+    if (candidateMatchesVerifiedProduct(verified, text)) {
+      score += 24;
+    }
+  }
+
   const rawMatchCount = countMatches(text, q.split(" ").filter(Boolean));
   score += Math.min(rawMatchCount, 6);
 
@@ -1676,7 +1707,7 @@ function hardBlockItem(
   if (!isHttpUrl(item.url)) return true;
   if (item.type === "video" && item.duration < MIN_VIDEO_DURATION) return true;
 
-  const blockedUniversal = [
+  const blockedNonProduct = [
     "wedding",
     "funeral",
     "cemetery",
@@ -1704,7 +1735,9 @@ function hardBlockItem(
     "resort buffet",
   ];
 
-  if (blockedUniversal.some((b) => text.includes(b))) return true;
+  if (isGraphicUnsafeStock(text) || isGraphicUnsafeStock(extractNativeMediaText(item))) return true;
+
+  if (offerMode !== "product" && blockedNonProduct.some((b) => text.includes(b))) return true;
 
   if (intent === "ai_saas" || intent === "marketing_funnel" || intent === "business_growth") {
     const vacationOnlySignals = [
@@ -2336,6 +2369,13 @@ function finalizeItem(item: MediaItem): MediaItem | null {
       ? item.tags.map((t) => safeString(t)).filter(Boolean)
       : [],
     title: safeString(item.title, ""),
+    nativeTitle: safeString(item.nativeTitle, safeString(item.title, "")),
+    nativeDescription: safeString(item.nativeDescription, ""),
+    nativeTags: Array.isArray(item.nativeTags)
+      ? item.nativeTags.map((t) => safeString(t)).filter(Boolean)
+      : Array.isArray(item.tags)
+      ? item.tags.map((t) => safeString(t)).filter(Boolean)
+      : [],
   };
 
   if (finalized.type === "video" && finalized.duration < MIN_VIDEO_DURATION) return null;
@@ -2374,6 +2414,9 @@ async function fetchPexelsVideos(query: string, apiKey: string, page: number): P
         height: safeNumber(best?.height),
         tags: Array.isArray(v?.tags) ? v.tags : [],
         title: safeString(v?.url || v?.user?.name || ""),
+        nativeTitle: safeString(v?.url || v?.user?.name || ""),
+        nativeDescription: safeString(v?.url || ""),
+        nativeTags: Array.isArray(v?.tags) ? v.tags : [],
       });
     })
     .filter((item): item is MediaItem => item !== null);
@@ -2407,6 +2450,12 @@ async function fetchPixabayVideos(query: string, apiKey: string, page: number): 
           .map((s) => s.trim())
           .filter(Boolean),
         title: safeString(h?.tags || h?.user || ""),
+        nativeTitle: safeString(h?.tags || h?.user || ""),
+        nativeDescription: safeString(h?.tags || ""),
+        nativeTags: safeString(h?.tags)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
       })
     )
     .filter((item): item is MediaItem => item !== null);
@@ -2437,6 +2486,9 @@ async function fetchPexelsImages(query: string, apiKey: string, page: number): P
         height: safeNumber(p?.height),
         tags: [],
         title: safeString(p?.alt || p?.photographer || ""),
+        nativeTitle: safeString(p?.alt || p?.photographer || ""),
+        nativeDescription: safeString(p?.alt || ""),
+        nativeTags: [],
       })
     )
     .filter((item): item is MediaItem => item !== null);
@@ -2467,6 +2519,12 @@ async function fetchPixabayImages(query: string, apiKey: string, page: number): 
           .map((s) => s.trim())
           .filter(Boolean),
         title: safeString(h?.tags || h?.user || ""),
+        nativeTitle: safeString(h?.tags || h?.user || ""),
+        nativeDescription: safeString(h?.tags || ""),
+        nativeTags: safeString(h?.tags)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
       })
     )
     .filter((item): item is MediaItem => item !== null);
@@ -2510,7 +2568,15 @@ async function fetchVideezyCache(
             .split(",")
             .map((s) => s.trim())
             .filter(Boolean),
-      title: safeString(item?.title || item?.name || item?.query || ""),
+      title: safeString(item?.title || item?.name || ""),
+      nativeTitle: safeString(item?.title || item?.name || ""),
+      nativeDescription: safeString(item?.description || item?.title || ""),
+      nativeTags: Array.isArray(item?.tags)
+        ? item.tags
+        : safeString(item?.tags)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
     });
 
     if (finalized) picked.push(finalized);
@@ -2910,7 +2976,24 @@ export async function POST(req: Request) {
 
     const hash = hashSeed(seed ?? rawQuery);
 
-    const detectedIntent = detectIntent(rawQuery);
+    const offerName = safeString(
+      body?.offerMeta?.name ?? body?.selectedOffer?.name ?? body?.renderHints?.offerName
+    );
+    const offerCategory = safeString(
+      body?.offerMeta?.category ??
+        body?.selectedOffer?.category ??
+        body?.renderHints?.offerCategory
+    );
+    const offerDescription = safeString(
+      body?.offerMeta?.description ?? body?.selectedOffer?.description
+    );
+    const productOffer = {
+      name: offerName,
+      category: offerCategory,
+      description: offerDescription,
+    };
+
+    const detectedIntent = detectIntent(rawQuery, offerMode);
     const intent: MediaIntent =
       freedomRecurring || forceNatureFreedomClip
         ? "freedom_lifestyle"
@@ -2924,6 +3007,9 @@ export async function POST(req: Request) {
       offerMode,
       freedomRecurring,
       forceNatureFreedomClip,
+      offerName,
+      offerCategory,
+      offerDescription,
     }).slice(0, MAX_QUERY_VARIANTS);
 
     let all: MediaItem[] = [];
@@ -2962,17 +3048,26 @@ export async function POST(req: Request) {
       if (Array.isArray(batch)) all.push(...batch);
     }
 
-    all = dedupeMedia(all)
-      .filter((m) => isHttpUrl(m.url))
-      .map((item) =>
-        enrichMediaItemForIntent(item, {
-          rawQuery,
-          intent,
-          offerMode,
-          freedomRecurring,
-          forceNatureFreedomClip,
-        })
-      );
+    all = dedupeMedia(all).filter((m) => isHttpUrl(m.url));
+
+    const enrichParams = {
+      rawQuery,
+      intent,
+      offerMode,
+      freedomRecurring,
+      forceNatureFreedomClip,
+    };
+
+    if (offerMode === "product" && !freedomRecurring) {
+      all = all.filter((item) => {
+        const nativeText = extractNativeMediaText(item);
+        if (isGraphicUnsafeStock(nativeText)) return false;
+        return isProductMediaRelevant(productOffer, item);
+      });
+      all = all.map((item) => enrichMediaItemForIntent(item, enrichParams));
+    } else {
+      all = all.map((item) => enrichMediaItemForIntent(item, enrichParams));
+    }
 
     if (type === "video") {
       all = all.filter((m) => m.type === "video" && m.duration >= MIN_VIDEO_DURATION);
@@ -3003,6 +3098,9 @@ export async function POST(req: Request) {
             offerMode,
             freedomRecurring,
             forceNatureFreedomClip,
+            offerName,
+            offerCategory,
+            offerDescription,
           })
         )
       )
@@ -3059,6 +3157,9 @@ export async function POST(req: Request) {
                 offerMode,
                 freedomRecurring,
                 forceNatureFreedomClip,
+                offerName,
+                offerCategory,
+                offerDescription,
               })
             )
           )
@@ -3082,22 +3183,24 @@ export async function POST(req: Request) {
     }
 
     if (offerMode === "product" && type !== "stills") {
-      const hasProductVideo = scored.some(
-        (item) => item.type === "video" && hasProductBridge(item._text)
-      );
+      const hasProductVideo = scored.some((item) => item.type === "video");
 
       if (!hasProductVideo) {
         const extraProduct = await fetchExtraQueryBatches({
-          queries: buildStrictProductWowQueries(rawQuery),
+          queries: buildStrictProductWowQueries(rawQuery, productOffer),
           type: "video",
           hash: hash + 211,
           pexelsKey: PEXELS_KEY,
           pixabayKey: PIXABAY_KEY,
         });
 
+        const relevantExtra = extraProduct.filter((item) =>
+          isProductMediaRelevant(productOffer, item)
+        );
+
         all = dedupeMedia([
           ...all,
-          ...extraProduct.map((item) =>
+          ...relevantExtra.map((item) =>
             enrichMediaItemForIntent(item, {
               rawQuery,
               intent,
@@ -3123,6 +3226,9 @@ export async function POST(req: Request) {
                 offerMode,
                 freedomRecurring,
                 forceNatureFreedomClip,
+                offerName,
+                offerCategory,
+                offerDescription,
               })
             )
           )
@@ -3173,6 +3279,9 @@ export async function POST(req: Request) {
                 offerMode,
                 freedomRecurring,
                 forceNatureFreedomClip,
+                offerName,
+                offerCategory,
+                offerDescription,
               })
             )
           )

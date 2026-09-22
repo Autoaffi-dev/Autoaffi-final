@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 import { copyCallerAuthHeaders } from "@/lib/auth/forwardCallerAuth";
 import { requireTrustedInternalOrigin } from "@/lib/auth/internalAppOrigin";
+import { buildProductMediaQuery } from "@/lib/content-optimizer/reelsProductMediaRelevance";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -99,6 +100,7 @@ type OfferMeta = {
   commissionRate: string;
   affiliateUrl: string;
   epc?: number;
+  description?: string;
 };
 
 function normalizeText(value: unknown, fallback = ""): string {
@@ -255,6 +257,7 @@ function resolveOfferMeta(body: LooseRecord): OfferMeta {
     category: normalizeText(raw.category, ""),
     commissionRate: normalizeText(raw.commissionRate, ""),
     affiliateUrl: normalizeText(raw.affiliateUrl, ""),
+    description: normalizeText(raw.description, ""),
     epc,
   };
 }
@@ -347,10 +350,11 @@ function buildMediaQuery(params: {
 
   if (mode === "product") {
     return (
-      `${offerName} ${category} product demo commercial ugc lifestyle creator hands use case result transformation before after review showcase modern premium closeup customer experience social media`
-        .replace(/\s+/g, " ")
-        .trim() ||
-      `${genre} product demo lifestyle creator`
+      buildProductMediaQuery({
+        name: offerName,
+        category,
+        description: normalizeText(params.offerMeta?.description, ""),
+      }) || offerName || category || `${genre} product`
     );
   }
 
@@ -406,10 +410,14 @@ function buildProductWowQuery(params: {
   const offerName = normalizeText(params.offerMeta?.name, "");
   const category = normalizeText(params.offerMeta?.category, "");
 
+  const description = normalizeText(params.offerMeta?.description, "");
+
   return (
-    `${offerName} ${category} product demo hands holding showcase closeup review use case creator ugc lifestyle premium commercial results transformation before after customer testimonial`
-      .replace(/\s+/g, " ")
-      .trim() || `${genre} product demo creator lifestyle`
+    buildProductMediaQuery({
+      name: offerName,
+      category,
+      description,
+    }) || offerName || category || `${genre} product`
   );
 }
 
@@ -2976,6 +2984,7 @@ async function fetchFallbackMedia(
           commissionRate: params.offerMeta.commissionRate,
           affiliateUrl: params.offerMeta.affiliateUrl,
           epc: params.offerMeta.epc,
+          description: params.offerMeta.description || "",
         },
         selectedOffer: {
           name: params.offerMeta.name,
@@ -2984,6 +2993,7 @@ async function fetchFallbackMedia(
           commissionRate: params.offerMeta.commissionRate,
           affiliateUrl: params.offerMeta.affiliateUrl,
           epc: params.offerMeta.epc,
+          description: params.offerMeta.description || "",
         },
         freedomRecurring: params.freedomRecurring,
         forceNatureFreedomClip: !!params.forceNatureFreedomClip,
@@ -3657,15 +3667,11 @@ export async function POST(req: Request) {
     }
 
     if (offerMeta.mode === "product") {
-      const hasProductWow = mediaFiles.some((item) =>
-        hasProductBridge(buildMediaBlob(item))
-      );
+      const hasProductMedia = mediaFiles.some((item) => resolveMediaUrl(item));
 
-      if (!hasProductWow) {
+      if (!hasProductMedia) {
         const productQueries = [
           buildProductWowQuery({ genre, storyText, offerMeta }),
-          `${offerMeta.name} product demo hands showcase closeup review creator ugc`,
-          `${offerMeta.category} product lifestyle premium commercial results transformation`,
         ]
           .map((q) => normalizeText(q))
           .filter(Boolean);
@@ -3690,12 +3696,7 @@ export async function POST(req: Request) {
           });
 
           enrichedProduct.push(...fetched);
-
-          const hasProductNow = dedupeMedia([...mediaFiles, ...enrichedProduct]).some((item) =>
-            hasProductBridge(buildMediaBlob(item))
-          );
-
-          if (hasProductNow) break;
+          if (fetched.length > 0) break;
         }
 
         mediaFiles = dedupeMedia([...mediaFiles, ...enrichedProduct]);
