@@ -5,12 +5,17 @@ import React from "react";
 interface ProductInfo {
   id: string;
   name: string;
+  rawTitle?: string;
+  displayName?: string;
+  identityUnknown?: boolean;
   stars: number;
-  commission: number;
+  commission: number | null;
   epc: number;
   description: string;
   category?: string;
+  categoryLabel?: string;
   source?: string;
+  merchantName?: string | null;
   external_id?: string;
   imageUrl?: string | null;
   price?: number | null;
@@ -190,19 +195,39 @@ export default function OfferPanels({
                       : "border-slate-700 bg-slate-900 hover:bg-slate-800"
                   }`}
                 >
-                  <p className="text-sm font-semibold text-slate-100">{p.name}</p>
+                  <p className="text-sm font-semibold text-slate-100">
+                    {p.identityUnknown
+                      ? "Unknown product identity"
+                      : p.displayName || p.name}
+                  </p>
+                  {p.identityUnknown && p.rawTitle ? (
+                    <p className="text-[10px] text-slate-500">
+                      Network title is not a usable product name.
+                    </p>
+                  ) : null}
 
                   {p.description ? (
                     <p className="text-xs text-slate-400">{p.description}</p>
                   ) : null}
 
                   <div className="flex flex-wrap gap-3 text-[11px] mt-2 text-slate-300">
-                    {typeof p.stars === "number" ? <span>⭐ {p.stars}</span> : null}
+                    {p.source ? <span>{p.source}</span> : null}
                     {typeof p.commission === "number" ? (
                       <span>{p.commission}% commission</span>
+                    ) : (
+                      <span>Commission unavailable</span>
+                    )}
+                    {typeof p.price === "number" ? (
+                      <span>
+                        {p.currency ? `${p.currency} ` : ""}
+                        {p.price}
+                      </span>
                     ) : null}
-                    {typeof p.epc === "number" ? <span>EPC ${p.epc}</span> : null}
-                    {p.category ? <span>{p.category}</span> : null}
+                    {p.categoryLabel || (p.category && p.category.toLowerCase() !== "uncategorized") ? (
+                      <span>{p.categoryLabel || p.category}</span>
+                    ) : (
+                      <span>Category unavailable</span>
+                    )}
                   </div>
                 </div>
               ))

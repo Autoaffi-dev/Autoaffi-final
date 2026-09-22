@@ -24,6 +24,7 @@ type ProductIndexRow = {
   is_active: boolean | null;
   last_seen_at: string | null;
   is_approved: boolean | null;
+  merchant_name?: string | null;
 };
 
 type ProductKind = "digital" | "physical" | "unknown";
@@ -70,6 +71,7 @@ type SearchResultRow = {
   winnerTier: string | null;
   approved: boolean;
   lastSeenAt: string | null;
+  merchantName?: string | null;
   relevanceScore?: number;
   productKind?: ProductKind;
 };
@@ -1097,6 +1099,7 @@ function normalizeRow(row: ProductIndexRow): SearchResultRow {
     winnerTier: row.winner_tier || null,
     approved: Boolean(row.is_approved),
     lastSeenAt: row.last_seen_at || null,
+    merchantName: row.merchant_name ? String(row.merchant_name).trim() : null,
   };
 }
 
@@ -1448,6 +1451,7 @@ async function fetchRows(params: {
         "is_active",
         "last_seen_at",
         "is_approved",
+        "merchant_name",
       ].join(",")
     )
     .eq("is_active", true)

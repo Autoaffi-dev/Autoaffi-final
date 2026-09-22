@@ -18,7 +18,11 @@ export default function OfferMetaPanel({ offerMeta, onCopyLink }: Props) {
           <p className="text-[11px] font-semibold text-slate-100">
             Offer attached to this reel
           </p>
-          <p className="text-xs text-slate-300">{offerMeta.name}</p>
+          <p className="text-xs text-slate-300">
+            {offerMeta.identityUnknown || !offerMeta.name
+              ? "Unknown product identity"
+              : offerMeta.name}
+          </p>
         </div>
 
         {/* RATING */}
@@ -37,9 +41,19 @@ export default function OfferMetaPanel({ offerMeta, onCopyLink }: Props) {
           </span>
         )}
 
-        {offerMeta.commissionRate && (
+        {offerMeta.commissionRate ? (
           <span className="rounded-full bg-slate-950/80 border border-slate-700 px-2 py-0.5">
             Commission: {offerMeta.commissionRate}
+          </span>
+        ) : offerMeta.mode === "product" ? (
+          <span className="rounded-full bg-slate-950/80 border border-slate-700 px-2 py-0.5">
+            Commission unavailable
+          </span>
+        ) : null}
+
+        {offerMeta.source && (
+          <span className="rounded-full bg-slate-950/80 border border-slate-700 px-2 py-0.5">
+            {offerMeta.source}
           </span>
         )}
 
@@ -49,11 +63,12 @@ export default function OfferMetaPanel({ offerMeta, onCopyLink }: Props) {
           </span>
         )}
 
-        {offerMeta.category && (
+        {offerMeta.category &&
+        String(offerMeta.category).toLowerCase() !== "uncategorized" ? (
           <span className="rounded-full bg-slate-950/80 border border-slate-700 px-2 py-0.5">
             {offerMeta.category}
           </span>
-        )}
+        ) : null}
       </div>
 
       {/* AFFILIATE URL */}

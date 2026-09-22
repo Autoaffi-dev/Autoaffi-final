@@ -21,6 +21,11 @@ import ThumbnailIntelligencePanel from "@/components/reels/ThumbnailIntelligence
 import TimelinePreview from "@/components/reels/TimelinePreview";
 import OfferMetaPanel from "@/components/reels/OfferMetaPanel";
 import ScriptPanel from "@/components/reels/ScriptPanel";
+import {
+  deriveProductDisplayIdentity,
+  formatCreatorCommissionPercent,
+  parseOptionalCommission,
+} from "@/lib/content-optimizer/reelsProductIdentity";
 
 // ============================================================================
 // HELPERS
@@ -93,11 +98,30 @@ function normalizeProductForReels(p: any) {
 
   const stars = Math.max(4, Math.min(5, Math.round(qualityScore / 20)));
 
+  const rawTitle = String(p?.name || p?.title || "").trim();
+  const description = String(p?.description || "").trim();
+  const category = String(p?.category || "").trim();
+  const merchantName = String(
+    p?.merchantName || p?.merchant_name || p?.merchant || ""
+  ).trim();
+  const identity = deriveProductDisplayIdentity({
+    title: rawTitle,
+    description,
+    category,
+    merchantName,
+  });
+
   return {
     id: String(p?.id || ""),
-    name: String(p?.name || p?.title || "").trim(),
-    description: String(p?.description || "").trim(),
-    category: String(p?.category || "").trim(),
+    rawTitle,
+    name: identity.unknown ? "" : identity.displayName || rawTitle,
+    displayName: identity.displayName,
+    identityUnknown: identity.unknown,
+    identitySource: identity.source,
+    description,
+    category,
+    categoryLabel: identity.categoryLabel,
+    merchantName: merchantName || null,
 
     source: String(p?.source || p?.platform || "").trim(),
     platform: String(p?.platform || p?.source || "").trim(),
@@ -108,12 +132,7 @@ function normalizeProductForReels(p: any) {
     productUrl: p?.productUrl ?? p?.product_url ?? p?.url ?? null,
     affiliate: p?.affiliate ?? p?.productUrl ?? p?.product_url ?? p?.url ?? null,
 
-    commission:
-      typeof p?.commission === "number"
-        ? p.commission
-        : Number.isFinite(Number(p?.commission))
-        ? Number(p.commission)
-        : 0,
+    commission: parseOptionalCommission(p?.commission),
 
     epc:
       typeof p?.epc === "number"
@@ -225,18 +244,27 @@ function buildResolvedOfferMeta(params: {
   } = params;
 
   if (offerMode === "product" && selectedProduct) {
+    const identity = deriveProductDisplayIdentity({
+      title: selectedProduct.rawTitle || selectedProduct.name,
+      description: selectedProduct.description,
+      category: selectedProduct.category,
+      merchantName: selectedProduct.merchantName,
+    });
+
     return {
-      name: selectedProduct.name ?? "",
+      name: identity.displayName,
+      identityUnknown: identity.unknown,
       rating: selectedProduct.stars ?? null,
-      category: selectedProduct.category || productCategory,
-      commissionRate:
-        selectedProduct.commission != null ? `${selectedProduct.commission}%` : "",
+      category: identity.categoryLabel,
+      commissionRate: formatCreatorCommissionPercent(selectedProduct.commission),
       epc: selectedProduct.epc ?? null,
       affiliateUrl: selectedProductResolvedLink || affiliateLink || "",
       mode: "product" as const,
       source: selectedProduct.source ?? selectedProduct.platform ?? null,
       productKind: selectedProduct.productKind ?? null,
       description: selectedProduct.description ?? "",
+      price: selectedProduct.price ?? null,
+      currency: selectedProduct.currency ?? null,
       subId: selectedProductSubId || "",
       savedOfferId: selectedSearchSavedOffer?.id ?? null,
       sourceOfferId:
@@ -307,9 +335,10 @@ function buildResolvedSelectedOffer(params: {
     epc: meta.epc ?? null,
     category: meta.category ?? "",
     affiliateUrl: meta.affiliateUrl ?? "",
+    ...(meta.identityUnknown ? { identityUnknown: true } : {}),
+    ...(meta.description ? { description: meta.description } : {}),
     ...(meta.source ? { source: meta.source } : {}),
     ...(meta.productKind ? { productKind: meta.productKind } : {}),
-    ...(meta.description ? { description: meta.description } : {}),
     ...(meta.subId ? { subId: meta.subId } : {}),
     ...(meta.savedOfferId ? { savedOfferId: meta.savedOfferId } : {}),
     ...(meta.sourceOfferId ? { sourceOfferId: meta.sourceOfferId } : {}),
@@ -490,7 +519,7 @@ export default function Page() {
               id: product.id ?? undefined,
               source: product.source ?? product.platform ?? "",
               external_id: product.external_id ?? product.externalId ?? "",
-              title: product.name ?? product.title ?? "",
+              title: product.rawTitle ?? product.name ?? product.title ?? "",
               description: product.description ?? "",
               category: product.category ?? "",
               niche: product.niche ?? null,

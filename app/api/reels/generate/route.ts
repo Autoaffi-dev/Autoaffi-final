@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 import { copyCallerAuthHeaders } from "@/lib/auth/forwardCallerAuth";
 import { requireTrustedInternalOrigin } from "@/lib/auth/internalAppOrigin";
+import { deriveProductDisplayIdentity } from "@/lib/content-optimizer/reelsProductIdentity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,8 @@ type OfferMetaInput = {
   epc?: number;
   category?: string;
   affiliateUrl?: string;
+  description?: string;
+  identityUnknown?: boolean;
 };
 
 type SelectedOfferInput = {
@@ -33,6 +36,8 @@ type SelectedOfferInput = {
   epc?: number;
   category?: string;
   affiliateUrl?: string;
+  description?: string;
+  identityUnknown?: boolean;
 };
 
 type GenerateBody = {
@@ -702,23 +707,23 @@ function normalizeOfferMetaInput(
 ): OfferMetaInput {
   const raw = rawOfferMeta ?? {};
 
-  const name =
-    safeString((raw as any)?.name) ||
-    safeString((raw as any)?.title) ||
-    safeString((raw as any)?.offerName) ||
-    "Main offer";
-
   const mode = getSafeOfferMode(
     safeString((raw as any)?.mode) ||
       safeString((raw as any)?.offerMode) ||
       "recurring"
   );
 
+  const name =
+    safeString((raw as any)?.name) ||
+    safeString((raw as any)?.title) ||
+    safeString((raw as any)?.offerName) ||
+    (mode === "product" ? "" : "Main offer");
+
   const category =
     safeString((raw as any)?.category) ||
     safeString((raw as any)?.productCategory) ||
     (mode === "product"
-      ? "digital product"
+      ? ""
       : mode === "funnel"
       ? "funnel"
       : "Affiliate marketing");
@@ -736,6 +741,10 @@ function normalizeOfferMetaInput(
     (mode === "recurring" ? "30% recurring" : "");
 
   const epc = safeNumber((raw as any)?.epc, undefined);
+  const description = safeString((raw as any)?.description, "");
+  const identityUnknown =
+    Boolean((raw as any)?.identityUnknown) ||
+    (mode === "product" && !name);
 
   return {
     name,
@@ -744,23 +753,29 @@ function normalizeOfferMetaInput(
     epc,
     category,
     affiliateUrl,
+    description,
+    identityUnknown,
   };
 }
 
 function offerMetaToResolvedOffer(offerMetaInput: OfferMetaInput): OfferMeta {
+  const mode = getSafeOfferMode(offerMetaInput.mode);
   return {
-    name: safeString(offerMetaInput.name, "Main offer"),
-    mode: getSafeOfferMode(offerMetaInput.mode),
+    name:
+      mode === "product"
+        ? safeString(offerMetaInput.name, "")
+        : safeString(offerMetaInput.name, "Main offer"),
+    mode,
     commissionRate: safeString(
       offerMetaInput.commissionRate,
-      getSafeOfferMode(offerMetaInput.mode) === "recurring" ? "30% recurring" : ""
+      mode === "recurring" ? "30% recurring" : ""
     ),
     epc: typeof offerMetaInput.epc === "number" ? offerMetaInput.epc : 1.5,
     category: safeString(
       offerMetaInput.category,
-      getSafeOfferMode(offerMetaInput.mode) === "product"
-        ? "digital product"
-        : getSafeOfferMode(offerMetaInput.mode) === "funnel"
+      mode === "product"
+        ? ""
+        : mode === "funnel"
         ? "funnel"
         : "Affiliate marketing"
     ),
@@ -1305,14 +1320,15 @@ function getOfferModeInstructions(offerMode?: string) {
   if (mode === "product") {
     return `
 PRODUCT MODE RULES:
-- Focus on a concrete benefit, real use-case or visible before/after shift.
-- The hook must sound like something a real creator would actually say on social media.
-- The viewer should quickly understand what feels broken in the old way.
-- Show a clear contrast between friction and the easier result.
+- Speak only about the verified Product identity in OfferMeta.
+- If OfferMeta.name is empty or identityUnknown is true, do NOT invent a product name, brand, model, feature, or benefit.
+- Do NOT speak SKU-like identifiers, codes, or feed titles as if they were product names.
+- If a verified name/description/category exists, explain what the product is, what it does, and who it is for using only those facts.
+- Do NOT mention affiliate commission, payout percent, or creator earnings in the public script, hook, subtitles, thumbnail, or CTA.
+- Only use facts present in OfferMeta name, description, and category.
+- Do NOT write generic unsupported lines like "cleaner, smarter and more premium feel" unless those words are in the verified metadata.
 - CTA should sound direct, natural and curiosity-driven.
-- Visuals should feel product-relevant, modern, practical and outcome-focused.
-- Thumbnail must look tied to a real benefit or result, not generic business inspiration.
-- Avoid generic claims like "this changes everything" unless made specific.
+- Avoid generic claims like "this changes everything" unless made specific from verified facts.
 `.trim();
   }
 
@@ -1352,8 +1368,11 @@ function getStoryArcInstructions(params: {
 }) {
   const mode = getSafeOfferMode(params.offerMode);
   const niche = safeString(params.nicheDescription, "online business");
-  const offerName = safeString(params.offerName, "Main offer");
-  const category = safeString(params.category, "digital business");
+  const offerName = safeString(params.offerName, mode === "product" ? "this product" : "Main offer");
+  const category = safeString(
+    params.category,
+    mode === "product" ? "this kind of product" : "digital business"
+  );
   const genre = safeString(params.genre, "business");
   const tone = safeString(params.tone, "energetic");
   const videoLength = clampNumber(params.videoLength, 15, 15, 25);
@@ -1558,13 +1577,46 @@ function buildFallbackScript(params: {
   scriptAngle: ScriptAngle;
 }) {
   const mode = getSafeOfferMode(params.offerMeta?.mode);
-  const offerName = safeString(params.offerMeta?.name, "this offer");
-  const category = safeString(params.offerMeta?.category, "digital business");
+  const identity = deriveProductDisplayIdentity({
+    title: params.offerMeta?.name,
+    description: params.offerMeta?.description,
+    category: params.offerMeta?.category,
+  });
+  const offerName =
+    mode === "product"
+      ? identity.unknown
+        ? "this product"
+        : identity.displayName
+      : safeString(params.offerMeta?.name, "this offer");
+  const category =
+    mode === "product"
+      ? identity.categoryLabel || "this kind of product"
+      : safeString(params.offerMeta?.category, "digital business");
   const niche = safeString(params.nicheDescription, "online business");
   const length = clampNumber(params.videoLength, 15, 15, 25);
   const angle = params.scriptAngle;
 
   if (mode === "product") {
+    if (identity.unknown) {
+      return (
+        length <= 16
+          ? [
+              "People keep promoting things they cannot even describe.",
+              "If the product identity is unclear, do not invent a story around it.",
+              "Stay honest. Inspect the offer before you pitch a benefit.",
+              "Tap the link and see the details for yourself.",
+            ]
+          : [
+              "People keep promoting things they cannot even describe.",
+              "If the product identity is unclear, the reel should stay honest.",
+              "Do not invent a brand, a feature, or a transformation that is not verified.",
+              "Look at the actual offer first.",
+              "Then decide whether it is worth talking about.",
+              "Tap the link and see the details for yourself.",
+            ]
+      ).join("\n");
+    }
+
     if (length <= 16) {
       const shortByAngle: Record<ScriptAngle, string[]> = {
         pain_driven: [
@@ -1588,7 +1640,7 @@ function buildFallbackScript(params: {
         status_driven: [
           "Smart creators do not keep forcing weak workflows.",
           "The old setup only feels acceptable because people are used to seeing it.",
-          `${offerName} gives ${category} a cleaner, smarter and more premium feel.`,
+          `${offerName} is a ${category} product with a clear identity.`,
           "Tap the link and see the better setup.",
         ],
         freedom_driven: [
@@ -1643,7 +1695,7 @@ function buildFallbackScript(params: {
         "Smart creators do not keep forcing weak workflows.",
         "The old setup only feels acceptable because people are used to seeing it.",
         `But in reality it makes ${category} look more cluttered, slower and less in-control than it should.`,
-        `${offerName} is the sharper move because it makes the whole process cleaner and more premium.`,
+        `${offerName} is the product. Talk about that, not a premium vibe.`,
         "You feel it fast because the result starts looking more intentional instead of patched together.",
         "Tap the link and see the better setup for yourself.",
       ],
@@ -3146,9 +3198,9 @@ function hardenParsedResponse(params: {
   ensureMinSocialHints(parsed, offerMetaInput?.mode);
 
   parsed.offerMeta = offerMetaToResolvedOffer({
-    name: safeString(parsed.offerMeta?.name, selectedOfferResolved.name),
+    name: selectedOfferResolved.name,
     mode: selectedOfferResolved.mode,
-    commissionRate: safeString(parsed.offerMeta?.commissionRate, selectedOfferResolved.commissionRate),
+    commissionRate: selectedOfferResolved.commissionRate,
     epc: typeof parsed.offerMeta?.epc === "number" ? parsed.offerMeta.epc : selectedOfferResolved.epc,
     category: safeString(parsed.offerMeta?.category, selectedOfferResolved.category),
     affiliateUrl: selectedOfferResolved.affiliateUrl || "",
@@ -3395,11 +3447,10 @@ function hardenParsedResponse(params: {
     preferNatureFreedomFirst: freedomRecurring,
     avoidOfficeBusinessVisuals: freedomRecurring,
     selectedOffer: {
-      name: parsed.offerMeta?.name || selectedOfferResolved.name,
+      name: selectedOfferResolved.name,
       mode: selectedOfferResolved.mode,
       category: parsed.offerMeta?.category || selectedOfferResolved.category,
-      commissionRate:
-        parsed.offerMeta?.commissionRate || selectedOfferResolved.commissionRate,
+      commissionRate: selectedOfferResolved.commissionRate || "",
       affiliateUrl: selectedOfferResolved.affiliateUrl || "",
       epc:
         typeof parsed.offerMeta?.epc === "number"
