@@ -9,6 +9,12 @@ export type ProductIdentitySource =
 const PROMO_COPY_RE =
   /\b(best|amazing|awesome|incredible|fantastic|perfect|guarantee|guaranteed|fast shipping|free shipping|anyone who|must[- ]have|bargain|deal|click|buy now|limited|hot sale|quality and|premium quality)\b/i;
 
+export const GENERATION_TRUSTED_IDENTITY_SOURCES: readonly ProductIdentitySource[] = [
+  "title",
+  "shortened_title",
+  "description",
+];
+
 export type ProductDisplayIdentity = {
   displayName: string;
   source: ProductIdentitySource;
@@ -196,13 +202,23 @@ export function deriveProductDisplayIdentity(input: {
     }
   }
 
+  const fromDescription = firstDescriptionLabel(description);
+  if (fromDescription) {
+    return {
+      displayName: fromDescription,
+      source: "description",
+      unknown: false,
+      categoryLabel,
+    };
+  }
+
   if (merchantName && categoryLabel && !isIdentifierLikeProductTitle(merchantName)) {
     const merchantWords = tokenizeWords(merchantName).slice(0, 3).join(" ");
     const typeWords = tokenizeWords(categoryLabel).slice(0, 3).join(" ");
     return {
       displayName: `${merchantWords} ${typeWords}`.trim(),
       source: "merchant_category",
-      unknown: false,
+      unknown: true,
       categoryLabel,
     };
   }
@@ -211,17 +227,7 @@ export function deriveProductDisplayIdentity(input: {
     return {
       displayName: categoryLabel,
       source: "category",
-      unknown: false,
-      categoryLabel,
-    };
-  }
-
-  const fromDescription = firstDescriptionLabel(description);
-  if (fromDescription) {
-    return {
-      displayName: fromDescription,
-      source: "description",
-      unknown: false,
+      unknown: true,
       categoryLabel,
     };
   }
@@ -243,7 +249,13 @@ export function formatCreatorCommissionPercent(
 }
 
 export function parseOptionalCommission(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
   }
@@ -254,5 +266,8 @@ export function parseOptionalCommission(value: unknown): number | null {
 export function hasTrustworthyProductIdentity(
   identity: ProductDisplayIdentity
 ): boolean {
-  return !identity.unknown && Boolean(identity.displayName.trim());
+  return (
+    GENERATION_TRUSTED_IDENTITY_SOURCES.includes(identity.source) &&
+    Boolean(identity.displayName.trim())
+  );
 }

@@ -24,6 +24,7 @@ import ScriptPanel from "@/components/reels/ScriptPanel";
 import {
   deriveProductDisplayIdentity,
   formatCreatorCommissionPercent,
+  hasTrustworthyProductIdentity,
   parseOptionalCommission,
   PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
 } from "@/lib/content-optimizer/reelsProductIdentity";
@@ -31,7 +32,16 @@ import {
 function firstUsableProductForGeneration(products: any[]) {
   return (
     (products || []).find(
-      (p: any) => p?.id && !p?.identityUnknown && String(p?.displayName || p?.name || "").trim()
+      (p: any) =>
+        p?.id &&
+        !p?.identityUnknown &&
+        hasTrustworthyProductIdentity({
+          displayName: String(p?.name || p?.displayName || ""),
+          source: p?.identitySource,
+          unknown: Boolean(p?.identityUnknown),
+          categoryLabel: String(p?.categoryLabel || ""),
+        }) &&
+        String(p?.name || "").trim()
     ) ?? null
   );
 }
@@ -119,13 +129,14 @@ function normalizeProductForReels(p: any) {
     category,
     merchantName,
   });
+  const trusted = hasTrustworthyProductIdentity(identity);
 
   return {
     id: String(p?.id || ""),
     rawTitle,
-    name: identity.unknown ? "" : identity.displayName || rawTitle,
+    name: trusted ? identity.displayName : "",
     displayName: identity.displayName,
-    identityUnknown: identity.unknown,
+    identityUnknown: !trusted,
     identitySource: identity.source,
     description,
     category,
@@ -259,10 +270,11 @@ function buildResolvedOfferMeta(params: {
       category: selectedProduct.category,
       merchantName: selectedProduct.merchantName,
     });
+    const trusted = hasTrustworthyProductIdentity(identity);
 
     return {
-      name: identity.displayName,
-      identityUnknown: identity.unknown,
+      name: trusted ? identity.displayName : "",
+      identityUnknown: !trusted,
       rating: selectedProduct.stars ?? null,
       category: identity.categoryLabel,
       commissionRate: formatCreatorCommissionPercent(selectedProduct.commission),

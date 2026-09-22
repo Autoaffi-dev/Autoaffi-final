@@ -1593,9 +1593,9 @@ function buildFallbackScript(params: {
   });
   const offerName =
     mode === "product"
-      ? identity.unknown
-        ? "this product"
-        : identity.displayName
+      ? hasTrustworthyProductIdentity(identity)
+        ? identity.displayName
+        : "this product"
       : safeString(params.offerMeta?.name, "this offer");
   const category =
     mode === "product"
@@ -1606,7 +1606,7 @@ function buildFallbackScript(params: {
   const angle = params.scriptAngle;
 
   if (mode === "product") {
-    if (identity.unknown) {
+    if (!hasTrustworthyProductIdentity(identity)) {
       return (
         length <= 16
           ? [
@@ -1649,7 +1649,7 @@ function buildFallbackScript(params: {
         status_driven: [
           "Smart creators do not keep forcing weak workflows.",
           "The old setup only feels acceptable because people are used to seeing it.",
-          `${offerName} is a ${category} product with a clear identity.`,
+          `${offerName} is what this reel is about.`,
           "Tap the link and see the better setup.",
         ],
         freedom_driven: [
@@ -1704,7 +1704,7 @@ function buildFallbackScript(params: {
         "Smart creators do not keep forcing weak workflows.",
         "The old setup only feels acceptable because people are used to seeing it.",
         `But in reality it makes ${category} look more cluttered, slower and less in-control than it should.`,
-        `${offerName} is the product. Talk about that, not a premium vibe.`,
+        `This reel is about ${offerName}.`,
         "You feel it fast because the result starts looking more intentional instead of patched together.",
         "Tap the link and see the better setup for yourself.",
       ],

@@ -8,6 +8,7 @@ interface ProductInfo {
   rawTitle?: string;
   displayName?: string;
   identityUnknown?: boolean;
+  identitySource?: string;
   stars: number;
   commission: number | null;
   epc: number;
@@ -208,6 +209,11 @@ export default function OfferPanels({
                   {unavailable ? (
                     <p className="text-[10px] text-slate-500">
                       Unavailable for Reels. Choose another product.
+                      {p.categoryLabel || p.merchantName
+                        ? ` Category context: ${[p.merchantName, p.categoryLabel]
+                            .filter(Boolean)
+                            .join(" · ")}.`
+                        : ""}
                     </p>
                   ) : null}
 

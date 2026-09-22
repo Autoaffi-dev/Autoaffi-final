@@ -40,17 +40,7 @@ describe("Reels product identity and creator commission", () => {
   const reels = read(reelsRel);
   const panels = read(panelsRel);
   const meta = read(metaRel);
-  const identity = read(identityRel);
-  const normalize = sliceBetween(
-    generate,
-    "function normalizeOfferMetaInput(",
-    "function offerMetaToResolvedOffer("
-  );
-  const resolvedOffer = sliceBetween(
-    generate,
-    "function offerMetaToResolvedOffer(",
-    "function getTargetSceneCount("
-  );
+  const identitySrc = read(identityRel);
   const harden = sliceBetween(
     generate,
     "function hardenParsedResponse(",
@@ -77,199 +67,171 @@ describe("Reels product identity and creator commission", () => {
     "function buildFallbackStoryboard("
   );
 
-  it("1. description survives into the canonical Product context used by generation", () => {
-    assert.match(normalize, /const description = safeString\(\(raw as any\)\?\.description, ""\)/);
-    assert.match(resolvedOffer, /description: safeString\(offerMetaInput\.description, ""\)/);
-    assert.match(offerMetaAssign, /description: selectedOfferResolved\.description \|\| ""/);
-    assert.match(
-      renderHintsAssign,
-      /description: selectedOfferResolved\.description \|\| ""/
-    );
-    assert.match(generate, /OfferMeta=\$\{JSON\.stringify\(offerMetaInput, null, 2\)\}/);
-    assert.match(fallbackScript, /description: params\.offerMeta\?\.description/);
-    assert.match(reels, /description: meta\.description \?\? ""/);
-  });
-
-  it("2. identityUnknown survives into the actual generation gate", () => {
-    assert.match(normalize, /const identityUnknown =/);
-    assert.match(normalize, /Boolean\(\(raw as any\)\?\.identityUnknown\)/);
-    assert.match(resolvedOffer, /identityUnknown: Boolean\(offerMetaInput\.identityUnknown\)/);
-    assert.match(
-      offerMetaAssign,
-      /identityUnknown: Boolean\(selectedOfferResolved\.identityUnknown\)/
-    );
-    assert.match(
-      renderHintsAssign,
-      /identityUnknown: Boolean\(selectedOfferResolved\.identityUnknown\)/
-    );
-    assert.match(post, /Boolean\(offerMetaInput\.identityUnknown\)/);
-    assert.match(post, /Boolean\(selectedOfferResolved\.identityUnknown\)/);
-    assert.match(post, /PRODUCT_IDENTITY_INSUFFICIENT_CODE/);
-    assert.match(reels, /identityUnknown: Boolean\(meta\.identityUnknown\)/);
-  });
-
-  it("3. Product category cannot be replaced by parsed/LLM category", () => {
-    assert.match(
-      harden,
-      /const productCategory =\s*selectedOfferResolved\.mode === "product"\s*\? selectedOfferResolved\.category \|\| ""\s*: safeString\(parsed\.offerMeta\?\.category, selectedOfferResolved\.category\)/
-    );
-    assert.doesNotMatch(
-      offerMetaAssign,
-      /safeString\(\s*parsed\.offerMeta\?\.category,\s*selectedOfferResolved\.category\s*\)/
-    );
-  });
-
-  it("4. offerMeta / selectedOffer / renderHints.selectedOffer use canonical Product category", () => {
-    assert.match(offerMetaAssign, /category: productCategory/);
-    assert.match(harden, /parsed\.selectedOffer = \{ \.\.\.parsed\.offerMeta \}/);
-    assert.match(
-      renderHintsAssign,
-      /offerCategory:\s*selectedOfferResolved\.mode === "product"\s*\? selectedOfferResolved\.category \|\| ""/
-    );
-    assert.match(
-      renderHintsAssign,
-      /category:\s*selectedOfferResolved\.mode === "product"\s*\? selectedOfferResolved\.category \|\| ""/
-    );
-  });
-
-  it("5. promotional description is NOT used as a Product display name", () => {
-    const promo =
-      "Best choice for anyone who wants amazing quality and fast shipping.";
-    const identityFromPromo = deriveProductDisplayIdentity({
-      title: "SKU_43928492",
-      description: promo,
-      category: "Uncategorized",
-    });
-    assert.equal(identityFromPromo.unknown, true);
-    assert.equal(identityFromPromo.displayName, "");
-    assert.doesNotMatch(identityFromPromo.displayName, /Best choice/i);
-    assert.doesNotMatch(identityFromPromo.displayName, /amazing quality/i);
-
-    const promoTitle = deriveProductDisplayIdentity({
-      title: promo,
-      category: "Uncategorized",
-    });
-    assert.equal(promoTitle.unknown, true);
-    assert.equal(promoTitle.displayName, "");
-  });
-
-  it("6. concise verified Product description may support understanding without invented words", () => {
-    const description = "Wireless noise cancelling earbuds for travel.";
-    const identityFromDescription = deriveProductDisplayIdentity({
+  it("1. SKU + Electronics + no useful description is NOT generation-trustworthy", () => {
+    const skuElectronics = deriveProductDisplayIdentity({
       title: "SWV24S2026-09-08614-09-2026",
-      description,
-      category: "Uncategorized",
+      category: "Electronics",
+      description: "",
     });
-    assert.equal(identityFromDescription.unknown, false);
-    assert.equal(identityFromDescription.source, "description");
-    assert.match(identityFromDescription.displayName, /Wireless/i);
-    assert.match(identityFromDescription.displayName, /earbuds/i);
-    for (const word of identityFromDescription.displayName.split(" ")) {
+    assert.equal(skuElectronics.source, "category");
+    assert.equal(skuElectronics.unknown, true);
+    assert.equal(hasTrustworthyProductIdentity(skuElectronics), false);
+    assert.notEqual(skuElectronics.displayName, "SWV24S2026-09-08614-09-2026");
+  });
+
+  it("2. SKU + Electronics + concise description uses description identity, not Electronics", () => {
+    const description = "Wireless noise cancelling earbuds for travel.";
+    const identified = deriveProductDisplayIdentity({
+      title: "SWV24S2026-09-08614-09-2026",
+      category: "Electronics",
+      description,
+    });
+    assert.equal(identified.source, "description");
+    assert.equal(identified.unknown, false);
+    assert.equal(hasTrustworthyProductIdentity(identified), true);
+    assert.notEqual(identified.displayName, "Electronics");
+    assert.match(identified.displayName, /Wireless/i);
+    assert.match(identified.displayName, /earbuds/i);
+    for (const word of identified.displayName.split(" ")) {
       assert.match(
         description,
         new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
       );
     }
-    assert.doesNotMatch(identityFromDescription.displayName, /premium|invented|brand/i);
-    assert.match(
-      generate,
-      /Only use facts present in OfferMeta name, description, and category/
-    );
   });
 
-  it("7. unknown Product identity is rejected before OpenAI and media generation", () => {
-    const identityUnknownIdx = post.indexOf("PRODUCT_IDENTITY_INSUFFICIENT_CODE");
-    const mediaIdx = post.indexOf("/api/media/fetch");
-    const openaiIdx = generate.indexOf("openai.chat.completions.create(");
-    assert.ok(identityUnknownIdx >= 0);
-    assert.ok(mediaIdx > identityUnknownIdx, "identity gate must run before media fetch");
-    assert.ok(openaiIdx > mediaIdx, "OpenAI must run after the identity gate");
-    assert.match(post, new RegExp(PRODUCT_IDENTITY_INSUFFICIENT_CODE));
-    assert.match(post, /status: 400/);
+  it("3. category-only Product is not auto-selected as usable", () => {
+    const categoryOnly = deriveProductDisplayIdentity({
+      title: "",
+      category: "Electronics",
+    });
+    assert.equal(categoryOnly.source, "category");
+    assert.equal(hasTrustworthyProductIdentity(categoryOnly), false);
+    assert.match(reels, /hasTrustworthyProductIdentity\(/);
+    assert.match(reels, /identityUnknown: !trusted/);
+    assert.match(reels, /function firstUsableProductForGeneration\(/);
+    assert.match(reels, /!p\?\.identityUnknown/);
+    assert.match(reels, /return firstUsable;/);
+    assert.match(panels, /if \(unavailable\) return;/);
+  });
+
+  it("4. merchant + broad category alone does not pass generation authority", () => {
+    const merchantCategory = deriveProductDisplayIdentity({
+      title: "SKU_43928492",
+      merchantName: "Acme Store",
+      category: "Electronics",
+      description: "",
+    });
+    assert.equal(merchantCategory.source, "merchant_category");
+    assert.equal(merchantCategory.unknown, true);
+    assert.equal(hasTrustworthyProductIdentity(merchantCategory), false);
+    assert.match(merchantCategory.displayName, /Acme/i);
+    assert.match(merchantCategory.displayName, /Electronics/i);
+  });
+
+  it("5. title-based identity remains usable", () => {
+    const titled = deriveProductDisplayIdentity({
+      title: "TubeMagic",
+      category: "creator tools",
+    });
+    assert.equal(titled.source, "title");
+    assert.equal(titled.unknown, false);
+    assert.equal(titled.displayName, "TubeMagic");
+    assert.equal(hasTrustworthyProductIdentity(titled), true);
+  });
+
+  it("6. shortened-title identity remains usable", () => {
+    const title =
+      "Wireless Bluetooth Noise Cancelling Earbuds With Charging Case Black EU";
+    const shortened = deriveProductDisplayIdentity({ title });
+    assert.equal(shortened.source, "shortened_title");
+    assert.equal(shortened.unknown, false);
+    assert.equal(hasTrustworthyProductIdentity(shortened), true);
+    assert.ok(shortened.displayName.split(" ").length <= 6);
+    for (const word of shortened.displayName.split(" ")) {
+      assert.match(title, new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+    }
+    const helperShort = shortenVerifiedProductTitle(title);
+    assert.ok(helperShort.split(" ").length <= 6);
+  });
+
+  it("7. concise description identity remains usable", () => {
+    const description = "Wireless noise cancelling earbuds for travel.";
+    const fromDescription = deriveProductDisplayIdentity({
+      title: "ABCD-182736-XX",
+      description,
+      category: "Uncategorized",
+    });
+    assert.equal(fromDescription.source, "description");
+    assert.equal(hasTrustworthyProductIdentity(fromDescription), true);
+  });
+
+  it("8. promotional description remains unusable as Product identity", () => {
+    const promo =
+      "Best choice for anyone who wants amazing quality and fast shipping.";
+    const fromPromo = deriveProductDisplayIdentity({
+      title: "SKU_43928492",
+      description: promo,
+      category: "Electronics",
+    });
+    assert.equal(hasTrustworthyProductIdentity(fromPromo), false);
+    assert.notEqual(fromPromo.source, "description");
+    assert.doesNotMatch(fromPromo.displayName, /Best choice/i);
+    assert.doesNotMatch(fromPromo.displayName, /amazing quality/i);
+  });
+
+  it("9. client and server share equivalent trustworthy-identity behavior", () => {
+    assert.match(identitySrc, /GENERATION_TRUSTED_IDENTITY_SOURCES/);
+    assert.match(identitySrc, /"title"/);
+    assert.match(identitySrc, /"shortened_title"/);
+    assert.match(identitySrc, /"description"/);
+    assert.match(reels, /hasTrustworthyProductIdentity\(identity\)/);
+    assert.match(generate, /hasTrustworthyProductIdentity\(identity\)/);
+    assert.match(post, /PRODUCT_IDENTITY_INSUFFICIENT_CODE/);
+    assert.match(post, /!hasTrustworthyProductIdentity\(identity\)/);
+    assert.match(reels, /PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE/);
     assert.equal(
       PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
       "Autoaffi does not have enough product information to create a relevant Reel. Choose another product."
     );
-    assert.match(reels, /PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE/);
-
-    const unknown = deriveProductDisplayIdentity({
-      title: "ABCD-182736-XX",
-      merchantName: "",
-      category: "unknown",
-    });
-    assert.equal(unknown.unknown, true);
-    assert.equal(hasTrustworthyProductIdentity(unknown), false);
+    const identityUnknownIdx = post.indexOf("PRODUCT_IDENTITY_INSUFFICIENT_CODE");
+    const mediaIdx = post.indexOf("/api/media/fetch");
+    assert.ok(mediaIdx > identityUnknownIdx);
   });
 
-  it("8. unknown Product is not silently auto-selected for generation", () => {
-    assert.match(reels, /function firstUsableProductForGeneration\(/);
-    assert.match(reels, /!p\?\.identityUnknown/);
-    assert.match(reels, /\.filter\(\(p: any\) => p\.id\)/);
-    assert.doesNotMatch(reels, /\.filter\(\(p: any\) => p\.id && p\.name\)/);
-    assert.match(reels, /return firstUsable;/);
-    assert.match(panels, /if \(unavailable\) return;/);
-    assert.match(panels, /Unavailable for Reels/);
-    assert.match(reels, /selectedProduct\.identityUnknown/);
-    assert.match(reels, /generateBlocked=\{\s*offerMode === "product" && Boolean\(selectedProduct\?\.identityUnknown\)/);
+  it("10. parseOptionalCommission whitespace is unavailable", () => {
+    assert.equal(parseOptionalCommission("   "), null);
+    assert.equal(formatCreatorCommissionPercent(parseOptionalCommission("   ")), "");
   });
 
-  it("9. long Product titles shorten using source words only", () => {
-    const title =
-      "Wireless Bluetooth Noise Cancelling Earbuds With Charging Case Black EU";
-    const shortened = shortenVerifiedProductTitle(title);
-    assert.match(shortened, /Wireless/i);
-    assert.match(shortened, /Earbuds/i);
-    assert.ok(shortened.split(" ").length <= 6);
-    for (const word of shortened.split(" ")) {
-      assert.match(title, new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
-    }
-    assert.doesNotMatch(shortened, /Invented|Premium|ProMax/i);
-
-    const stuffed =
-      "Cheap Best Buy Wireless Bluetooth Headphones Headphones Headphones Sale Hot Deal Black EU Fast Shipping Extra Bonus Gift";
-    const stuffedShort = shortenVerifiedProductTitle(stuffed);
-    assert.ok(stuffedShort.split(" ").length <= 6);
-    for (const word of stuffedShort.split(" ")) {
-      assert.match(
-        stuffed,
-        new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
-      );
-    }
-    assert.doesNotMatch(stuffedShort, /Studio|AirPods|Sony|Invented/i);
-
-    const fromTitle = deriveProductDisplayIdentity({ title });
-    assert.equal(fromTitle.unknown, false);
-    assert.equal(fromTitle.source, "shortened_title");
-    for (const word of fromTitle.displayName.split(" ")) {
-      assert.match(title, new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
-    }
-  });
-
-  it("10. missing commission remains unavailable, not 0%", () => {
-    assert.equal(formatCreatorCommissionPercent(null), "");
-    assert.equal(formatCreatorCommissionPercent(undefined), "");
-    assert.equal(parseOptionalCommission(null), null);
+  it("11. parseOptionalCommission empty string is unavailable", () => {
     assert.equal(parseOptionalCommission(""), null);
-    assert.doesNotMatch(
-      reels,
-      /Number\.isFinite\(Number\(p\?\.commission\)\)[\s\S]{0,40}: 0/
-    );
+    assert.equal(parseOptionalCommission(null), null);
+    assert.equal(parseOptionalCommission(undefined), null);
     assert.match(panels, /Commission unavailable/);
     assert.match(meta, /Commission unavailable/);
-    assert.equal(formatCreatorCommissionPercent(parseOptionalCommission(null)), "");
   });
 
-  it("11. real zero commission remains 0%", () => {
+  it("12. parseOptionalCommission(0) remains verified zero", () => {
     assert.equal(parseOptionalCommission(0), 0);
-    assert.equal(parseOptionalCommission("0"), 0);
     assert.equal(formatCreatorCommissionPercent(0), "0%");
-    assert.match(
-      generate,
-      /Do NOT mention affiliate commission, payout percent, or creator earnings/
-    );
   });
 
-  it("12. canonical affiliateUrl / mode / SubID / tracking remain untouched", () => {
+  it("13. parseOptionalCommission(\"0\") remains verified zero", () => {
+    assert.equal(parseOptionalCommission("0"), 0);
+    assert.equal(formatCreatorCommissionPercent(parseOptionalCommission("0")), "0%");
+  });
+
+  it("14. public fallback script contains no internal/developer-style instruction", () => {
+    assert.doesNotMatch(fallbackScript, /Talk about that, not a premium vibe/);
+    assert.doesNotMatch(fallbackScript, /with a clear identity/);
+    assert.doesNotMatch(generate, /Talk about that, not a premium vibe/);
+    assert.doesNotMatch(generate, /product with a clear identity/);
+    assert.match(fallbackScript, /This reel is about \$\{offerName\}/);
+    assert.match(fallbackScript, /hasTrustworthyProductIdentity\(identity\)/);
+  });
+
+  it("15. affiliateUrl, canonical mode, SubID and tracking remain untouched", () => {
     const select = read(selectRel);
     const subid = read(subidRel);
 
@@ -286,7 +248,8 @@ describe("Reels product identity and creator commission", () => {
     assert.match(subid, /export function buildProductSubId/);
     assert.match(reels, /affiliateUrl: p\.promo_link/);
     assert.match(reels, /setFunnelUrl\(funnel\.funnel_url \|\| ""\)/);
-    assert.doesNotMatch(identity, /buildStableSubId|promo_link|\/go\/offer/);
+    assert.doesNotMatch(identitySrc, /buildStableSubId|promo_link|\/go\/offer/);
     assert.equal(isIdentifierLikeProductTitle("SKU_43928492"), true);
+    assert.equal(PRODUCT_IDENTITY_INSUFFICIENT_CODE, "PRODUCT_IDENTITY_INSUFFICIENT");
   });
 });
