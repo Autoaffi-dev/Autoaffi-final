@@ -650,7 +650,7 @@ export function classifyProductMediaRole(
   return "none";
 }
 
-export function coerceReelSceneMediaType(_type?: unknown): "video" {
+export function coerceReelSceneMediaType(_type?: unknown): "mixed" | "video" | "stills" {
   return "video";
 }
 
