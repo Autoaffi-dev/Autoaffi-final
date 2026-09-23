@@ -3,10 +3,15 @@ import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 import {
   buildProductSearchQueryVariants,
   candidateMatchesVerifiedProduct,
+  coerceReelSceneMediaType,
   extractNativeMediaText,
+  isAcceptableProductPoolItem,
   isGraphicUnsafeStock,
-  isProductMediaRelevant,
+  isStrongProductVideo,
+  physicalProductReelNeedsObjectVideo,
+  physicalProductScenePoolHasRequiredObjectVideo,
   buildVerifiedProductMediaTerms,
+  buildSafeReelFallbackVideo,
 } from "@/lib/content-optimizer/reelsProductMediaRelevance";
 
 export const runtime = "nodejs";
@@ -2608,14 +2613,6 @@ async function fetchExtraQueryBatches(params: {
     if ((type === "video" || type === "mixed") && pixabayKey) {
       tasks.push(safe(() => fetchPixabayVideos(q, pixabayKey, pixabayPage)));
     }
-
-    if ((type === "stills" || type === "mixed") && pexelsKey) {
-      tasks.push(safe(() => fetchPexelsImages(q, pexelsKey, pexelsPage)));
-    }
-
-    if ((type === "stills" || type === "mixed") && pixabayKey) {
-      tasks.push(safe(() => fetchPixabayImages(q, pixabayKey, pixabayPage)));
-    }
   }
 
   const results = await Promise.all(tasks);
@@ -2628,45 +2625,15 @@ async function fetchExtraQueryBatches(params: {
   return dedupeMedia(out);
 }
 
-function buildFallback(type: MediaType): MediaItem[] {
-  if (type === "stills") {
-    return [
-      {
-        source: "fallback",
-        type: "image",
-        url: "https://public.autoaffi.com/fallback/thumb1.jpg",
-        thumb: "https://public.autoaffi.com/fallback/thumb1.jpg",
-        duration: 0,
-      },
-    ];
-  }
-
-  if (type === "video") {
-    return [
-      {
-        source: "fallback",
-        type: "video",
-        url: "https://public.autoaffi.com/fallback/fallback1.mp4",
-        thumb: "https://public.autoaffi.com/fallback/thumb1.jpg",
-        duration: 8,
-      },
-    ];
-  }
-
+function buildFallback(_type?: MediaType): MediaItem[] {
+  const fallback = buildSafeReelFallbackVideo(8);
   return [
     {
-      source: "fallback",
-      type: "video",
-      url: "https://public.autoaffi.com/fallback/fallback1.mp4",
-      thumb: "https://public.autoaffi.com/fallback/thumb1.jpg",
-      duration: 8,
-    },
-    {
-      source: "fallback",
-      type: "image",
-      url: "https://public.autoaffi.com/fallback/thumb1.jpg",
-      thumb: "https://public.autoaffi.com/fallback/thumb1.jpg",
-      duration: 0,
+      source: fallback.source,
+      type: fallback.type,
+      url: fallback.url,
+      thumb: fallback.thumb,
+      duration: fallback.duration,
     },
   ];
 }
@@ -2753,25 +2720,32 @@ function ensureAtLeastOneProductWowClip(
   combined: MediaItem[],
   scored: ScoredMediaItem[],
   type: MediaType,
-  active: boolean
+  active: boolean,
+  productOffer?: { name?: string; category?: string; description?: string }
 ): MediaItem[] {
   if (!active) return combined;
   if (type === "stills") return combined;
 
-  const alreadyHas = combined.some(
-    (item) =>
-      item.type === "video" &&
-      hasProductBridge(extractTerms(item)) &&
-      (
-        hasCropSafeProductSignal(extractTerms(item)) ||
-        isStrongVertical(item.width, item.height) ||
-        isSquareish(item.width, item.height)
-      )
-  );
+  const alreadyHasStrong =
+    productOffer && physicalProductReelNeedsObjectVideo(productOffer)
+      ? combined.some((item) => isStrongProductVideo(productOffer, item))
+      : combined.some(
+          (item) =>
+            item.type === "video" &&
+            hasProductBridge(extractTerms(item)) &&
+            (
+              hasCropSafeProductSignal(extractTerms(item)) ||
+              isStrongVertical(item.width, item.height) ||
+              isSquareish(item.width, item.height)
+            )
+        );
 
-  if (alreadyHas) return combined;
+  if (alreadyHasStrong) return combined;
 
   const candidate =
+    (productOffer && physicalProductReelNeedsObjectVideo(productOffer)
+      ? scored.find((item) => isStrongProductVideo(productOffer, item))
+      : undefined) ||
     scored.find(
       (item) =>
         item.type === "video" &&
@@ -2795,6 +2769,9 @@ function ensureAtLeastOneProductWowClip(
     );
 
   if (!candidate) return combined;
+  if (productOffer && physicalProductReelNeedsObjectVideo(productOffer) && !isStrongProductVideo(productOffer, candidate)) {
+    return combined;
+  }
 
   const current = [...combined];
   const existing = new Set(current.map((item) => item.url));
@@ -2938,7 +2915,7 @@ export async function POST(req: Request) {
     void body?.userId;
 
     const rawQuery = safeString(body?.query);
-    const type = normalizeMediaType(body?.type);
+    const type = coerceReelSceneMediaType(normalizeMediaType(body?.type));
     const seed = body?.seed;
 
     const offerMode = normalizeOfferMode(
@@ -3016,7 +2993,7 @@ export async function POST(req: Request) {
 
     const globalTasks: Array<Promise<MediaItem[] | null>> = [];
 
-    if ((type === "video" || type === "mixed") && SUPABASE_URL && SUPABASE_KEY) {
+    if (SUPABASE_URL && SUPABASE_KEY) {
       globalTasks.push(safe(() => fetchVideezyCache(SUPABASE_URL, SUPABASE_KEY, hash)));
     }
 
@@ -3025,20 +3002,12 @@ export async function POST(req: Request) {
       const pexelsPage = ((hash + i) % 4) + 1;
       const pixabayPage = (((hash >> 2) + i) % 4) + 1;
 
-      if ((type === "video" || type === "mixed") && PEXELS_KEY) {
+      if (PEXELS_KEY) {
         globalTasks.push(safe(() => fetchPexelsVideos(q, PEXELS_KEY, pexelsPage)));
       }
 
-      if ((type === "video" || type === "mixed") && PIXABAY_KEY) {
+      if (PIXABAY_KEY) {
         globalTasks.push(safe(() => fetchPixabayVideos(q, PIXABAY_KEY, pixabayPage)));
-      }
-
-      if ((type === "stills" || type === "mixed") && PEXELS_KEY) {
-        globalTasks.push(safe(() => fetchPexelsImages(q, PEXELS_KEY, pexelsPage)));
-      }
-
-      if ((type === "stills" || type === "mixed") && PIXABAY_KEY) {
-        globalTasks.push(safe(() => fetchPixabayImages(q, PIXABAY_KEY, pixabayPage)));
       }
     }
 
@@ -3050,7 +3019,8 @@ export async function POST(req: Request) {
 
     all = dedupeMedia(all)
       .filter((m) => isHttpUrl(m.url))
-      .filter((item) => !isGraphicUnsafeStock(extractNativeMediaText(item)));
+      .filter((item) => !isGraphicUnsafeStock(extractNativeMediaText(item)))
+      .filter((m) => m.type === "video" && m.duration >= MIN_VIDEO_DURATION);
 
     const enrichParams = {
       rawQuery,
@@ -3061,24 +3031,10 @@ export async function POST(req: Request) {
     };
 
     if (offerMode === "product" && !freedomRecurring) {
-      all = all.filter((item) => isProductMediaRelevant(productOffer, item));
+      all = all.filter((item) => isAcceptableProductPoolItem(productOffer, item));
     }
 
     all = all.map((item) => enrichMediaItemForIntent(item, enrichParams));
-
-    if (type === "video") {
-      all = all.filter((m) => m.type === "video" && m.duration >= MIN_VIDEO_DURATION);
-    }
-
-    if (type === "stills") {
-      all = all.filter((m) => m.type === "image");
-    }
-
-    if (type === "mixed") {
-      all = all.filter(
-        (m) => (m.type === "video" && m.duration >= MIN_VIDEO_DURATION) || m.type === "image"
-      );
-    }
 
     let scored: ScoredMediaItem[] = all
       .filter((item) =>
@@ -3194,8 +3150,9 @@ export async function POST(req: Request) {
         });
 
         const relevantExtra = extraProduct.filter((item) => {
+          if (item.type !== "video") return false;
           if (isGraphicUnsafeStock(extractNativeMediaText(item))) return false;
-          return isProductMediaRelevant(productOffer, item);
+          return isAcceptableProductPoolItem(productOffer, item);
         });
 
         all = dedupeMedia([
@@ -3320,7 +3277,8 @@ export async function POST(req: Request) {
       combined,
       scored,
       type,
-      offerMode === "product"
+      offerMode === "product",
+      productOffer
     );
 
     combined = ensureAtLeastOneFunnelWowClip(
@@ -3382,7 +3340,15 @@ export async function POST(req: Request) {
       }
     }
 
-    combined = combined.slice(0, MAX_RESULTS);
+    combined = combined.filter((item) => item.type === "video").slice(0, MAX_RESULTS);
+
+    if (
+      offerMode === "product" &&
+      physicalProductReelNeedsObjectVideo(productOffer) &&
+      !physicalProductScenePoolHasRequiredObjectVideo(productOffer, combined)
+    ) {
+      combined = buildFallback(type);
+    }
 
     if (offerMode === "recurring" && (freedomRecurring || forceNatureFreedomClip) && type !== "stills") {
       const videoCount = combined.filter((item) => item.type === "video").length;
@@ -3418,7 +3384,7 @@ export async function POST(req: Request) {
       {
         ok: false,
         error: err?.message || "Media fetch failed",
-        combined: buildFallback("mixed"),
+        combined: buildFallback("video"),
       },
       { status: 500 }
     );

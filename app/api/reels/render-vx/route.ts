@@ -3,7 +3,14 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 import { copyCallerAuthHeaders } from "@/lib/auth/forwardCallerAuth";
 import { requireTrustedInternalOrigin } from "@/lib/auth/internalAppOrigin";
-import { buildProductMediaQuery } from "@/lib/content-optimizer/reelsProductMediaRelevance";
+import {
+  buildProductMediaQuery,
+  buildSafeReelFallbackVideo,
+  coerceReelSceneMediaType,
+  filterReelSceneVideos,
+  finalizeReelScenePool,
+  isReelSceneVideo,
+} from "@/lib/content-optimizer/reelsProductMediaRelevance";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -132,11 +139,8 @@ function normalizeBoolean(value: unknown, fallback = false): boolean {
   return fallback;
 }
 
-function normalizeMediaType(value: unknown): MediaType {
-  const v = normalizeText(value, "mixed").toLowerCase();
-  if (v === "video") return "video";
-  if (v === "stills") return "stills";
-  return "mixed";
+function normalizeMediaType(_value: unknown): MediaType {
+  return coerceReelSceneMediaType(_value);
 }
 
 function getSafeOfferMode(mode?: unknown): OfferMode {
@@ -2054,8 +2058,7 @@ function ensureProductWowIncluded(
       (x) =>
         classifyMediaType(x.item) === "video" &&
         hasProductBridge(buildMediaBlob(x.item))
-    )?.item ||
-    scoredPool.find((x) => hasProductBridge(buildMediaBlob(x.item)))?.item;
+    )?.item;
 
   if (!candidate) return items;
 
@@ -2975,7 +2978,7 @@ async function fetchFallbackMedia(
       headers: copyCallerAuthHeaders(req, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         query: params.query,
-        type: params.mediaType,
+        type: "video",
         offerMode: params.offerMeta.mode,
         offerMeta: {
           name: params.offerMeta.name,
@@ -3023,7 +3026,7 @@ async function fetchFallbackMedia(
       ...(Array.isArray(mediaJson?.items) ? mediaJson.items : []),
     ];
 
-    return dedupeMedia(items).slice(0, 24);
+    return filterReelSceneVideos(dedupeMedia(items)).slice(0, 24);
   } catch (error) {
     console.error("[RENDER-VX ROUTE] media/fetch crash", error);
     return [];
@@ -3169,89 +3172,20 @@ function enforceBestWorkerMedia(
 
   const clean = dedupeMedia(sourcePool).filter(isReasonableForWorker);
 
-  const videos = clean.filter((m) => classifyMediaType(m) === "video");
-  const images = clean.filter((m) => classifyMediaType(m) === "image");
-  const unknowns = clean.filter((m) => classifyMediaType(m) === "unknown");
+  const videos = clean.filter((m) => classifyMediaType(m) === "video" || isReelSceneVideo(m));
 
   let picked: MediaItem[] = [];
 
-  if (mediaType === "video") {
-    if (videos.length > 0) {
-      const pickedVideos = pickStoryDrivenMedia(
-        videos,
-        storyText,
-        offerMode,
-        maxItems,
-        context,
-        variantSeed
-      );
-      picked = pickedVideos.length > 0 ? pickedVideos.slice(0, maxItems) : videos.slice(0, maxItems);
-    } else if (images.length > 0) {
-      const pickedImages = pickStoryDrivenMedia(
-        images,
-        storyText,
-        offerMode,
-        maxItems,
-        context,
-        variantSeed
-      );
-      picked = pickedImages.length > 0 ? pickedImages.slice(0, maxItems) : images.slice(0, maxItems);
-    }
-  } else if (mediaType === "stills") {
-    if (images.length > 0) {
-      const pickedImages = pickStoryDrivenMedia(
-        images,
-        storyText,
-        offerMode,
-        maxItems,
-        context,
-        variantSeed
-      );
-      picked = pickedImages.length > 0 ? pickedImages.slice(0, maxItems) : images.slice(0, maxItems);
-    } else if (videos.length > 0) {
-      const pickedVideos = pickStoryDrivenMedia(
-        videos,
-        storyText,
-        offerMode,
-        maxItems,
-        context,
-        variantSeed
-      );
-      picked = pickedVideos.length > 0 ? pickedVideos.slice(0, maxItems) : videos.slice(0, maxItems);
-    }
-  } else {
-    if (videos.length > 0) {
-      const pickedVideos = pickStoryDrivenMedia(
-        videos,
-        storyText,
-        offerMode,
-        maxItems,
-        context,
-        variantSeed
-      );
-      picked = pickedVideos.length > 0 ? pickedVideos.slice(0, maxItems) : videos.slice(0, maxItems);
-    } else if (images.length > 0) {
-      const pickedImages = pickStoryDrivenMedia(
-        images,
-        storyText,
-        offerMode,
-        maxItems,
-        context,
-        variantSeed
-      );
-      picked = pickedImages.length > 0 ? pickedImages.slice(0, maxItems) : images.slice(0, maxItems);
-    } else if (unknowns.length > 0) {
-      const pickedUnknowns = pickStoryDrivenMedia(
-        unknowns,
-        storyText,
-        offerMode,
-        maxItems,
-        context,
-        variantSeed
-      );
-      picked =
-        pickedUnknowns.length > 0 ? pickedUnknowns.slice(0, maxItems) : unknowns.slice(0, maxItems);
-    }
+  if (videos.length > 0) {
+    const pickedVideos = pickStoryDrivenMedia(
+      videos,
+      storyText,
+      offerMode,
+      maxItems,
+      context,
+      variantSeed
+    );
+    picked = pickedVideos.length > 0 ? pickedVideos.slice(0, maxItems) : videos.slice(0, maxItems);
   }
 
   picked = ensureNatureFreedomIncluded(picked, clean, storyText, offerMode, maxItems, context);
@@ -3266,15 +3200,10 @@ function enforceBestWorkerMedia(
   return picked.slice(0, maxItems);
 }
 
-function prioritizeForRequestedMediaType(items: MediaItem[], mediaType: MediaType): MediaItem[] {
+function prioritizeForRequestedMediaType(items: MediaItem[], _mediaType: MediaType): MediaItem[] {
   const deduped = dedupeMedia(items);
-  const videos = deduped.filter((m) => classifyMediaType(m) === "video");
-  const images = deduped.filter((m) => classifyMediaType(m) === "image");
-  const unknowns = deduped.filter((m) => classifyMediaType(m) === "unknown");
-
-  if (mediaType === "video") return [...videos, ...images, ...unknowns];
-  if (mediaType === "stills") return [...images, ...videos, ...unknowns];
-  return [...videos, ...images, ...unknowns];
+  const videos = deduped.filter((m) => classifyMediaType(m) === "video" || isReelSceneVideo(m));
+  return videos;
 }
 
 function fillSelectedMediaToTarget(
@@ -3510,105 +3439,24 @@ export async function POST(req: Request) {
       : [];
 
     if (!mediaFiles.length) {
-      if (mediaType === "stills") {
-        const stillsFallback = await fetchFallbackMedia(req, {
-          query: mediaQuery,
-          mediaType: "stills",
-          offerMeta,
-          freedomRecurring,
-          forceNatureFreedomClip: freedomRecurring,
-        });
+      const preferredVideos = await fetchFallbackMedia(req, {
+        query: mediaQuery,
+        mediaType: "video",
+        offerMeta,
+        freedomRecurring,
+        forceNatureFreedomClip: freedomRecurring,
+      });
 
-        console.log("[RENDER-VX ROUTE] Fallback media stills-first", {
-          jobId,
-          baseUrl,
-          query: mediaQuery,
-          requestedType: mediaType,
-          stillsCount: stillsFallback.length,
-          preview: previewMedia(stillsFallback, storyText, offerMeta, genre),
-        });
+      console.log("[RENDER-VX ROUTE] Fallback media video-first", {
+        jobId,
+        baseUrl,
+        query: mediaQuery,
+        requestedType: mediaType,
+        preferredVideosCount: preferredVideos.length,
+        preview: previewMedia(preferredVideos, storyText, offerMeta, genre),
+      });
 
-        if (stillsFallback.length) {
-          mediaFiles = stillsFallback;
-        } else {
-          const mixedFallback = await fetchFallbackMedia(req, {
-            query: mediaQuery,
-            mediaType: "mixed",
-            offerMeta,
-            freedomRecurring,
-            forceNatureFreedomClip: freedomRecurring,
-          });
-
-          console.log("[RENDER-VX ROUTE] Fallback media mixed after stills", {
-            jobId,
-            baseUrl,
-            query: mediaQuery,
-            mixedFallbackCount: mixedFallback.length,
-            preview: previewMedia(mixedFallback, storyText, offerMeta, genre),
-          });
-
-          mediaFiles = mixedFallback;
-        }
-      } else {
-        const preferredVideos = await fetchFallbackMedia(req, {
-          query: mediaQuery,
-          mediaType: "video",
-          offerMeta,
-          freedomRecurring,
-          forceNatureFreedomClip: freedomRecurring,
-        });
-
-        console.log("[RENDER-VX ROUTE] Fallback media video-first", {
-          jobId,
-          baseUrl,
-          query: mediaQuery,
-          requestedType: mediaType,
-          preferredVideosCount: preferredVideos.length,
-          preview: previewMedia(preferredVideos, storyText, offerMeta, genre),
-        });
-
-        if (preferredVideos.length) {
-          mediaFiles = preferredVideos;
-        } else {
-          const mixedFallback = await fetchFallbackMedia(req, {
-            query: mediaQuery,
-            mediaType: "mixed",
-            offerMeta,
-            freedomRecurring,
-            forceNatureFreedomClip: freedomRecurring,
-          });
-
-          console.log("[RENDER-VX ROUTE] Fallback media mixed", {
-            jobId,
-            baseUrl,
-            query: mediaQuery,
-            mixedFallbackCount: mixedFallback.length,
-            preview: previewMedia(mixedFallback, storyText, offerMeta, genre),
-          });
-
-          if (mixedFallback.length) {
-            mediaFiles = mixedFallback;
-          } else {
-            const stillsFallback = await fetchFallbackMedia(req, {
-              query: mediaQuery,
-              mediaType: "stills",
-              offerMeta,
-              freedomRecurring,
-              forceNatureFreedomClip: freedomRecurring,
-            });
-
-            console.log("[RENDER-VX ROUTE] Fallback media stills", {
-              jobId,
-              baseUrl,
-              query: mediaQuery,
-              stillsFallbackCount: stillsFallback.length,
-              preview: previewMedia(stillsFallback, storyText, offerMeta, genre),
-            });
-
-            mediaFiles = stillsFallback;
-          }
-        }
-      }
+      mediaFiles = preferredVideos;
     } else {
       console.log("[RENDER-VX ROUTE] Incoming mediaFiles from body", {
         jobId,
@@ -3616,6 +3464,8 @@ export async function POST(req: Request) {
         preview: previewMedia(mediaFiles, storyText, offerMeta, genre),
       });
     }
+
+    mediaFiles = filterReelSceneVideos(mediaFiles);
 
     if (freedomRecurring) {
       const hasNatureAlready = mediaFiles.some((item) => isStrictFreedomRecurringAsset(item));
@@ -3639,7 +3489,7 @@ export async function POST(req: Request) {
         for (const query of natureQueries) {
           const fetched = await fetchFallbackMedia(req, {
             query,
-            mediaType: mediaType === "stills" ? "stills" : "video",
+            mediaType: "video",
             offerMeta,
             freedomRecurring: true,
             forceNatureFreedomClip: true,
@@ -3681,7 +3531,7 @@ export async function POST(req: Request) {
         for (const query of productQueries) {
           const fetched = await fetchFallbackMedia(req, {
             query,
-            mediaType: mediaType === "stills" ? "stills" : "video",
+            mediaType: "video",
             offerMeta,
             freedomRecurring: false,
             forceNatureFreedomClip: false,
@@ -3722,7 +3572,7 @@ export async function POST(req: Request) {
         for (const query of funnelQueries) {
           const fetched = await fetchFallbackMedia(req, {
             query,
-            mediaType: mediaType === "stills" ? "stills" : "video",
+            mediaType: "video",
             offerMeta,
             freedomRecurring: false,
             forceNatureFreedomClip: false,
@@ -3812,7 +3662,7 @@ export async function POST(req: Request) {
       for (const query of topUpQueries) {
         const fetched = await fetchFallbackMedia(req, {
           query,
-          mediaType: mediaType === "stills" ? "stills" : "video",
+          mediaType: "video",
           offerMeta,
           freedomRecurring,
           forceNatureFreedomClip: freedomRecurring,
@@ -3846,14 +3696,20 @@ export async function POST(req: Request) {
       });
     }
 
+    mediaFiles = finalizeReelScenePool(
+      offerMeta.mode,
+      {
+        name: offerMeta.name,
+        category: offerMeta.category,
+        description: offerMeta.description || "",
+      },
+      filterReelSceneVideos(mediaFiles)
+    );
+
     if (!mediaFiles.length) {
       mediaFiles = [
         {
-          source: "fallback",
-          type: "video",
-          url: "https://public.autoaffi.com/fallback/fallback1.mp4",
-          thumb: "https://public.autoaffi.com/fallback/thumb1.jpg",
-          duration: videoLength,
+          ...buildSafeReelFallbackVideo(videoLength),
           title: genre,
         },
       ];
@@ -3905,10 +3761,7 @@ export async function POST(req: Request) {
 
     const workerStoryBlob = `${storyText}\n${offerMeta.name}\n${offerMeta.category}\n${offerMeta.mode}`;
 
-    const defaultMaxSegments =
-      mediaType === "stills"
-        ? 5
-        : freedomRecurring
+    const defaultMaxSegments = freedomRecurring
         ? 6
         : offerMeta.mode === "product" || offerMeta.mode === "funnel"
         ? 6
@@ -4077,7 +3930,7 @@ export async function POST(req: Request) {
         ...asRecord(body.renderHints),
         jobId,
         prioritizeStoryFlow: true,
-        preferVideoClips: mediaType !== "stills",
+        preferVideoClips: true,
         maxSegments: requestedMaxSegments,
         pacing: "dynamic",
         clipStrategy: freedomRecurring

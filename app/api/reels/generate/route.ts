@@ -9,7 +9,13 @@ import {
   PRODUCT_IDENTITY_INSUFFICIENT_CODE,
   PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
 } from "@/lib/content-optimizer/reelsProductIdentity";
-import { buildProductMediaQuery } from "@/lib/content-optimizer/reelsProductMediaRelevance";
+import {
+  buildProductMediaQuery,
+  buildSafeReelFallbackVideo,
+  coerceReelSceneMediaType,
+  filterReelSceneVideos,
+  finalizeReelScenePool,
+} from "@/lib/content-optimizer/reelsProductMediaRelevance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1253,8 +1259,7 @@ function buildDefaultScenePlan(
   const d = clampNumber(totalDuration, 15, 15, 25);
   const mode = getSafeOfferMode(offerMode);
 
-  const mediaHint: ExportTimelineScene["mediaHint"] =
-    mediaType === "stills" ? "image" : mediaType === "video" ? "video" : "mixed";
+  const mediaHint: ExportTimelineScene["mediaHint"] = "video";
 
   const shortScenesProduct: ExportTimelineScene[] = [
     { index: 0, start: 0, end: 2.1, label: "Hook / old way feels dumb", mediaHint, overlayText: "Why do people still do this?", sceneHint: "hook" },
@@ -2855,12 +2860,7 @@ function ensureSceneCountAndStructure(params: {
           const end = Number.isFinite(Number(scene?.end)) ? Number(scene.end) : fb.end;
           const label = safeString(scene?.label, fb.label);
           const overlayText = safeString(scene?.overlayText, fb.overlayText || "");
-          const mediaHint =
-            scene?.mediaHint === "image" ||
-            scene?.mediaHint === "video" ||
-            scene?.mediaHint === "mixed"
-              ? scene.mediaHint
-              : fb.mediaHint;
+          const mediaHint = "video";
           const sceneHint =
             scene?.sceneHint === "hook" ||
             scene?.sceneHint === "problem" ||
@@ -3498,7 +3498,7 @@ export async function POST(req: Request) {
     const storyFormat = safeString(body.storyFormat, "hook-story-cta");
     const videoLength = clampNumber(body.videoLength ?? 15, 15, 15, 25);
     const mode = body.mode || "manual";
-    const mediaType = body.mediaType || "mixed";
+    const mediaType = coerceReelSceneMediaType(body.mediaType || "mixed");
     const nicheDescription = safeString(body.nicheDescription, "");
 
     const rawOfferMeta: OfferMetaInput | SelectedOfferInput | undefined | null =
@@ -3610,7 +3610,7 @@ export async function POST(req: Request) {
       headers: copyCallerAuthHeaders(req, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         query: mediaQuery,
-        type: mediaType,
+        type: coerceReelSceneMediaType(mediaType),
         seed: generationId,
         freedomRecurring,
         forceNatureFreedomClip: freedomRecurring,
@@ -3664,6 +3664,22 @@ export async function POST(req: Request) {
             const url = resolveMediaUrl(m);
             return typeof url === "string" && /^https?:\/\//i.test(url);
           });
+          mediaFiles = filterReelSceneVideos(
+            mediaFiles.map((m) => ({
+              ...m,
+              url: resolveMediaUrl(m),
+              type: mediaTypeOf(m),
+            }))
+          );
+          mediaFiles = finalizeReelScenePool(
+            selectedOfferResolved.mode,
+            {
+              name: offerMetaInput.name,
+              category: offerMetaInput.category,
+              description: offerMetaInput.description,
+            },
+            mediaFiles
+          );
 
           mediaFiles = dedupeMedia(mediaFiles);
 
@@ -3722,11 +3738,7 @@ export async function POST(req: Request) {
 
       mediaFiles = [
         {
-          source: "fallback",
-          url: "https://public.autoaffi.com/fallback/fallback1.mp4",
-          thumb: "https://public.autoaffi.com/fallback/thumb1.jpg",
-          duration: videoLength || 15,
-          type: "video",
+          ...buildSafeReelFallbackVideo(videoLength || 15),
         },
       ];
     }

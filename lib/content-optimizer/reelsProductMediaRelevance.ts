@@ -11,6 +11,18 @@ export type ProductMediaOfferInput = {
   mode?: string | null;
 };
 
+export type ProductObjectAnchors = {
+  tokens: string[];
+  phrases: string[];
+};
+
+export type ProductMediaRole = "strong" | "contextual" | "none";
+
+export const REEL_SAFE_FALLBACK_VIDEO_URL =
+  "https://public.autoaffi.com/fallback/fallback1.mp4";
+export const REEL_SAFE_FALLBACK_THUMB_URL =
+  "https://public.autoaffi.com/fallback/thumb1.jpg";
+
 const STOP_WORDS = new Set([
   "a",
   "an",
@@ -108,6 +120,92 @@ const MEDIA_NOISE_TOKENS = new Set([
   "com",
 ]);
 
+const CONTEXT_ONLY_TOKENS = new Set([
+  "fitness",
+  "sports",
+  "beauty",
+  "outdoor",
+  "software",
+  "digital",
+  "lifestyle",
+  "creator",
+  "gym",
+  "workout",
+  "training",
+  "athlete",
+  "athletic",
+  "nature",
+  "forest",
+  "camping",
+  "trail",
+  "hiking",
+  "kitchen",
+  "food",
+  "cooking",
+  "skincare",
+  "cosmetics",
+  "makeup",
+  "saas",
+  "app",
+  "ai",
+  "laptop",
+  "computer",
+  "dashboard",
+  "screen",
+  "ui",
+  "mobile",
+  "exercise",
+  "fashion",
+  "street",
+  "woman",
+  "man",
+  "people",
+  "person",
+]);
+
+const PHYSICAL_OBJECT_LEXICON = new Set([
+  "bag",
+  "duffel",
+  "backpack",
+  "earbuds",
+  "earbud",
+  "headphones",
+  "headphone",
+  "bottle",
+  "poles",
+  "pole",
+  "serum",
+]);
+
+const SPECIFIC_OBJECT_TOKENS = new Set([
+  "duffel",
+  "backpack",
+  "earbuds",
+  "earbud",
+  "headphones",
+  "headphone",
+  "bottle",
+  "serum",
+]);
+
+const DIGITAL_HINT_TOKENS = new Set([
+  "software",
+  "saas",
+  "app",
+  "platform",
+  "scheduler",
+  "dashboard",
+  "editor",
+]);
+
+const BAG_CONFLICT_TOKENS = new Set([
+  "purse",
+  "handbag",
+  "clutch",
+  "crossbody",
+  "evening",
+]);
+
 const VISUAL_SYNONYMS: Record<string, string[]> = {
   gym: ["fitness", "workout", "sports"],
   fitness: ["gym", "workout", "sports"],
@@ -141,6 +239,9 @@ const CONCEPT_FAMILY: Record<string, string> = {
   workout: "gym",
   sports: "gym",
   athletic: "gym",
+  athlete: "gym",
+  training: "gym",
+  exercise: "gym",
   bag: "bag",
   duffel: "bag",
   backpack: "bag",
@@ -168,6 +269,14 @@ const CONCEPT_FAMILY: Record<string, string> = {
   screen: "ui",
   ui: "ui",
   mobile: "ui",
+  earbuds: "audio",
+  earbud: "audio",
+  headphones: "audio",
+  headphone: "audio",
+  bottle: "bottle",
+  poles: "poles",
+  pole: "poles",
+  serum: "serum",
 };
 
 export const GRAPHIC_STOCK_SAFETY_PATTERNS = [
@@ -355,6 +464,321 @@ export function candidateMatchesVerifiedProduct(
   return matchedFamilies.size >= 2;
 }
 
+function nativeContainsPhrase(nativeText: string, phrase: string): boolean {
+  const needle = normalizeText(phrase);
+  if (!needle) return false;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`).test(nativeText);
+}
+
+function hasAny(tokens: string[], needles: string[]): boolean {
+  return needles.some((needle) => tokens.includes(needle));
+}
+
+export function derivePhysicalProductObjectAnchors(
+  input: ProductMediaOfferInput
+): ProductObjectAnchors {
+  if (isDigitalProduct(input)) {
+    return { tokens: [], phrases: [] };
+  }
+
+  const verified = buildVerifiedProductMediaTerms(input);
+  const tokens: string[] = [];
+  const phrases: string[] = [];
+
+  const objectHits = verified.filter((token) => PHYSICAL_OBJECT_LEXICON.has(token));
+  tokens.push(...objectHits);
+
+  const gymBagFamily =
+    hasAny(verified, ["bag", "duffel", "backpack"]) &&
+    hasAny(verified, ["gym", "fitness", "workout", "sports", "duffel"]);
+
+  if (gymBagFamily) {
+    tokens.push("bag", "duffel");
+    phrases.push("gym bag", "sports bag", "duffel bag", "duffel");
+  }
+
+  if (hasAny(verified, ["earbuds", "earbud", "headphones", "headphone"])) {
+    tokens.push("earbuds", "earbud", "headphones", "headphone");
+    phrases.push("earbuds", "headphones");
+  }
+
+  if (verified.includes("bottle")) {
+    tokens.push("bottle");
+    phrases.push("water bottle", "bottle");
+  }
+
+  if (hasAny(verified, ["poles", "pole"]) && hasAny(verified, ["hiking", "trail", "outdoor", "trekking"])) {
+    tokens.push("poles", "pole");
+    phrases.push("hiking poles", "trekking poles");
+  }
+
+  if (verified.includes("serum")) {
+    tokens.push("serum");
+    phrases.push("skincare serum", "serum");
+  }
+
+  return {
+    tokens: uniqueTokens(tokens.filter((token) => !CONTEXT_ONLY_TOKENS.has(token))),
+    phrases: uniqueTokens(phrases),
+  };
+}
+
+export function hasPhysicalProductObjectAnchors(input: ProductMediaOfferInput): boolean {
+  const anchors = derivePhysicalProductObjectAnchors(input);
+  return anchors.tokens.length > 0 || anchors.phrases.length > 0;
+}
+
+export function isDigitalProduct(input: ProductMediaOfferInput): boolean {
+  const category = tokenizeMediaText(input.category);
+  const verified = buildVerifiedProductMediaTerms(input);
+  const objectHits = verified.filter((token) => PHYSICAL_OBJECT_LEXICON.has(token));
+  if (objectHits.length > 0) return false;
+
+  return [...category, ...verified].some((token) => DIGITAL_HINT_TOKENS.has(token));
+}
+
+function productContextTokens(input: ProductMediaOfferInput): string[] {
+  return buildVerifiedProductMediaTerms(input).filter((token) => CONTEXT_ONLY_TOKENS.has(token));
+}
+
+function isGymSportsDuffelBagProduct(input: ProductMediaOfferInput): boolean {
+  const verified = buildVerifiedProductMediaTerms(input);
+  const anchors = derivePhysicalProductObjectAnchors(input);
+  return (
+    (anchors.tokens.includes("bag") || anchors.tokens.includes("duffel")) &&
+    hasAny(verified, ["gym", "fitness", "workout", "sports", "duffel"])
+  );
+}
+
+export function hasIncompatibleBagClassConflict(
+  input: ProductMediaOfferInput,
+  nativeText: unknown
+): boolean {
+  if (!isGymSportsDuffelBagProduct(input)) return false;
+
+  const blob = normalizeText(nativeText);
+  const nativeTokens = nativeMatchTokens(blob);
+  const conflict =
+    nativeTokens.some((token) => BAG_CONFLICT_TOKENS.has(token)) ||
+    nativeContainsPhrase(blob, "evening bag") ||
+    nativeContainsPhrase(blob, "fashion handbag") ||
+    nativeContainsPhrase(blob, "crossbody purse");
+
+  if (!conflict) return false;
+
+  const compatible =
+    nativeContainsPhrase(blob, "gym bag") ||
+    nativeContainsPhrase(blob, "sports bag") ||
+    nativeContainsPhrase(blob, "duffel bag") ||
+    nativeTokens.includes("duffel");
+
+  return !compatible;
+}
+
+function nativeHasObjectAnchor(
+  anchors: ProductObjectAnchors,
+  nativeText: string,
+  nativeTokens: string[]
+): boolean {
+  if (nativeTokens.some((token) => anchors.tokens.includes(token))) return true;
+  return anchors.phrases.some((phrase) => nativeContainsPhrase(nativeText, phrase));
+}
+
+function nativeHasClearObjectPhrase(
+  anchors: ProductObjectAnchors,
+  nativeText: string,
+  nativeTokens: string[]
+): boolean {
+  if (anchors.phrases.some((phrase) => nativeContainsPhrase(nativeText, phrase))) return true;
+  return nativeTokens.some((token) => SPECIFIC_OBJECT_TOKENS.has(token) && anchors.tokens.includes(token));
+}
+
+function nativeHasSupportingContext(
+  input: ProductMediaOfferInput,
+  nativeTokens: string[]
+): boolean {
+  const context = productContextTokens(input);
+  if (context.length === 0) return false;
+
+  const matchedFamilies = new Set<string>();
+  for (const nativeToken of nativeTokens) {
+    if (!nativeTokenMatchesVerified(nativeToken, context)) continue;
+    matchedFamilies.add(conceptFamily(nativeToken));
+  }
+  return matchedFamilies.size >= 1;
+}
+
+export function isStrongProductObjectNative(
+  input: ProductMediaOfferInput,
+  nativeText: unknown
+): boolean {
+  const blob = normalizeText(nativeText);
+  if (!blob || isGraphicUnsafeStock(blob)) return false;
+  if (hasIncompatibleBagClassConflict(input, blob)) return false;
+
+  const anchors = derivePhysicalProductObjectAnchors(input);
+  if (anchors.tokens.length === 0 && anchors.phrases.length === 0) return false;
+
+  const nativeTokens = nativeMatchTokens(blob).filter((token) => !MEDIA_NOISE_TOKENS.has(token));
+  const objectMatch = nativeHasObjectAnchor(anchors, blob, nativeTokens);
+  if (!objectMatch) return false;
+
+  if (nativeHasClearObjectPhrase(anchors, blob, nativeTokens)) return true;
+  return nativeHasSupportingContext(input, nativeTokens);
+}
+
+export function isContextualProductNative(
+  input: ProductMediaOfferInput,
+  nativeText: unknown
+): boolean {
+  const blob = normalizeText(nativeText);
+  if (!blob || isGraphicUnsafeStock(blob)) return false;
+  if (hasIncompatibleBagClassConflict(input, blob)) return false;
+  if (isStrongProductObjectNative(input, blob)) return false;
+
+  const nativeTokens = nativeMatchTokens(blob).filter((token) => !MEDIA_NOISE_TOKENS.has(token));
+  return nativeHasSupportingContext(input, nativeTokens);
+}
+
+export function classifyProductMediaRole(
+  input: ProductMediaOfferInput,
+  nativeText: unknown
+): ProductMediaRole {
+  if (isStrongProductObjectNative(input, nativeText)) return "strong";
+  if (isContextualProductNative(input, nativeText)) return "contextual";
+  return "none";
+}
+
+export function coerceReelSceneMediaType(_type?: unknown): "video" {
+  return "video";
+}
+
+export function isReelSceneVideo(item: { type?: unknown; url?: unknown }): boolean {
+  const type = String(item?.type || "").toLowerCase();
+  const url = String(item?.url || "").toLowerCase();
+  if (type === "image") return false;
+  if (/\.(jpg|jpeg|png|gif|webp|avif|bmp|svg)(\?|#|$)/i.test(url)) return false;
+  if (type === "video") return true;
+  if (/\.(mp4|mov|webm|mkv)(\?|#|$)/i.test(url)) return true;
+  if (url.includes("fallback1.mp4")) return true;
+  return false;
+}
+
+export function buildSafeReelFallbackVideo(duration = 8): {
+  source: "fallback";
+  type: "video";
+  url: string;
+  thumb: string;
+  duration: number;
+} {
+  return {
+    source: "fallback",
+    type: "video",
+    url: REEL_SAFE_FALLBACK_VIDEO_URL,
+    thumb: REEL_SAFE_FALLBACK_THUMB_URL,
+    duration,
+  };
+}
+
+export function isStrongProductVideo(
+  input: ProductMediaOfferInput,
+  item: {
+    type?: unknown;
+    url?: unknown;
+    nativeTitle?: unknown;
+    nativeDescription?: unknown;
+    nativeTags?: unknown;
+    title?: unknown;
+    tags?: unknown;
+    description?: unknown;
+    thumb?: unknown;
+  }
+): boolean {
+  if (!isReelSceneVideo(item)) return false;
+  return isStrongProductObjectNative(input, extractNativeMediaText(item));
+}
+
+export function isAcceptableProductPoolItem(
+  input: ProductMediaOfferInput,
+  item: {
+    type?: unknown;
+    url?: unknown;
+    nativeTitle?: unknown;
+    nativeDescription?: unknown;
+    nativeTags?: unknown;
+    title?: unknown;
+    tags?: unknown;
+    description?: unknown;
+    thumb?: unknown;
+  }
+): boolean {
+  const nativeText = extractNativeMediaText(item);
+  if (isGraphicUnsafeStock(nativeText)) return false;
+  if (!isReelSceneVideo(item) && String(item?.type || "") === "image") return false;
+
+  if (isDigitalProduct(input) || !hasPhysicalProductObjectAnchors(input)) {
+    return candidateMatchesVerifiedProduct(buildVerifiedProductMediaTerms(input), nativeText);
+  }
+
+  const role = classifyProductMediaRole(input, nativeText);
+  return role === "strong" || role === "contextual";
+}
+
+export function physicalProductReelNeedsObjectVideo(input: ProductMediaOfferInput): boolean {
+  return hasPhysicalProductObjectAnchors(input) && !isDigitalProduct(input);
+}
+
+export function physicalProductScenePoolHasRequiredObjectVideo(
+  input: ProductMediaOfferInput,
+  items: Array<{
+    type?: unknown;
+    url?: unknown;
+    nativeTitle?: unknown;
+    nativeDescription?: unknown;
+    nativeTags?: unknown;
+    title?: unknown;
+    tags?: unknown;
+    description?: unknown;
+    thumb?: unknown;
+  }>
+): boolean {
+  if (!physicalProductReelNeedsObjectVideo(input)) {
+    return items.some((item) => isReelSceneVideo(item));
+  }
+  return items.some((item) => isStrongProductVideo(input, item));
+}
+
+export function filterReelSceneVideos<T extends { type?: unknown; url?: unknown }>(items: T[]): T[] {
+  return items.filter((item) => isReelSceneVideo(item));
+}
+
+export function finalizeReelScenePool<
+  T extends {
+    type?: unknown;
+    url?: unknown;
+    nativeTitle?: unknown;
+    nativeDescription?: unknown;
+    nativeTags?: unknown;
+    title?: unknown;
+    tags?: unknown;
+    description?: unknown;
+    thumb?: unknown;
+  },
+>(
+  offerMode: string | null | undefined,
+  input: ProductMediaOfferInput,
+  items: T[]
+): T[] {
+  const videos = filterReelSceneVideos(items);
+  if (offerMode === "product" && physicalProductReelNeedsObjectVideo(input)) {
+    if (!videos.some((item) => isStrongProductVideo(input, item))) {
+      return [];
+    }
+  }
+  return videos;
+}
+
 export function isProductMediaRelevant(
   input: ProductMediaOfferInput,
   item: {
@@ -366,11 +790,17 @@ export function isProductMediaRelevant(
     description?: unknown;
     url?: unknown;
     thumb?: unknown;
+    type?: unknown;
   }
 ): boolean {
   const nativeText = extractNativeMediaText(item);
   if (isGraphicUnsafeStock(nativeText)) return false;
-  return candidateMatchesVerifiedProduct(buildVerifiedProductMediaTerms(input), nativeText);
+
+  if (isDigitalProduct(input) || !hasPhysicalProductObjectAnchors(input)) {
+    return candidateMatchesVerifiedProduct(buildVerifiedProductMediaTerms(input), nativeText);
+  }
+
+  return isStrongProductObjectNative(input, nativeText);
 }
 
 export function productQueryContainsForbiddenGenericExpansion(query: string): boolean {

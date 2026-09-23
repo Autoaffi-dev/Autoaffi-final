@@ -374,7 +374,7 @@ export default function Page() {
   const [guidedText, setGuidedText] = useState("");
 
   const [mediaType, setMediaType] = useState<"mixed" | "video" | "stills">(
-    "mixed"
+    "video"
   );
 
   const [videoLength, setVideoLength] = useState<number>(15);
