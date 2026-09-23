@@ -184,9 +184,10 @@ const SPECIFIC_OBJECT_TOKENS = new Set([
   "earbud",
   "headphones",
   "headphone",
-  "bottle",
   "serum",
 ]);
+
+const AMBIGUOUS_OBJECT_TOKENS = new Set(["bag", "bottle", "pole", "poles"]);
 
 const DIGITAL_HINT_TOKENS = new Set([
   "software",
@@ -505,7 +506,11 @@ export function derivePhysicalProductObjectAnchors(
 
   if (verified.includes("bottle")) {
     tokens.push("bottle");
-    phrases.push("water bottle", "bottle");
+    phrases.push("water bottle");
+    if (hasAny(verified, ["stainless", "steel"])) phrases.push("stainless steel bottle");
+    if (verified.includes("reusable") && verified.includes("water")) {
+      phrases.push("reusable water bottle");
+    }
   }
 
   if (hasAny(verified, ["poles", "pole"]) && hasAny(verified, ["hiking", "trail", "outdoor", "trekking"])) {
@@ -590,8 +595,16 @@ function nativeHasClearObjectPhrase(
   nativeText: string,
   nativeTokens: string[]
 ): boolean {
-  if (anchors.phrases.some((phrase) => nativeContainsPhrase(nativeText, phrase))) return true;
-  return nativeTokens.some((token) => SPECIFIC_OBJECT_TOKENS.has(token) && anchors.tokens.includes(token));
+  const specificPhrases = anchors.phrases.filter(
+    (phrase) => phrase.includes(" ") || !AMBIGUOUS_OBJECT_TOKENS.has(phrase)
+  );
+  if (specificPhrases.some((phrase) => nativeContainsPhrase(nativeText, phrase))) return true;
+  return nativeTokens.some(
+    (token) =>
+      SPECIFIC_OBJECT_TOKENS.has(token) &&
+      anchors.tokens.includes(token) &&
+      !AMBIGUOUS_OBJECT_TOKENS.has(token)
+  );
 }
 
 function nativeHasSupportingContext(
@@ -609,6 +622,39 @@ function nativeHasSupportingContext(
   return matchedFamilies.size >= 1;
 }
 
+function nativeHasSupportingVerifiedFacts(
+  input: ProductMediaOfferInput,
+  nativeTokens: string[]
+): boolean {
+  const supportTerms = buildVerifiedProductMediaTerms(input).filter(
+    (token) => !AMBIGUOUS_OBJECT_TOKENS.has(token) && !MEDIA_NOISE_TOKENS.has(token)
+  );
+  if (supportTerms.length === 0) return nativeHasSupportingContext(input, nativeTokens);
+
+  const matchedFamilies = new Set<string>();
+  for (const nativeToken of nativeTokens) {
+    if (AMBIGUOUS_OBJECT_TOKENS.has(nativeToken)) continue;
+    if (!nativeTokenMatchesVerified(nativeToken, supportTerms)) continue;
+    matchedFamilies.add(conceptFamily(nativeToken));
+  }
+  return matchedFamilies.size >= 1;
+}
+
+function isGenericBagOnlyNative(
+  input: ProductMediaOfferInput,
+  nativeText: string,
+  nativeTokens: string[]
+): boolean {
+  if (!isGymSportsDuffelBagProduct(input)) return false;
+  const hasSpecificBagPhrase =
+    nativeContainsPhrase(nativeText, "gym bag") ||
+    nativeContainsPhrase(nativeText, "sports bag") ||
+    nativeContainsPhrase(nativeText, "duffel bag");
+  if (hasSpecificBagPhrase) return false;
+  if (nativeTokens.includes("duffel") || nativeTokens.includes("backpack")) return false;
+  return nativeTokens.includes("bag");
+}
+
 export function isStrongProductObjectNative(
   input: ProductMediaOfferInput,
   nativeText: unknown
@@ -624,8 +670,12 @@ export function isStrongProductObjectNative(
   const objectMatch = nativeHasObjectAnchor(anchors, blob, nativeTokens);
   if (!objectMatch) return false;
 
+  if (isGenericBagOnlyNative(input, blob, nativeTokens)) {
+    return nativeHasSupportingContext(input, nativeTokens);
+  }
+
   if (nativeHasClearObjectPhrase(anchors, blob, nativeTokens)) return true;
-  return nativeHasSupportingContext(input, nativeTokens);
+  return nativeHasSupportingVerifiedFacts(input, nativeTokens);
 }
 
 export function isContextualProductNative(
@@ -771,12 +821,15 @@ export function finalizeReelScenePool<
   items: T[]
 ): T[] {
   const videos = filterReelSceneVideos(items);
-  if (offerMode === "product" && physicalProductReelNeedsObjectVideo(input)) {
-    if (!videos.some((item) => isStrongProductVideo(input, item))) {
+  if (offerMode !== "product") return videos;
+
+  const acceptable = videos.filter((item) => isAcceptableProductPoolItem(input, item));
+  if (physicalProductReelNeedsObjectVideo(input)) {
+    if (!acceptable.some((item) => isStrongProductVideo(input, item))) {
       return [];
     }
   }
-  return videos;
+  return acceptable;
 }
 
 export function isProductMediaRelevant(

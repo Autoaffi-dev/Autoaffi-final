@@ -3260,7 +3260,18 @@ function hardenParsedResponse(params: {
     videoLength
   );
 
-  parsed.mediaFiles = Array.isArray(mediaFiles) ? mediaFiles : [];
+  parsed.mediaFiles = finalizeReelScenePool(
+    selectedOfferResolved.mode,
+    {
+      name: offerMetaInput.name,
+      category: offerMetaInput.category,
+      description: offerMetaInput.description,
+    },
+    Array.isArray(mediaFiles) ? mediaFiles : []
+  );
+  if (!parsed.mediaFiles.length) {
+    parsed.mediaFiles = [buildSafeReelFallbackVideo(videoLength)];
+  }
   parsed.freedomRecurring = freedomRecurring;
   parsed.mediaQuery = mediaQuery;
 

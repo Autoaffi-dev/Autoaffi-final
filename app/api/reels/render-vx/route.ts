@@ -3886,7 +3886,26 @@ export async function POST(req: Request) {
       scoringContext
     );
 
-    const workerReadyMediaFiles = sequencedMedia.map((item) =>
+    let lockedSceneMedia = finalizeReelScenePool(
+      offerMeta.mode,
+      {
+        name: offerMeta.name,
+        category: offerMeta.category,
+        description: offerMeta.description || "",
+      },
+      sequencedMedia
+    );
+
+    if (!lockedSceneMedia.length) {
+      lockedSceneMedia = [
+        {
+          ...buildSafeReelFallbackVideo(videoLength),
+          title: genre,
+        },
+      ];
+    }
+
+    const workerReadyMediaFiles = lockedSceneMedia.map((item) =>
       enrichMediaForWorker(item, offerMeta.mode, workerStoryBlob, scoringContext)
     );
 

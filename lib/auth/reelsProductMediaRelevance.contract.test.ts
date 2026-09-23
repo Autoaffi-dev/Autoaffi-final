@@ -506,3 +506,154 @@ describe("Reels product media relevance", () => {
     assert.ok(anchors.phrases.includes("gym bag"));
   });
 });
+
+describe("Reels final product video pool invariant", () => {
+  const generate = read(generateRel);
+  const render = read(renderRel);
+  const helper = read(helperRel);
+
+  const gymBag = {
+    name: "Adidas Power Gym Bag",
+    category: "fitness",
+    description: "Durable gym bag for carrying workout clothes and shoes.",
+  };
+
+  const bottle = {
+    name: "Stainless Steel Water Bottle",
+    category: "outdoors",
+    description: "Reusable stainless steel water bottle.",
+  };
+
+  it("1. Water Bottle + native bottle alone is NOT strong", () => {
+    assert.equal(isStrongProductObjectNative(bottle, "bottle"), false);
+    assert.equal(isStrongProductVideo(bottle, videoItem("bottle")), false);
+  });
+
+  it("2. Water Bottle + cosmetic bottle fails", () => {
+    assert.equal(isStrongProductObjectNative(bottle, "cosmetic bottle"), false);
+    assert.equal(isProductMediaRelevant(bottle, { nativeTitle: "cosmetic bottle" }), false);
+  });
+
+  it("3. Water Bottle + lotion bottle fails", () => {
+    assert.equal(isStrongProductObjectNative(bottle, "lotion bottle"), false);
+  });
+
+  it("4. Water Bottle + water bottle passes", () => {
+    assert.equal(isStrongProductObjectNative(bottle, "water bottle"), true);
+    assert.equal(isStrongProductVideo(bottle, videoItem("reusable water bottle")), true);
+  });
+
+  it("5. Water Bottle + verified stainless steel bottle passes", () => {
+    assert.equal(isStrongProductObjectNative(bottle, "stainless steel bottle"), true);
+    assert.equal(isStrongProductVideo(bottle, videoItem("stainless steel bottle")), true);
+  });
+
+  it("6. Gym Bag final pool removes river when a strong gym-bag video exists", () => {
+    const pool = finalizeReelScenePool("product", gymBag, [
+      videoItem("sports bag athlete", { url: "https://cdn.example.com/bag.mp4" }),
+      videoItem("calm river forest", { url: "https://cdn.example.com/river.mp4" }),
+    ]);
+    assert.equal(pool.length, 1);
+    assert.equal(pool[0].nativeTitle, "sports bag athlete");
+  });
+
+  it("7. Gym Bag final pool removes lotion video when a strong gym-bag video exists", () => {
+    const pool = finalizeReelScenePool("product", gymBag, [
+      videoItem("gym duffel bag on bench", { url: "https://cdn.example.com/bag.mp4" }),
+      videoItem("lotion bottle closeup", { url: "https://cdn.example.com/lotion.mp4" }),
+    ]);
+    assert.equal(pool.length, 1);
+    assert.equal(pool[0].nativeTitle, "gym duffel bag on bench");
+  });
+
+  it("8. Gym Bag final pool may keep valid contextual gym B-roll with a strong object video", () => {
+    const pool = finalizeReelScenePool("product", gymBag, [
+      videoItem("sports bag athlete", { url: "https://cdn.example.com/bag.mp4" }),
+      videoItem("fitness workout athlete", { url: "https://cdn.example.com/gym.mp4" }),
+    ]);
+    assert.equal(pool.length, 2);
+  });
+
+  it("9. Product finalizer cannot retain an unacceptable video merely because another strong video exists", () => {
+    const pool = finalizeReelScenePool("product", gymBag, [
+      videoItem("sports bag athlete", { url: "https://cdn.example.com/bag.mp4" }),
+      videoItem("generic unrelated camera", { url: "https://cdn.example.com/camera.mp4" }),
+      videoItem("calm river", { url: "https://cdn.example.com/river.mp4" }),
+    ]);
+    assert.equal(pool.every((item) => isAcceptableProductPoolItem(gymBag, item)), true);
+    assert.equal(pool.some((item) => String(item.nativeTitle).includes("river")), false);
+    assert.equal(pool.some((item) => String(item.nativeTitle).includes("camera")), false);
+  });
+
+  it("10. Product pool with no strong physical Product-object video is empty for fallback", () => {
+    const pool = finalizeReelScenePool("product", gymBag, [
+      videoItem("fitness workout athlete", { url: "https://cdn.example.com/a.mp4" }),
+      videoItem("gym training exercise", { url: "https://cdn.example.com/b.mp4" }),
+    ]);
+    assert.equal(pool.length, 0);
+  });
+
+  it("11. Recurring finalizer is video-only and does not apply Product semantic rules", () => {
+    const pool = finalizeReelScenePool("recurring", gymBag, [
+      videoItem("calm river forest", { url: "https://cdn.example.com/river.mp4" }),
+      imageItem("sports bag athlete"),
+    ]);
+    assert.equal(pool.length, 1);
+    assert.equal(pool[0].type, "video");
+    assert.equal(pool[0].nativeTitle, "calm river forest");
+  });
+
+  it("12. Funnel finalizer is video-only and does not apply Product semantic rules", () => {
+    const pool = finalizeReelScenePool("funnel", gymBag, [
+      videoItem("landing page conversion", { url: "https://cdn.example.com/funnel.mp4" }),
+      imageItem("gym bag"),
+    ]);
+    assert.equal(pool.length, 1);
+    assert.equal(pool[0].type, "video");
+  });
+
+  it("13. Generate uses the finalizer before final scene media", () => {
+    assert.ok(generate.includes("parsed.mediaFiles = finalizeReelScenePool("));
+    assert.ok(
+      generate.lastIndexOf("finalizeReelScenePool(") < generate.lastIndexOf("parsed.mediaFiles")
+    );
+  });
+
+  it("14. RenderVX uses the finalizer before final scene media", () => {
+    const lastFinalize = render.lastIndexOf("finalizeReelScenePool(");
+    const workerMedia = render.indexOf("mediaFiles: workerReadyMediaFiles");
+    assert.ok(lastFinalize >= 0);
+    assert.ok(workerMedia > lastFinalize);
+  });
+
+  it("15. no media is appended after Product finalization without being finalized again", () => {
+    const lastFinalize = render.lastIndexOf("finalizeReelScenePool(");
+    assert.ok(lastFinalize > render.lastIndexOf("ensureProductWowIncluded("));
+    assert.ok(lastFinalize > render.lastIndexOf("fillSelectedMediaToTarget("));
+    assert.ok(lastFinalize > render.lastIndexOf("applyStoryRoleSequence("));
+    assert.match(render, /lockedSceneMedia = finalizeReelScenePool\(/);
+  });
+
+  it("16. still images remain excluded for all modes", () => {
+    for (const mode of ["product", "recurring", "funnel"] as const) {
+      const pool = finalizeReelScenePool(mode, gymBag, [
+        imageItem("sports bag athlete"),
+        videoItem("sports bag athlete", { url: "https://cdn.example.com/ok.mp4" }),
+      ]);
+      assert.equal(pool.some((item) => item.type === "image"), false);
+    }
+  });
+
+  it("17. fallback remains MP4 video", () => {
+    const fallback = buildSafeReelFallbackVideo();
+    assert.equal(fallback.type, "video");
+    assert.match(fallback.url, /fallback1\.mp4$/);
+  });
+
+  it("18. canonical affiliateUrl/mode/SubID/tracking/commission/identity remain untouched", () => {
+    assert.doesNotMatch(helper, /affiliateUrl|savedOfferId|buildStableSubId|promo_link|\/go\/offer/);
+    assert.match(read(canonicalTestRel), /Reels canonical offer destination \+ mode lock/);
+    assert.match(read(identityTestRel), /hasTrustworthyProductIdentity/);
+    assert.match(read(subidRel), /export function buildProductSubId/);
+  });
+});
