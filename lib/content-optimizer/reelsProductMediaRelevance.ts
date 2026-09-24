@@ -230,21 +230,6 @@ const BAG_CONFLICT_TOKENS = new Set([
   "evening",
 ]);
 
-const USE_CASE_ACTION_TOKENS = new Set([
-  "packing",
-  "preparing",
-  "carrying",
-  "applying",
-  "using",
-  "drinking",
-  "listening",
-  "filling",
-  "loading",
-  "wearing",
-  "putting",
-  "ready",
-]);
-
 const PRODUCT_ROLE_RANK: Record<ProductMediaRole, number> = {
   strong: 0,
   use_case: 1,
@@ -758,9 +743,52 @@ export function isUseCaseProductNative(
   if (isStrongProductObjectNative(input, blob)) return false;
 
   const nativeTokens = nativeMatchTokens(blob).filter((token) => !MEDIA_NOISE_TOKENS.has(token));
-  const hasAction = nativeTokens.some((token) => USE_CASE_ACTION_TOKENS.has(token));
-  if (!hasAction) return false;
-  return nativeHasSupportingContext(input, nativeTokens);
+  return matchesTightUseCase(input, blob, nativeTokens);
+}
+
+function textHasTerm(blob: string, tokens: string[], term: string): boolean {
+  if (term.includes(" ")) return nativeContainsPhrase(blob, term);
+  return tokens.includes(term);
+}
+
+function matchesTightUseCase(
+  input: ProductMediaOfferInput,
+  blob: string,
+  nativeTokens: string[]
+): boolean {
+  const verified = buildVerifiedProductMediaTerms(input);
+  const anchors = derivePhysicalProductObjectAnchors(input);
+  let pairs: Array<[string, string]> = [];
+
+  if (
+    (anchors.tokens.includes("bag") || anchors.tokens.includes("duffel")) &&
+    hasAny(verified, ["gym", "fitness", "workout", "sports", "duffel"])
+  ) {
+    pairs = [
+      ["packing", "workout clothes"],
+      ["packing", "gym gear"],
+      ["packing", "shoes"],
+      ["preparing", "gym gear"],
+      ["carrying", "sports equipment"],
+      ["carrying", "workout gear"],
+      ["carrying", "workout equipment"],
+      ["loading", "gym gear"],
+    ];
+  } else if (anchors.tokens.includes("bottle")) {
+    pairs = [
+      ["drinking", "water"],
+      ["filling", "water"],
+    ];
+  } else if (hasAny(anchors.tokens, ["earbuds", "earbud", "headphones", "headphone"])) {
+    pairs = [["listening", "music"]];
+  } else if (anchors.tokens.includes("serum")) {
+    pairs = [["applying", "skincare"]];
+  }
+
+  return pairs.some(
+    ([action, companion]) =>
+      textHasTerm(blob, nativeTokens, action) && textHasTerm(blob, nativeTokens, companion)
+  );
 }
 
 export function isContextualProductNative(
@@ -775,7 +803,20 @@ export function isContextualProductNative(
   if (isUseCaseProductNative(input, blob)) return false;
 
   const nativeTokens = nativeMatchTokens(blob).filter((token) => !MEDIA_NOISE_TOKENS.has(token));
-  return nativeHasSupportingContext(input, nativeTokens);
+  if (nativeHasSupportingContext(input, nativeTokens)) return true;
+  return isGymEnvironmentFootage(input, nativeTokens);
+}
+
+function isGymEnvironmentFootage(input: ProductMediaOfferInput, nativeTokens: string[]): boolean {
+  const verified = buildVerifiedProductMediaTerms(input);
+  const anchors = derivePhysicalProductObjectAnchors(input);
+  const gymBag =
+    (anchors.tokens.includes("bag") || anchors.tokens.includes("duffel")) &&
+    hasAny(verified, ["gym", "fitness", "workout", "sports", "duffel"]);
+  if (!gymBag) return false;
+  return nativeTokens.some((token) =>
+    ["gym", "fitness", "workout", "sports", "athlete", "exercise", "exercising", "training"].includes(token)
+  );
 }
 
 export function classifyProductMediaRole(
@@ -1158,7 +1199,74 @@ export function productSceneSolutionCopy(
     };
   }
   return {
-    description: `${offerName} is the smarter way to handle this, without claiming the footage shows it`,
-    visualCue: "category-relevant motion, no fake product close-up",
+    description: `Introduce ${offerName} as an option for this need without claiming the footage shows the Product.`,
+    visualCue: "category-relevant motion, no product reveal",
+  };
+}
+
+export function productSceneEvidenceCopy(role: ProductMediaRole): { description: string; visualCue: string } {
+  if (productVisibleClaimAllowed(role)) {
+    return {
+      description: "Proof or visible improvement moment",
+      visualCue: "clear workflow/result upgrade with momentum",
+    };
+  }
+  if (role === "use_case") {
+    return {
+      description: "Continue the usage situation around the need, without visual Product proof",
+      visualCue: "use-context motion, no product result claim",
+    };
+  }
+  if (role === "contextual") {
+    return {
+      description: "Continue the category situation, without claiming the footage proves the Product",
+      visualCue: "category environment motion, no product result claim",
+    };
+  }
+  return {
+    description: "Neutral movement with factual copy only",
+    visualCue: "neutral background motion, no product result claim",
+  };
+}
+
+export function productStoryArcGuidance(role: ProductMediaRole, offerName: string): {
+  scene4: string;
+  scene5: string;
+  progression: string;
+  benefit: string;
+} {
+  const name = offerName.trim() || "this product";
+  if (productVisibleClaimAllowed(role)) {
+    return {
+      scene4: `reveal ${name} as the smarter mechanism or shift.`,
+      scene5: "show proof, visible improvement or real-world effect.",
+      progression: "confusion -> frustration -> realization -> visible shift -> payoff.",
+      benefit: "The product benefit must feel tangible, visual and easy to imagine.",
+    };
+  }
+  if (role === "use_case") {
+    return {
+      scene4: `Introduce ${name} as an option for this need without claiming the footage shows the Product.`,
+      scene5:
+        "show the usage situation around the need. Do not request visual Product proof, a visible Product improvement, a transformation, or a Product-in-action result.",
+      progression: "confusion -> frustration -> the need -> usage context -> payoff.",
+      benefit: "Explain the need from verified Product facts. Do not claim the stock footage proves the Product result.",
+    };
+  }
+  if (role === "contextual") {
+    return {
+      scene4: `Introduce ${name} as an option for this need without claiming the footage shows the Product.`,
+      scene5:
+        "show category or environment context. Do not request visual Product proof, a visible Product improvement, a transformation, or a Product-in-action result.",
+      progression: "confusion -> frustration -> the need -> category context -> payoff.",
+      benefit: "Keep the benefit factual. Do not claim the stock footage proves the Product result.",
+    };
+  }
+  return {
+    scene4: `Introduce ${name} as an option for this need without claiming the footage shows the Product.`,
+    scene5:
+      "use neutral movement and factual copy only. Do not request visual Product proof, a visible Product improvement, a transformation, or a Product-in-action result.",
+    progression: "confusion -> frustration -> the need -> factual close -> payoff.",
+    benefit: "Use factual copy only. Do not claim the stock footage proves the Product result.",
   };
 }

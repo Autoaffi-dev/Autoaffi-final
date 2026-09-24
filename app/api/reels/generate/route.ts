@@ -15,9 +15,9 @@ import {
   coerceReelSceneMediaType,
   filterReelSceneVideos,
   finalizeReelScenePool,
+  productSceneEvidenceCopy,
   productSceneSolutionCopy,
-  productVisibleClaimAllowed,
-  productVisualDirection,
+  productStoryArcGuidance,
   strongestProductMediaRole,
   type ProductMediaRole,
 } from "@/lib/content-optimizer/reelsProductMediaRelevance";
@@ -1399,6 +1399,7 @@ function getStoryArcInstructions(params: {
   const videoLength = clampNumber(params.videoLength, 15, 15, 25);
 
   if (mode === "product") {
+    const guidance = productStoryArcGuidance(params.mediaRole || "none", offerName);
     return `
 STORY ARC RULES FOR PRODUCT MODE:
 - Write the reel like a mini transformation story, not a bland promo.
@@ -1406,16 +1407,12 @@ STORY ARC RULES FOR PRODUCT MODE:
 - Scene 1 must interrupt attention and create curiosity around a real frustration.
 - Scene 2 must show what feels annoying, inefficient or unnecessarily difficult.
 - Scene 3 must deepen the cost of staying with the old method and MUST NOT repeat Scene 2.
-- Scene 4 must ${
-      productVisibleClaimAllowed(params.mediaRole || "none")
-        ? `reveal ${offerName} as the smarter mechanism or shift.`
-        : `explain why ${offerName} fits the need. ${productVisualDirection(params.mediaRole || "none", offerName)}`
-    }
-- Scene 5 must show proof, visible improvement or real-world effect.
+- Scene 4 must ${guidance.scene4}
+- Scene 5 must ${guidance.scene5}
 - Scene 6 must show payoff / emotional relief / confidence.
 - Final scene must land the CTA naturally.
-- Progression should feel like: confusion -> frustration -> realization -> visible shift -> payoff.
-- The product benefit must feel tangible, visual and easy to imagine.
+- Progression should feel like: ${guidance.progression}
+- ${guidance.benefit}
 - Use a ${tone} tone with a ${genre} feel for an audience interested in ${niche}.
 - Category context: ${category}.
 - Total length target: ${videoLength}s.
@@ -2108,6 +2105,7 @@ function buildFallbackStoryboard(params: {
 
   const productRole = params.mediaRole || "none";
   const productSolution = productSceneSolutionCopy(offerName, productRole);
+  const productEvidence = productSceneEvidenceCopy(productRole);
 
   if (length >= 19) {
     if (mode === "product") {
@@ -2116,7 +2114,7 @@ function buildFallbackStoryboard(params: {
         { time: t2, description: "Problem moment showing wasted effort or inconvenience", visualCue: "pain-point shot with contrast and urgency" },
         { time: t3, description: "Deeper consequence showing why staying with the old way slows results", visualCue: "tension build, slowdown visual, frustration energy" },
         { time: t4, description: productSolution.description, visualCue: productSolution.visualCue },
-        { time: t5, description: "Proof or visible improvement moment", visualCue: "clear workflow/result upgrade with momentum" },
+        { time: t5, description: productEvidence.description, visualCue: productEvidence.visualCue },
         { time: t6, description: "Final payoff and CTA moment", visualCue: "confident result-focused close with action CTA" },
       ];
     }

@@ -25,7 +25,9 @@ import {
   isUseCaseProductNative,
   physicalProductScenePoolHasRequiredObjectVideo,
   productQueryContainsForbiddenGenericExpansion,
+  productSceneEvidenceCopy,
   productSceneSolutionCopy,
+  productStoryArcGuidance,
   productVisibleClaimAllowed,
   selectNextProductSearchStage,
 } from "../content-optimizer/reelsProductMediaRelevance.ts";
@@ -808,6 +810,36 @@ describe("Always-deliver Product video ladder", () => {
       productSceneSolutionCopy("Adidas Power Gym Bag", "neutral").description,
       /Reveal Adidas Power Gym Bag/
     );
+  });
+
+  it("tight use_case and non-strong scenes avoid product-visible proof", () => {
+    assert.equal(classifyProductMediaRole(gymBag, "packing workout clothes"), "use_case");
+    assert.equal(classifyProductMediaRole(gymBag, "preparing gym gear"), "use_case");
+    assert.equal(classifyProductMediaRole(gymBag, "carrying sports equipment"), "use_case");
+    assert.equal(classifyProductMediaRole(gymBag, "using gym equipment"), "contextual");
+    assert.equal(classifyProductMediaRole(gymBag, "wearing workout clothes"), "contextual");
+    assert.equal(classifyProductMediaRole(gymBag, "ready for gym"), "contextual");
+    assert.equal(classifyProductMediaRole(gymBag, "athlete exercising"), "contextual");
+
+    const strongArc = productStoryArcGuidance("strong", "Adidas Power Gym Bag");
+    assert.match(strongArc.scene4, /reveal Adidas Power Gym Bag/i);
+    assert.match(strongArc.scene5, /visible improvement/);
+
+    for (const role of ["use_case", "contextual", "neutral"] as const) {
+      const arc = productStoryArcGuidance(role, "Adidas Power Gym Bag");
+      assert.doesNotMatch(arc.scene4, /reveal/i);
+      assert.doesNotMatch(arc.scene5, /show proof, visible improvement/);
+      assert.match(arc.scene5, /Do not request visual Product proof/);
+      const solution = productSceneSolutionCopy("Adidas Power Gym Bag", role);
+      const evidence = productSceneEvidenceCopy(role);
+      assert.doesNotMatch(solution.description, /Reveal Adidas Power Gym Bag|smarter/i);
+      assert.doesNotMatch(evidence.description, /Proof or visible improvement|Reveal/i);
+    }
+
+    const generate = read(generateRel);
+    assert.match(generate, /productStoryArcGuidance\(/);
+    assert.match(generate, /productSceneEvidenceCopy\(/);
+    assert.doesNotMatch(generate, /Scene 5 must show proof, visible improvement/);
   });
 
   it("sparse tier D is neutral and page 2 is skipped when page 1 is already enough", () => {
