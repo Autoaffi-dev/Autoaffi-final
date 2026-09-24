@@ -87,14 +87,16 @@ function buildPromoLink(platform: PlatformKey, tracking: string, userId: string)
     }
 
     case "systeme": {
-      const MASTER = process.env.SYSTEME_MASTER_ID || "MASTER_ID_MISSING";
+      const MASTER = String(process.env.SYSTEME_MASTER_ID || "").trim();
+      if (!MASTER) return null;
       return `https://systeme.io/?sa=${encodeURIComponent(
         MASTER
       )}&tk=${encodeURIComponent(tracking)}`;
     }
 
     case "clickfunnels": {
-      const AFF = process.env.CLICKFUNNELS_AFF_CODE || "AFF_CODE_MISSING";
+      const AFF = String(process.env.CLICKFUNNELS_AFF_CODE || "").trim();
+      if (!AFF) return null;
       const SIGNUP =
         process.env.CLICKFUNNELS_SIGNUP_FLOW_URL ||
         "https://www.clickfunnels.com/";
@@ -234,6 +236,14 @@ export async function GET(req: Request) {
       promoLink = buildPromoLink(key, row.tracking_code, resolvedUserId);
     }
 
+    if (
+      promoLink &&
+      (promoLink.includes("MASTER_ID_MISSING") ||
+        promoLink.includes("AFF_CODE_MISSING"))
+    ) {
+      promoLink = null;
+    }
+
     map[key] = {
       key,
       active: !!row.active,
@@ -357,6 +367,16 @@ export async function POST(req: Request) {
   if (active) {
     if (!tracking) tracking = genCode8();
     promo = buildPromoLink(platform, tracking, resolvedUserId);
+    if (!promo) {
+      return jsonNoStore(
+        {
+          error: "PROMO_LINK_UNAVAILABLE",
+          message:
+            "This recurring platform is not configured yet. No promo link was created.",
+        },
+        503
+      );
+    }
   }
 
   const upsertPayload = {

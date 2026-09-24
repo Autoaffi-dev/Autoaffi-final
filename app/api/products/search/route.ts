@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  customerFacingProductCommission,
+  getBetaAutomatedSources,
+} from "@/lib/affiliate/productSourceReadiness";
 
 export const runtime = "nodejs";
 
@@ -69,7 +73,6 @@ type SearchResultRow = {
   qualityScore: number | null;
   geoScope: string | null;
   winnerTier: string | null;
-  approved: boolean;
   lastSeenAt: string | null;
   merchantName?: string | null;
   relevanceScore?: number;
@@ -1090,14 +1093,13 @@ function normalizeRow(row: ProductIndexRow): SearchResultRow {
     affiliate: productUrl,
     imageUrl: row.image_url || null,
     epc: toNumber(row.epc),
-    commission: toNumber(row.commission),
+    commission: customerFacingProductCommission(),
     currency: row.currency || null,
     price: toNumber(row.price),
     score: toNumber(row.score),
     qualityScore: toNumber(row.quality_score),
     geoScope: row.geo_scope || null,
     winnerTier: row.winner_tier || null,
-    approved: Boolean(row.is_approved),
     lastSeenAt: row.last_seen_at || null,
     merchantName: row.merchant_name ? String(row.merchant_name).trim() : null,
   };
@@ -1457,9 +1459,17 @@ async function fetchRows(params: {
     .eq("is_active", true)
     .eq("is_approved", true);
 
-  if (params.sources && params.sources.length > 0) {
-    qb = qb.in("source", params.sources);
-  }
+  const betaSources = getBetaAutomatedSources();
+  const requested = (params.sources || [])
+    .map((source) => String(source || "").trim().toLowerCase())
+    .filter(Boolean);
+  const allowedSources = requested.length
+    ? requested.filter((source) => betaSources.includes(source))
+    : betaSources;
+
+  if (allowedSources.length === 0) return [];
+
+  qb = qb.in("source", allowedSources);
 
   if (params.geos && params.geos.length > 0) {
     qb = qb.in("geo_scope", params.geos);

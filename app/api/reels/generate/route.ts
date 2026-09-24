@@ -757,7 +757,7 @@ function normalizeOfferMetaInput(
   const commissionRate =
     safeString((raw as any)?.commissionRate) ||
     safeString((raw as any)?.commission) ||
-    (mode === "recurring" ? "30% recurring" : "");
+    (mode === "recurring" ? "Commission details vary by platform" : "");
 
   const epc = safeNumber((raw as any)?.epc, undefined);
   const description = safeString((raw as any)?.description, "");
@@ -787,7 +787,7 @@ function offerMetaToResolvedOffer(offerMetaInput: OfferMetaInput): OfferMeta {
     mode,
     commissionRate: safeString(
       offerMetaInput.commissionRate,
-      mode === "recurring" ? "30% recurring" : ""
+      mode === "recurring" ? "Commission details vary by platform" : ""
     ),
     epc: typeof offerMetaInput.epc === "number" ? offerMetaInput.epc : 1.5,
     category: safeString(

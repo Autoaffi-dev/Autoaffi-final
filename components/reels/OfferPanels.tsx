@@ -27,7 +27,7 @@ interface ProductInfo {
 interface RecurringPlatform {
   id: string;
   name: string;
-  commission: number;
+  commission: number | null;
   highlight: boolean;
   note: string;
   subId?: string | null;
@@ -223,11 +223,7 @@ export default function OfferPanels({
 
                   <div className="flex flex-wrap gap-3 text-[11px] mt-2 text-slate-300">
                     {p.source ? <span>{p.source}</span> : null}
-                    {typeof p.commission === "number" ? (
-                      <span>{p.commission}% commission</span>
-                    ) : (
-                      <span>Commission unavailable</span>
-                    )}
+                    <span>Commission unavailable</span>
                     {typeof p.price === "number" ? (
                       <span>
                         {p.currency ? `${p.currency} ` : ""}
@@ -296,7 +292,7 @@ export default function OfferPanels({
                 <p className="text-xs text-slate-400">{p.note}</p>
 
                 <p className="text-[11px] text-emerald-300 mt-1">
-                  {p.commission}% recurring commission
+                  Commission details vary by platform
                 </p>
 
                 {p.highlight && (

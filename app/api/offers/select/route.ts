@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 
 import { requireUserId, UNAUTHORIZED_ERROR } from "@/lib/auth/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildAffiliateLink } from "@/lib/affiliate/buildAffiliateLink";
+import {
+  customerFacingProductCommission,
+  isBetaAutomatedSource,
+  isBetaManualSource,
+  isHttpUrl,
+  warriorPlusTrackingMatches,
+} from "@/lib/affiliate/productSourceReadiness";
+import { buildStableSubId } from "@/lib/affiliate/stableOfferSubId";
 
 export const runtime = "nodejs";
 
@@ -84,22 +91,6 @@ function safeNumber(v: any) {
   return Number.isFinite(n) ? n : null;
 }
 
-function buildStableSubId(userId: string, source: string, sourceOfferId: string) {
-  const shortUser = crypto
-    .createHash("sha1")
-    .update(userId)
-    .digest("hex")
-    .slice(0, 6);
-
-  const shortOffer = crypto
-    .createHash("sha1")
-    .update(`${source}:${sourceOfferId}`)
-    .digest("hex")
-    .slice(0, 6);
-
-  return `aa_u_${shortUser}__src_${source}__of_${shortOffer}`;
-}
-
 function resolveExternalId(item: IncomingItem) {
   const explicit = safeString(item.external_id);
   if (explicit) return explicit;
@@ -141,33 +132,123 @@ export async function POST(req: Request) {
     }
 
     const source = safeString(payload.source).toLowerCase();
-    const externalId = resolveExternalId(payload);
-    const title = safeString(payload.title);
-
-    if (!source || !externalId || !title) {
-      return jsonNoStore(
-        {
-          ok: false,
-          error: "Invalid item: source/external_id/title required",
-        },
-        400
-      );
-    }
-
-    const productUrl =
-      safeNullableString(payload.product_url) ||
-      safeNullableString(payload.landing_url) ||
-      safeNullableString(payload.url);
-
-    if (!productUrl) {
-      return jsonNoStore(
-        { ok: false, error: "Invalid item: product URL required" },
-        400
-      );
-    }
-
     const context = safeNullableString(body?.from) || "affiliate_offers";
     const campaign = safeNullableString(body?.campaign);
+    const manual = isBetaManualSource(source);
+
+    let externalId = "";
+    let title = "";
+    let productUrl = "";
+    let description: string | null = null;
+    let category: string | null = null;
+    let merchantName: string | null = null;
+    let merchantId: string | null = null;
+    let imageUrl: string | null = null;
+    let price: number | null = null;
+    let currency: string | null = null;
+    let geoScope = "worldwide";
+    let canonicalUrl: string | null = null;
+    let canonicalHash: string | null = null;
+
+    if (manual) {
+      productUrl =
+        safeNullableString(payload.product_url) ||
+        safeNullableString(payload.landing_url) ||
+        safeNullableString(payload.url) ||
+        "";
+
+      if (!isHttpUrl(productUrl)) {
+        return jsonNoStore(
+          { ok: false, error: "BYO_URL_MUST_BE_HTTP" },
+          400
+        );
+      }
+
+      externalId = productUrl;
+      title = safeString(payload.title) || "Your affiliate link";
+    } else if (!isBetaAutomatedSource(source)) {
+      return jsonNoStore(
+        { ok: false, error: "SOURCE_NOT_BETA_ENABLED" },
+        400
+      );
+    } else {
+      externalId = resolveExternalId(payload);
+      if (!externalId) {
+        return jsonNoStore(
+          { ok: false, error: "Invalid item: external_id required" },
+          400
+        );
+      }
+
+      const indexRes = await supabaseAdmin
+        .from("product_index")
+        .select(
+          [
+            "source",
+            "external_id",
+            "title",
+            "description",
+            "category",
+            "merchant_name",
+            "merchant_id",
+            "product_url",
+            "landing_url",
+            "image_url",
+            "price",
+            "currency",
+            "geo_scope",
+            "canonical_url",
+            "canonical_hash",
+            "is_active",
+            "is_approved",
+          ].join(",")
+        )
+        .eq("source", source)
+        .eq("external_id", externalId)
+        .maybeSingle();
+
+      if (indexRes.error) {
+        return jsonNoStore(
+          { ok: false, error: "product_index lookup failed", details: indexRes.error.message },
+          500
+        );
+      }
+
+      const indexRow = indexRes.data as Record<string, any> | null;
+      if (!indexRow) {
+        return jsonNoStore({ ok: false, error: "PRODUCT_NOT_IN_INDEX" }, 404);
+      }
+
+      if (indexRow.is_active !== true) {
+        return jsonNoStore({ ok: false, error: "PRODUCT_INACTIVE" }, 400);
+      }
+
+      if (indexRow.is_approved !== true) {
+        return jsonNoStore({ ok: false, error: "PRODUCT_NOT_APPROVED_FOR_INDEX" }, 400);
+      }
+
+      productUrl = safeString(indexRow.product_url || indexRow.landing_url);
+      title = safeString(indexRow.title);
+
+      if (!title || !isHttpUrl(productUrl)) {
+        return jsonNoStore(
+          { ok: false, error: "CANONICAL_PRODUCT_UNAVAILABLE" },
+          400
+        );
+      }
+
+      description = safeNullableString(indexRow.description);
+      category = safeNullableString(indexRow.category);
+      merchantName = safeNullableString(indexRow.merchant_name);
+      merchantId = safeNullableString(indexRow.merchant_id);
+      imageUrl = safeNullableString(indexRow.image_url);
+      price = safeNumber(indexRow.price);
+      currency = safeNullableString(indexRow.currency);
+      geoScope = safeNullableString(indexRow.geo_scope) || "worldwide";
+      canonicalUrl = safeNullableString(indexRow.canonical_url);
+      canonicalHash = safeNullableString(indexRow.canonical_hash);
+    }
+
     const subid = buildStableSubId(userId, source, externalId);
 
     const built = await buildAffiliateLink({
@@ -177,14 +258,32 @@ export async function POST(req: Request) {
       userId,
       subid,
       title,
-      merchantName: safeNullableString(payload.merchant_name),
+      merchantName,
       campaign,
       context,
     });
 
-    const finalAffiliateLink = safeString(built?.affiliateLink) || productUrl;
-    const finalProductUrl = safeString(built?.productUrl) || productUrl;
+    const finalAffiliateLink = safeString(built?.affiliateLink);
+    const finalProductUrl = manual ? productUrl : safeString(built?.productUrl) || productUrl;
     const finalSubId = safeString(built?.subid) || subid;
+
+    if (manual && finalAffiliateLink !== productUrl) {
+      return jsonNoStore({ ok: false, error: "BYO_URL_REWRITTEN" }, 400);
+    }
+
+    if (
+      source === "warriorplus" &&
+      !warriorPlusTrackingMatches(finalAffiliateLink, finalSubId)
+    ) {
+      return jsonNoStore(
+        { ok: false, error: "WARRIORPLUS_TRACKING_UNAVAILABLE" },
+        400
+      );
+    }
+
+    if (!isHttpUrl(finalAffiliateLink)) {
+      return jsonNoStore({ ok: false, error: "DESTINATION_NOT_HTTP" }, 400);
+    }
 
     const upsertRow = {
       user_id: userId,
@@ -193,24 +292,24 @@ export async function POST(req: Request) {
       external_id: externalId,
 
       title,
-      description: safeNullableString(payload.description),
-      category: safeNullableString(payload.category),
-      niche: safeNullableString(payload.niche),
+      description: manual ? safeNullableString(payload.description) : description,
+      category: manual ? safeNullableString(payload.category) : category,
+      niche: manual ? safeNullableString(payload.niche) : null,
 
-      merchant_name: safeNullableString(payload.merchant_name),
-      merchant_id: safeNullableString(payload.merchant_id),
+      merchant_name: manual ? null : merchantName,
+      merchant_id: manual ? null : merchantId,
 
       product_url: finalProductUrl,
-      image_url: safeNullableString(payload.image_url),
+      image_url: manual ? null : imageUrl,
 
-      price: safeNumber(payload.price),
-      currency: safeNullableString(payload.currency),
-      commission: safeNumber(payload.commission),
-      epc: safeNumber(payload.epc),
+      price: manual ? null : price,
+      currency: manual ? null : currency,
+      commission: customerFacingProductCommission(),
+      epc: null,
 
-      geo_scope: safeNullableString(payload.geo_scope) || "worldwide",
-      canonical_url: safeNullableString(payload.canonical_url),
-      canonical_hash: safeNullableString(payload.canonical_hash),
+      geo_scope: geoScope,
+      canonical_url: manual ? null : canonicalUrl,
+      canonical_hash: manual ? null : canonicalHash,
 
       affiliate_link: finalAffiliateLink,
       subid: finalSubId,

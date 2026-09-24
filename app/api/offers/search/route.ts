@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  customerFacingProductCommission,
+  getBetaAutomatedSources,
+} from "@/lib/affiliate/productSourceReadiness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,9 +68,28 @@ export async function GET(req: Request) {
         : "affiliate_offers";
 
     const geo_scope = normalizeOptional(url.searchParams.get("geo_scope"));
-    const source = normalizeOptional(
+    const requestedSource = normalizeOptional(
       url.searchParams.get("source") || url.searchParams.get("sources")
     );
+    const betaSources = getBetaAutomatedSources();
+    const source =
+      requestedSource && betaSources.includes(requestedSource.toLowerCase())
+        ? requestedSource.toLowerCase()
+        : null;
+
+    if (requestedSource && !source) {
+      return jsonNoStore({
+        ok: true,
+        items: [],
+        meta: {
+          q,
+          limit,
+          context,
+          reason: "source_not_beta_enabled",
+          source: requestedSource,
+        },
+      });
+    }
     const category = normalizeOptional(url.searchParams.get("category"));
     const niche = normalizeOptional(url.searchParams.get("niche"));
 
@@ -115,10 +138,12 @@ export async function GET(req: Request) {
           "language",
         ].join(",")
       )
+      .eq("is_active", true)
+      .eq("is_approved", true)
+      .in("source", source ? [source] : betaSources)
       .limit(limit);
 
     if (geo_scope) qb = qb.eq("geo_scope", geo_scope);
-    if (source) qb = qb.eq("source", source);
     if (category) qb = qb.ilike("category", `%${category}%`);
 
     const like = `%${q}%`;
@@ -156,7 +181,7 @@ export async function GET(req: Request) {
         image_url: r.image_url ?? null,
         price: r.price ?? null,
         currency: r.currency ?? null,
-        commission: r.commission ?? null,
+        commission: customerFacingProductCommission(),
         epc: r.epc ?? null,
         geo_scope: r.geo_scope ?? "worldwide",
         score: r.score ?? null,

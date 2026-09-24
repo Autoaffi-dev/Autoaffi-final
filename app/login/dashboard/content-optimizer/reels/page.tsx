@@ -23,7 +23,6 @@ import OfferMetaPanel from "@/components/reels/OfferMetaPanel";
 import ScriptPanel from "@/components/reels/ScriptPanel";
 import {
   deriveProductDisplayIdentity,
-  formatCreatorCommissionPercent,
   hasTrustworthyProductIdentity,
   parseOptionalCommission,
   PRODUCT_IDENTITY_INSUFFICIENT_MESSAGE,
@@ -277,7 +276,7 @@ function buildResolvedOfferMeta(params: {
       identityUnknown: !trusted,
       rating: selectedProduct.stars ?? null,
       category: identity.categoryLabel,
-      commissionRate: formatCreatorCommissionPercent(selectedProduct.commission),
+      commissionRate: "Commission unavailable",
       epc: selectedProduct.epc ?? null,
       affiliateUrl: selectedProductResolvedLink || affiliateLink || "",
       mode: "product" as const,
@@ -299,8 +298,7 @@ function buildResolvedOfferMeta(params: {
       return {
         name: p.name,
         rating: 5.0,
-        commissionRate:
-          p.commission != null ? `${p.commission}% recurring` : "",
+        commissionRate: "Commission details vary by platform",
         affiliateUrl: affiliateLink ?? "",
         mode: "recurring" as const,
         category: "saas",
@@ -869,14 +867,7 @@ export default function Page() {
                 : p.key === "heygen"
                 ? "HeyGen"
                 : p.key.charAt(0).toUpperCase() + p.key.slice(1),
-            commission:
-              p.key === "autoaffi"
-                ? 50
-                : p.key === "systeme"
-                ? 40
-                : p.key === "clickfunnels"
-                ? 30
-                : 30,
+            commission: null,
             highlight:
               p.key === "autoaffi" ||
               p.key === "systeme" ||

@@ -159,12 +159,6 @@ function pickRandom<T>(items: T[], seed: number): T {
   return items[Math.abs(seed) % items.length];
 }
 
-function formatMoney(value?: number | null, currency = "USD") {
-  const n = Number(value ?? 0);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return `${n.toFixed(2)} ${currency}`;
-}
-
 function getHostLabel(url?: string | null) {
   try {
     if (!url) return "";
@@ -188,30 +182,16 @@ function sentenceCase(input?: string | null) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function getEstimatedCustomerEarning(product: ProductResult) {
-  const commission = Number(product.commission ?? 0);
-  const epc = Number(product.epc ?? 0);
-  const currency = product.currency || "USD";
-
-  if (commission > 0) {
-    return `Est. customer earning: ${commission.toFixed(2)} ${currency}`;
-  }
-
-  if (epc > 0) {
-    return `Est. customer earning: ${epc.toFixed(2)} ${currency}`;
-  }
-
-  return "Est. customer earning: data pending";
+function getEstimatedCustomerEarning(_product: ProductResult) {
+  return "Commission unavailable";
 }
 
-function getCommissionLabel(product: ProductResult) {
-  const commission = formatMoney(product.commission, product.currency || "USD");
-  return commission ? `Commission: ${commission}` : "Commission: pending";
+function getCommissionLabel(_product: ProductResult) {
+  return "Commission unavailable";
 }
 
-function getEpcLabel(product: ProductResult) {
-  const epc = formatMoney(product.epc, product.currency || "USD");
-  return epc ? `EPC: ${epc}` : "EPC: pending";
+function getEpcLabel(_product: ProductResult) {
+  return "EPC unavailable";
 }
 
 function getOfferVisual({
@@ -1718,13 +1698,10 @@ export default function PostOptimizerPage() {
   ];
 
   const productAffiliateUrl: string | undefined =
-    activeVaultOffer?.affiliate_link ||
-    activeVaultOffer?.product_url ||
-    selectedSearchSavedOffer?.affiliate_link ||
-    selectedSearchSavedOffer?.product_url ||
-    selectedProduct?.affiliate ||
-    selectedProduct?.productUrl ||
-    undefined;
+    buildDisplayAffiliateLink({
+      activeVaultOffer,
+      selectedSearchSavedOffer,
+    }) || undefined;
 
   const selectedOfferType:
     | "product"
@@ -2236,11 +2213,10 @@ export default function PostOptimizerPage() {
       earning: getEstimatedCustomerEarning(selectedProduct),
       commission: getCommissionLabel(selectedProduct),
       epc: getEpcLabel(selectedProduct),
-      affiliate:
-        selectedSearchSavedOffer?.affiliate_link ||
-        selectedProduct.affiliate ||
-        selectedProduct.productUrl ||
-        "",
+      affiliate: buildDisplayAffiliateLink({
+        activeVaultOffer: null,
+        selectedSearchSavedOffer,
+      }),
       merchant:
         selectedProduct.merchantName ||
         selectedProduct.source ||
@@ -2251,7 +2227,7 @@ export default function PostOptimizerPage() {
         selectedSearchSavedOffer?.image_url ||
         selectedProduct.imageUrl ||
         null,
-      trackingReady: Boolean(selectedSearchSavedOffer?.affiliate_link),
+      trackingReady: Boolean(selectedSearchSavedOffer?.id),
     };
   }, [selectedProduct, selectedSearchSavedOffer]);
 
@@ -2582,7 +2558,7 @@ export default function PostOptimizerPage() {
                             </p>
                             {selectedProductSummary.trackingReady && (
                               <p className="text-[10px] font-semibold text-emerald-300">
-                                Verified Autoaffi tracking active
+                                Autoaffi link saved
                               </p>
                             )}
                           </div>
@@ -3029,7 +3005,7 @@ export default function PostOptimizerPage() {
                         {displayAffiliateLink || truncateMiddle(finalLink)}
                       </p>
                       <p className="mt-1 text-[10px] text-emerald-200/60">
-                        Smart Autoaffi bridge shown in preview. Your real affiliate link is still copied correctly.
+                        Product posts copy the Autoaffi /go destination. The click is logged, then redirected.
                       </p>
                       <button
                         type="button"

@@ -22,26 +22,30 @@ const platformsRel = "app/api/recurring/platforms/route.ts";
 const funnelsRepoRel = "lib/user-funnels/repo.ts";
 
 describe("Posts CTA link correctness", () => {
-  it("1. Product final-link path still uses existing productAffiliateUrl behavior", () => {
+  it("1. Product final-link path copies /go/offer and not the raw affiliate URL", () => {
     const posts = read(postsRel);
     const helper = read(helperRel);
 
     assert.match(posts, /productAffiliateUrl/);
-    assert.match(posts, /activeVaultOffer\?\.affiliate_link \|\|/);
-    assert.match(posts, /activeVaultOffer\?\.product_url/);
+    assert.match(posts, /buildDisplayAffiliateLink\(\{/);
+    assert.match(posts, /return `https:\/\/autoaffi\.com\/go\/offer\/\$\{savedId\}`/);
+    assert.doesNotMatch(
+      posts,
+      /activeVaultOffer\?\.affiliate_link \|\|\s*\n\s*activeVaultOffer\?\.product_url/
+    );
     assert.match(helper, /if \(input\.offerType === "product"\)/);
     assert.match(helper, /return input\.productAffiliateUrl \|\| ""/);
 
-    const productUrl = "https://network.example/offer?sid=aa_u_abc";
+    const goUrl = "https://autoaffi.com/go/offer/saved-1";
     assert.equal(
       buildPostsFinalLink({
         mode: "content_and_offer",
         offerType: "product",
-        productAffiliateUrl: productUrl,
+        productAffiliateUrl: goUrl,
         recurringPromoLink: "https://systeme.io/?sa=x&tk=y",
         funnelLink: "https://my-funnel.example/optin",
       }),
-      productUrl
+      goUrl
     );
   });
 
