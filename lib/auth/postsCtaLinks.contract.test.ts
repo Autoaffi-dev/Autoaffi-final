@@ -28,7 +28,8 @@ describe("Posts CTA link correctness", () => {
 
     assert.match(posts, /productAffiliateUrl/);
     assert.match(posts, /buildDisplayAffiliateLink\(\{/);
-    assert.match(posts, /return `https:\/\/autoaffi\.com\/go\/offer\/\$\{savedId\}`/);
+    assert.match(posts, /buildPublicGoOfferUrl\(savedId\)/);
+    assert.doesNotMatch(posts, /https:\/\/autoaffi\.com\/go\/offer\//);
     assert.doesNotMatch(
       posts,
       /activeVaultOffer\?\.affiliate_link \|\|\s*\n\s*activeVaultOffer\?\.product_url/
@@ -36,7 +37,7 @@ describe("Posts CTA link correctness", () => {
     assert.match(helper, /if \(input\.offerType === "product"\)/);
     assert.match(helper, /return input\.productAffiliateUrl \|\| ""/);
 
-    const goUrl = "https://autoaffi.com/go/offer/saved-1";
+    const goUrl = "https://app.example/go/offer/saved-1";
     assert.equal(
       buildPostsFinalLink({
         mode: "content_and_offer",

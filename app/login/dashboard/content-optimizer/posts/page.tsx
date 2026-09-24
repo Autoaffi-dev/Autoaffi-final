@@ -16,6 +16,7 @@ import {
   resolvePostsCtaOfferType,
   type PostsCtaDestinationMode,
 } from "@/lib/content-optimizer/postsCtaLinks";
+import { buildPublicGoOfferUrl } from "@/lib/auth/publicAppOrigin";
 
 type Mode = "content_only" | "content_and_offer";
 type InputStyle = "manual" | "scan_link";
@@ -212,7 +213,7 @@ function buildDisplayAffiliateLink(params: {
 }) {
   const savedId = params.selectedSearchSavedOffer?.id || params.activeVaultOffer?.id;
   if (!savedId) return "";
-  return `https://autoaffi.com/go/offer/${savedId}`;
+  return buildPublicGoOfferUrl(savedId);
 }
 
 function truncateMiddle(text: string, start = 32, end = 18) {

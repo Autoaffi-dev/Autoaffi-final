@@ -92,3 +92,15 @@ export function requirePublicAppOrigin(opts?: PublicAppOriginOpts): string {
   }
   return origin;
 }
+
+/** Absolute customer copy URL: canonical public origin + /go/offer/{savedId}. */
+export function buildPublicGoOfferUrl(
+  savedId: string,
+  opts?: PublicAppOriginOpts
+): string {
+  const id = String(savedId || "").trim();
+  if (!id) return "";
+  const origin = resolvePublicAppOrigin(opts);
+  if (!origin) return "";
+  return `${origin}/go/offer/${id}`;
+}

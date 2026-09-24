@@ -77,6 +77,19 @@ export async function GET(req: Request) {
         ? requestedSource.toLowerCase()
         : null;
 
+    if (betaSources.length === 0) {
+      return jsonNoStore({
+        ok: true,
+        items: [],
+        meta: {
+          q,
+          limit,
+          context,
+          reason: "no_beta_automated_sources",
+        },
+      });
+    }
+
     if (requestedSource && !source) {
       return jsonNoStore({
         ok: true,

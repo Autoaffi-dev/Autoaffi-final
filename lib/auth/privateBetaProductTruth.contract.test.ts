@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { buildWarriorPlusLink } from "../affiliate/sources/warriorplus.ts";
 import {
+  BETA_TRACKING_READY_AUTOMATED_SOURCES,
   customerFacingProductCommission,
   getBetaAutomatedSources,
   isBetaAutomatedSource,
@@ -11,6 +12,7 @@ import {
   isHttpUrl,
   warriorPlusTrackingMatches,
 } from "../affiliate/productSourceReadiness.ts";
+import { buildPublicGoOfferUrl } from "./publicAppOrigin.ts";
 import { buildStableSubId } from "../affiliate/stableOfferSubId.ts";
 import { buildPostsFinalLink } from "../content-optimizer/postsCtaLinks.ts";
 
@@ -61,12 +63,23 @@ describe("Private beta product source policy", () => {
     assert.match(cron, /"warriorplus", "awin", "cj", "aliexpress"/);
   });
 
-  it("env override can enable a later source without turning on every network by default", () => {
-    assert.deepEqual(getBetaAutomatedSources("warriorplus,cj"), ["warriorplus", "cj"]);
-    assert.equal(isBetaAutomatedSource("cj", "warriorplus,cj"), true);
-    assert.equal(isBetaAutomatedSource("awin", "warriorplus,cj"), false);
+  it("1-8. env can only select from the code-owned tracking-ready set", () => {
+    assert.deepEqual([...BETA_TRACKING_READY_AUTOMATED_SOURCES], ["warriorplus"]);
+    assert.deepEqual(getBetaAutomatedSources(undefined), ["warriorplus"]);
+    assert.deepEqual(getBetaAutomatedSources(null), ["warriorplus"]);
+    assert.deepEqual(getBetaAutomatedSources(""), ["warriorplus"]);
+    assert.deepEqual(getBetaAutomatedSources("warriorplus"), ["warriorplus"]);
+    assert.deepEqual(getBetaAutomatedSources("warriorplus,cj"), ["warriorplus"]);
+    assert.deepEqual(getBetaAutomatedSources("cj"), []);
+    assert.deepEqual(getBetaAutomatedSources("awin"), []);
+    assert.deepEqual(getBetaAutomatedSources("aliexpress"), []);
+    assert.equal(isBetaAutomatedSource("cj", "warriorplus,cj"), false);
+    assert.equal(isBetaAutomatedSource("awin", "awin"), false);
+    assert.equal(isBetaAutomatedSource("aliexpress", "aliexpress,warriorplus"), false);
+    assert.equal(isBetaAutomatedSource("warriorplus", "warriorplus,cj"), true);
     assert.equal(isBetaManualSource("byo"), true);
-    assert.equal(isBetaAutomatedSource("byo"), false);
+    assert.equal(isBetaAutomatedSource("byo", "byo,warriorplus"), false);
+    assert.equal(BETA_TRACKING_READY_AUTOMATED_SOURCES.includes("cj" as "warriorplus"), false);
   });
 });
 
@@ -153,7 +166,19 @@ describe("Private beta BYO and content destinations", () => {
     const reels = read("app/login/dashboard/content-optimizer/reels/page.tsx");
     const helper = read("lib/content-optimizer/postsCtaLinks.ts");
 
-    assert.match(posts, /return `https:\/\/autoaffi\.com\/go\/offer\/\$\{savedId\}`/);
+    assert.match(posts, /buildPublicGoOfferUrl\(savedId\)/);
+    assert.doesNotMatch(posts, /https:\/\/autoaffi\.com\/go\/offer\//);
+    assert.equal(
+      buildPublicGoOfferUrl("saved-1", {
+        nodeEnv: "production",
+        env: { NEXT_PUBLIC_APP_URL: "https://app.example" },
+      }),
+      "https://app.example/go/offer/saved-1"
+    );
+    assert.equal(
+      buildPublicGoOfferUrl("saved-1", { nodeEnv: "production", env: {} }),
+      ""
+    );
     assert.match(posts, /buildDisplayAffiliateLink\(\{/);
     assert.match(reels, /return `\/go\/offer\/\$\{savedId\}`/);
     assert.match(reels, /affiliateUrl: p\.promo_link/);
@@ -209,6 +234,18 @@ describe("Private beta recurring and payout truth", () => {
     assert.doesNotMatch(panels, /\{p\.commission\}% recurring commission/);
     assert.match(panels, /Commission unavailable/);
     assert.match(panels, /Commission details vary by platform/);
+
+    const recurringPage = read("app/login/dashboard/recurring-income-platforms/page.tsx");
+    assert.doesNotMatch(recurringPage, /\d+%/);
+    assert.match(recurringPage, /Commission details vary by platform/);
+    assert.match(
+      read("app/login/dashboard/page.tsx"),
+      /badge="Lifetime 50%"/
+    );
+    assert.match(
+      read("app/api/recurring/platforms/route.ts"),
+      /requirePublicAppOrigin\(\)/
+    );
   });
 
   it("37-39. missing Systeme and ClickFunnels ids fail closed and valid templates stay", () => {

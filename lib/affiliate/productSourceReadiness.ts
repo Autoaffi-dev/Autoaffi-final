@@ -1,32 +1,41 @@
 /**
  * Private Beta product-source policy.
- * Automated discovery defaults to WarriorPlus only.
- * PRODUCT_BETA_ENABLED_SOURCES may add sources later.
- * An empty or unset value never enables every indexed network.
+ *
+ * BETA_TRACKING_READY_AUTOMATED_SOURCES is the only code-owned set that
+ * may be shown as an automated Product source. Adding a network later
+ * requires a tracking contract, tests, and a code change to this list.
+ *
+ * PRODUCT_BETA_ENABLED_SOURCES may only select from that set.
+ * It cannot promote CJ, Awin, AliExpress, or any other source.
+ *
+ * Unset or blank env → the full ready set (currently warriorplus).
+ * An explicit env whose intersection with the ready set is empty →
+ * no automated sources. That never falls back to an unlisted network.
  */
 
-const DEFAULT_BETA_AUTOMATED_SOURCES = ["warriorplus"] as const;
+export const BETA_TRACKING_READY_AUTOMATED_SOURCES = ["warriorplus"] as const;
 
 export const BETA_MANUAL_SOURCE = "byo";
 
 export function getBetaAutomatedSources(envValue?: string | null): string[] {
+  const ready = BETA_TRACKING_READY_AUTOMATED_SOURCES.map((source) =>
+    source.toLowerCase()
+  );
   const raw =
     envValue === undefined ? process.env.PRODUCT_BETA_ENABLED_SOURCES : envValue;
 
   if (raw === undefined || raw === null || String(raw).trim() === "") {
-    return [...DEFAULT_BETA_AUTOMATED_SOURCES];
+    return [...ready];
   }
 
-  const unique = [
-    ...new Set(
-      String(raw)
-        .split(",")
-        .map((part) => part.trim().toLowerCase())
-        .filter(Boolean)
-    ),
-  ];
+  const requested = new Set(
+    String(raw)
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean)
+  );
 
-  return unique.length > 0 ? unique : [...DEFAULT_BETA_AUTOMATED_SOURCES];
+  return ready.filter((source) => requested.has(source));
 }
 
 export function isBetaAutomatedSource(
