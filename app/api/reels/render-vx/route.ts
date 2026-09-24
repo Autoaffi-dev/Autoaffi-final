@@ -4,6 +4,7 @@ import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 import { copyCallerAuthHeaders } from "@/lib/auth/forwardCallerAuth";
 import { requireTrustedInternalOrigin } from "@/lib/auth/internalAppOrigin";
 import {
+  buildProductDiscoveryTiers,
   buildProductMediaQuery,
   buildSafeReelFallbackVideo,
   coerceReelSceneMediaType,
@@ -3635,11 +3636,14 @@ export async function POST(req: Request) {
     if (mediaFiles.length < targetMinPool) {
       const topUpQueries =
         offerMeta.mode === "product"
-          ? [
-              mediaQuery,
-              `${offerMeta.name} product demo ugc creator lifestyle result review`,
-              `${offerMeta.category} product commercial hands use case customer result`,
-            ]
+          ? buildProductDiscoveryTiers({
+              name: offerMeta.name,
+              category: offerMeta.category,
+              description: offerMeta.description || "",
+            })
+              .filter((tier) => tier.tier !== "neutral")
+              .flatMap((tier) => tier.queries)
+              .slice(0, 4)
           : offerMeta.mode === "funnel"
           ? [
               mediaQuery,
@@ -3706,7 +3710,7 @@ export async function POST(req: Request) {
       filterReelSceneVideos(mediaFiles)
     );
 
-    if (!mediaFiles.length) {
+    if (!mediaFiles.length && offerMeta.mode !== "product") {
       mediaFiles = [
         {
           ...buildSafeReelFallbackVideo(videoLength),
@@ -3896,7 +3900,7 @@ export async function POST(req: Request) {
       sequencedMedia
     );
 
-    if (!lockedSceneMedia.length) {
+    if (!lockedSceneMedia.length && offerMeta.mode !== "product") {
       lockedSceneMedia = [
         {
           ...buildSafeReelFallbackVideo(videoLength),

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUserIdOr401 } from "@/lib/auth/routeAuth";
 import {
   buildProductSearchQueryVariants,
+  buildProductDiscoveryTiers,
   candidateMatchesVerifiedProduct,
   coerceReelSceneMediaType,
   extractNativeMediaText,
@@ -9,9 +10,13 @@ import {
   isGraphicUnsafeStock,
   isStrongProductVideo,
   physicalProductReelNeedsObjectVideo,
-  physicalProductScenePoolHasRequiredObjectVideo,
+  productDiscoveryIsSufficient,
+  productMediaRoleForItem,
+  selectNextProductSearchStage,
   buildVerifiedProductMediaTerms,
   buildSafeReelFallbackVideo,
+  type ProductDiscoveryCounts,
+  type ProductSearchTierId,
 } from "@/lib/content-optimizer/reelsProductMediaRelevance";
 
 export const runtime = "nodejs";
@@ -42,6 +47,9 @@ type MediaItem = {
   nativeTitle?: string;
   nativeDescription?: string;
   nativeTags?: string[];
+  mediaRole?: "strong" | "use_case" | "contextual" | "neutral" | "none";
+  searchTier?: "A" | "B" | "C" | "D" | "neutral";
+  searchQuery?: string;
 };
 
 type ScoredMediaItem = MediaItem & {
@@ -2417,11 +2425,15 @@ async function fetchPexelsVideos(query: string, apiKey: string, page: number): P
         duration: safeNumber(v?.duration),
         width: safeNumber(best?.width),
         height: safeNumber(best?.height),
-        tags: Array.isArray(v?.tags) ? v.tags : [],
-        title: safeString(v?.url || v?.user?.name || ""),
-        nativeTitle: safeString(v?.url || v?.user?.name || ""),
-        nativeDescription: safeString(v?.url || ""),
-        nativeTags: Array.isArray(v?.tags) ? v.tags : [],
+        tags: Array.isArray(v?.tags)
+          ? v.tags.map((tag: unknown) => safeString(tag)).filter(Boolean)
+          : [],
+        title: "",
+        nativeTitle: "",
+        nativeDescription: "",
+        nativeTags: Array.isArray(v?.tags)
+          ? v.tags.map((tag: unknown) => safeString(tag)).filter(Boolean)
+          : [],
       });
     })
     .filter((item): item is MediaItem => item !== null);
@@ -2562,23 +2574,23 @@ async function fetchVideezyCache(
     const finalized = finalizeItem({
       source: "videezy",
       type: "video",
-      url: safeString(item?.video_url),
-      thumb: safeString(item?.thumbnail_url),
+      url: safeString(item?.video_url || item?.url),
+      thumb: safeString(item?.thumbnail_url || item?.cover_url || ""),
       duration: safeNumber(item?.duration),
       width: safeNumber(item?.width),
       height: safeNumber(item?.height),
       tags: Array.isArray(item?.tags)
         ? item.tags
-        : safeString(item?.tags)
+        : safeString(item?.tags || item?.keyword)
             .split(",")
             .map((s) => s.trim())
             .filter(Boolean),
       title: safeString(item?.title || item?.name || ""),
       nativeTitle: safeString(item?.title || item?.name || ""),
-      nativeDescription: safeString(item?.description || item?.title || ""),
+      nativeDescription: safeString(item?.description || ""),
       nativeTags: Array.isArray(item?.tags)
         ? item.tags
-        : safeString(item?.tags)
+        : safeString(item?.tags || item?.keyword)
             .split(",")
             .map((s) => s.trim())
             .filter(Boolean),
@@ -2905,6 +2917,72 @@ function ensureAtLeastOneFunnelWowClip(
   return current.slice(0, MAX_RESULTS);
 }
 
+function countProductRoles(
+  items: MediaItem[],
+  offer: { name?: string; category?: string; description?: string }
+): ProductDiscoveryCounts {
+  const counts: ProductDiscoveryCounts = { strong: 0, useCase: 0, contextual: 0 };
+  for (const item of items) {
+    const role = productMediaRoleForItem(offer, item);
+    if (role === "strong") counts.strong += 1;
+    else if (role === "use_case") counts.useCase += 1;
+    else if (role === "contextual") counts.contextual += 1;
+  }
+  return counts;
+}
+
+async function searchProductVideoLadder(params: {
+  offer: { name?: string; category?: string; description?: string };
+  pexelsKey: string;
+  pixabayKey: string;
+  seedItems?: MediaItem[];
+}): Promise<MediaItem[]> {
+  const tiers = buildProductDiscoveryTiers(params.offer);
+  const collected: MediaItem[] = [...(params.seedItems || [])];
+  const completed: Array<{ tier: ProductSearchTierId; page: number }> = [];
+  let tierAPage1Count = 0;
+
+  for (let step = 0; step < 6; step++) {
+    const stage = selectNextProductSearchStage({
+      tiers,
+      completed,
+      counts: countProductRoles(collected, params.offer),
+      tierAPage1Count,
+    });
+    if (!stage) break;
+
+    const batches = await Promise.all(
+      stage.queries.map(async (query) => {
+        const tasks: Array<Promise<MediaItem[] | null>> = [];
+        if (params.pexelsKey) {
+          tasks.push(safe(() => fetchPexelsVideos(query, params.pexelsKey, stage.page)));
+        }
+        if (params.pixabayKey) {
+          tasks.push(safe(() => fetchPixabayVideos(query, params.pixabayKey, stage.page)));
+        }
+        const results = await Promise.all(tasks);
+        const items = results.flatMap((batch) => (Array.isArray(batch) ? batch : []));
+        return items.map((item) => ({
+          ...item,
+          searchTier: stage.tier,
+          searchQuery: query,
+        }));
+      })
+    );
+
+    const stamped = batches.flat();
+
+    if (stage.tier === "A" && stage.page === 1) {
+      tierAPage1Count = stamped.length;
+    }
+
+    collected.push(...stamped);
+    completed.push({ tier: stage.tier, page: stage.page });
+  }
+
+  return dedupeMedia(collected);
+}
+
 export async function POST(req: Request) {
   try {
     const auth = await requireUserIdOr401(req);
@@ -2989,15 +3067,29 @@ export async function POST(req: Request) {
       offerDescription,
     }).slice(0, MAX_QUERY_VARIANTS);
 
+    const physicalProductLadder =
+      offerMode === "product" && physicalProductReelNeedsObjectVideo(productOffer);
+
     let all: MediaItem[] = [];
 
     const globalTasks: Array<Promise<MediaItem[] | null>> = [];
 
-    if (SUPABASE_URL && SUPABASE_KEY) {
+    if (physicalProductLadder) {
+      const cache =
+        SUPABASE_URL && SUPABASE_KEY
+          ? await safe(() => fetchVideezyCache(SUPABASE_URL, SUPABASE_KEY, hash))
+          : [];
+      all = await searchProductVideoLadder({
+        offer: productOffer,
+        pexelsKey: PEXELS_KEY,
+        pixabayKey: PIXABAY_KEY,
+        seedItems: Array.isArray(cache) ? cache : [],
+      });
+    } else if (SUPABASE_URL && SUPABASE_KEY) {
       globalTasks.push(safe(() => fetchVideezyCache(SUPABASE_URL, SUPABASE_KEY, hash)));
     }
 
-    for (let i = 0; i < queries.length; i++) {
+    for (let i = 0; i < queries.length && !physicalProductLadder; i++) {
       const q = queries[i];
       const pexelsPage = ((hash + i) % 4) + 1;
       const pixabayPage = (((hash >> 2) + i) % 4) + 1;
@@ -3137,7 +3229,7 @@ export async function POST(req: Request) {
       }
     }
 
-    if (offerMode === "product" && type !== "stills") {
+    if (offerMode === "product" && type !== "stills" && !physicalProductLadder) {
       const hasProductVideo = scored.some((item) => item.type === "video");
 
       if (!hasProductVideo) {
@@ -3342,12 +3434,13 @@ export async function POST(req: Request) {
 
     combined = combined.filter((item) => item.type === "video").slice(0, MAX_RESULTS);
 
-    if (
-      offerMode === "product" &&
-      physicalProductReelNeedsObjectVideo(productOffer) &&
-      !physicalProductScenePoolHasRequiredObjectVideo(productOffer, combined)
-    ) {
-      combined = buildFallback(type);
+    if (physicalProductLadder) {
+      combined = combined
+        .map((item) => ({
+          ...item,
+          mediaRole: productMediaRoleForItem(productOffer, item),
+        }))
+        .filter((item) => item.mediaRole !== "none");
     }
 
     if (offerMode === "recurring" && (freedomRecurring || forceNatureFreedomClip) && type !== "stills") {
@@ -3369,7 +3462,7 @@ export async function POST(req: Request) {
       }
     }
 
-    if (combined.length === 0) {
+    if (combined.length === 0 && !physicalProductLadder) {
       combined = buildFallback(type);
     }
 

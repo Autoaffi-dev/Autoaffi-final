@@ -15,6 +15,11 @@ import {
   coerceReelSceneMediaType,
   filterReelSceneVideos,
   finalizeReelScenePool,
+  productSceneSolutionCopy,
+  productVisibleClaimAllowed,
+  productVisualDirection,
+  strongestProductMediaRole,
+  type ProductMediaRole,
 } from "@/lib/content-optimizer/reelsProductMediaRelevance";
 
 export const runtime = "nodejs";
@@ -1380,6 +1385,7 @@ function getStoryArcInstructions(params: {
   offerName: string;
   category: string;
   videoLength: number;
+  mediaRole?: ProductMediaRole;
 }) {
   const mode = getSafeOfferMode(params.offerMode);
   const niche = safeString(params.nicheDescription, "online business");
@@ -1400,7 +1406,11 @@ STORY ARC RULES FOR PRODUCT MODE:
 - Scene 1 must interrupt attention and create curiosity around a real frustration.
 - Scene 2 must show what feels annoying, inefficient or unnecessarily difficult.
 - Scene 3 must deepen the cost of staying with the old method and MUST NOT repeat Scene 2.
-- Scene 4 must reveal ${offerName} as the smarter mechanism or shift.
+- Scene 4 must ${
+      productVisibleClaimAllowed(params.mediaRole || "none")
+        ? `reveal ${offerName} as the smarter mechanism or shift.`
+        : `explain why ${offerName} fits the need. ${productVisualDirection(params.mediaRole || "none", offerName)}`
+    }
 - Scene 5 must show proof, visible improvement or real-world effect.
 - Scene 6 must show payoff / emotional relief / confidence.
 - Final scene must land the CTA naturally.
@@ -2083,6 +2093,7 @@ function buildFallbackStoryboard(params: {
   offerMeta: OfferMetaInput;
   videoLength: number;
   freedomRecurring: boolean;
+  mediaRole?: ProductMediaRole;
 }) {
   const mode = getSafeOfferMode(params.offerMeta?.mode);
   const offerName = safeString(params.offerMeta?.name, "Main offer");
@@ -2095,13 +2106,16 @@ function buildFallbackStoryboard(params: {
   const t5 = Math.max(10, Math.floor(length * 0.68));
   const t6 = Math.max(length - 3, 1);
 
+  const productRole = params.mediaRole || "none";
+  const productSolution = productSceneSolutionCopy(offerName, productRole);
+
   if (length >= 19) {
     if (mode === "product") {
       return [
         { time: t1, description: "Hook showing why the old way feels outdated or inefficient", visualCue: "fast cut, visual friction, bold overlay" },
         { time: t2, description: "Problem moment showing wasted effort or inconvenience", visualCue: "pain-point shot with contrast and urgency" },
         { time: t3, description: "Deeper consequence showing why staying with the old way slows results", visualCue: "tension build, slowdown visual, frustration energy" },
-        { time: t4, description: `Reveal ${offerName} as the cleaner smarter product shift`, visualCue: "sharp transformation reveal, cleaner modern look" },
+        { time: t4, description: productSolution.description, visualCue: productSolution.visualCue },
         { time: t5, description: "Proof or visible improvement moment", visualCue: "clear workflow/result upgrade with momentum" },
         { time: t6, description: "Final payoff and CTA moment", visualCue: "confident result-focused close with action CTA" },
       ];
@@ -2143,7 +2157,7 @@ function buildFallbackStoryboard(params: {
     return [
       { time: t1, description: "Hook showing why the old way feels outdated or inefficient", visualCue: "fast cut, visual friction, bold overlay" },
       { time: t2, description: "Problem moment showing wasted effort or inconvenience", visualCue: "pain-point shot with contrast and urgency" },
-      { time: t4, description: `Reveal ${offerName} as the cleaner smarter product shift`, visualCue: "sharp transformation reveal, cleaner modern look" },
+      { time: t4, description: productSolution.description, visualCue: productSolution.visualCue },
       { time: t6, description: "Final payoff and CTA moment", visualCue: "confident result-focused close with action CTA" },
     ];
   }
@@ -3150,6 +3164,7 @@ function hardenParsedResponse(params: {
   generationId: string;
   scriptAngle: ScriptAngle;
   smartRenderMaxSegments: number;
+  mediaRole?: ProductMediaRole;
 }) {
   const {
     parsed,
@@ -3169,6 +3184,7 @@ function hardenParsedResponse(params: {
     scriptAngle,
     smartRenderMaxSegments,
   } = params;
+  const mediaRole = params.mediaRole || "none";
 
   const fallbackScript = buildFallbackScript({
     offerMeta: offerMetaInput,
@@ -3182,6 +3198,7 @@ function hardenParsedResponse(params: {
     offerMeta: offerMetaInput,
     videoLength,
     freedomRecurring,
+    mediaRole,
   });
 
   const fallbackCta = buildFallbackCta({
@@ -3269,7 +3286,7 @@ function hardenParsedResponse(params: {
     },
     Array.isArray(mediaFiles) ? mediaFiles : []
   );
-  if (!parsed.mediaFiles.length) {
+  if (!parsed.mediaFiles.length && selectedOfferResolved.mode !== "product") {
     parsed.mediaFiles = [buildSafeReelFallbackVideo(videoLength)];
   }
   parsed.freedomRecurring = freedomRecurring;
@@ -3585,10 +3602,11 @@ export async function POST(req: Request) {
       scriptAngle,
     });
 
-    const fallbackStoryboard = buildFallbackStoryboard({
+    let fallbackStoryboard = buildFallbackStoryboard({
       offerMeta: offerMetaInput,
       videoLength,
       freedomRecurring,
+      mediaRole: "none",
     });
 
     const fallbackCta = buildFallbackCta({
@@ -3742,7 +3760,24 @@ export async function POST(req: Request) {
           : [],
     });
 
-    if (!mediaFiles.length) {
+    fallbackStoryboard = buildFallbackStoryboard({
+      offerMeta: offerMetaInput,
+      videoLength,
+      freedomRecurring,
+      mediaRole: strongestProductMediaRole(
+        (Array.isArray(mediaFiles) ? mediaFiles : []).map(
+          (item) => (item?.mediaRole as ProductMediaRole | undefined) || "none"
+        )
+      ),
+    });
+
+    const bestMediaRole = strongestProductMediaRole(
+      (Array.isArray(mediaFiles) ? mediaFiles : []).map(
+        (item) => (item?.mediaRole as ProductMediaRole | undefined) || "none"
+      )
+    );
+
+    if (!mediaFiles.length && getSafeOfferMode(offerMetaInput?.mode) !== "product") {
       console.warn("[REELS GENERATE] Using fallback media", {
         fallbackUrl: "https://public.autoaffi.com/fallback/fallback1.mp4",
       });
@@ -3764,6 +3799,7 @@ export async function POST(req: Request) {
       offerName: offerMetaInput?.name || "Main offer",
       category: offerMetaInput?.category || "digital business",
       videoLength,
+      mediaRole: bestMediaRole,
     });
 
     const hookExamples = getHookExamples(offerMetaInput?.mode, scriptAngle);
@@ -4089,6 +4125,7 @@ NO comments.
       generationId,
       scriptAngle,
       smartRenderMaxSegments,
+      mediaRole: bestMediaRole,
     });
 
     console.log("[REELS GENERATE] Final payload ready", {

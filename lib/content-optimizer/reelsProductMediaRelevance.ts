@@ -16,7 +16,30 @@ export type ProductObjectAnchors = {
   phrases: string[];
 };
 
-export type ProductMediaRole = "strong" | "contextual" | "none";
+export type ProductMediaRole = "strong" | "use_case" | "contextual" | "neutral" | "none";
+
+export type ProductSearchTierId = "A" | "B" | "C" | "D" | "neutral";
+
+export type ProductSearchTier = {
+  tier: ProductSearchTierId;
+  queries: string[];
+};
+
+export type ProductSearchProvenance = {
+  tier?: ProductSearchTierId | null;
+};
+
+export type ProductDiscoveryCounts = {
+  strong: number;
+  useCase: number;
+  contextual: number;
+};
+
+export type ProductSearchStage = {
+  tier: ProductSearchTierId;
+  page: number;
+  queries: string[];
+};
 
 export const REEL_SAFE_FALLBACK_VIDEO_URL =
   "https://public.autoaffi.com/fallback/fallback1.mp4";
@@ -207,6 +230,29 @@ const BAG_CONFLICT_TOKENS = new Set([
   "evening",
 ]);
 
+const USE_CASE_ACTION_TOKENS = new Set([
+  "packing",
+  "preparing",
+  "carrying",
+  "applying",
+  "using",
+  "drinking",
+  "listening",
+  "filling",
+  "loading",
+  "wearing",
+  "putting",
+  "ready",
+]);
+
+const PRODUCT_ROLE_RANK: Record<ProductMediaRole, number> = {
+  strong: 0,
+  use_case: 1,
+  contextual: 2,
+  neutral: 3,
+  none: 4,
+};
+
 const VISUAL_SYNONYMS: Record<string, string[]> = {
   gym: ["fitness", "workout", "sports"],
   fitness: ["gym", "workout", "sports"],
@@ -356,22 +402,31 @@ export function buildVerifiedProductMediaTerms(input: ProductMediaOfferInput): s
 }
 
 export function buildProductMediaQuery(input: ProductMediaOfferInput): string {
+  if (hasPhysicalProductObjectAnchors(input) && !isDigitalProduct(input)) {
+    return buildProductDiscoveryTiers(input).find((tier) => tier.tier === "A")?.queries[0] || "";
+  }
+
   const verified = buildVerifiedProductMediaTerms(input);
   const expanded = expandVisualSynonyms(verified).slice(0, 12);
   return expanded.join(" ").trim();
 }
 
 export function buildProductSearchQueryVariants(input: ProductMediaOfferInput): string[] {
+  if (hasPhysicalProductObjectAnchors(input) && !isDigitalProduct(input)) {
+    return buildProductDiscoveryTiers(input)
+      .filter((tier) => tier.tier === "A" || tier.tier === "B")
+      .flatMap((tier) => tier.queries)
+      .slice(0, 6);
+  }
+
   const verified = buildVerifiedProductMediaTerms(input);
   const primary = buildProductMediaQuery(input);
   const has = (...needles: string[]) => needles.some((needle) => verified.includes(needle));
 
   const variants: string[] = [primary];
 
-  if (has("gym", "fitness", "workout", "sports") && has("bag", "duffel", "backpack")) {
-    variants.push("gym bag", "sports bag", "packing gym bag", "fitness bag");
-  } else if (has("beauty", "skincare", "cosmetics", "makeup")) {
-    variants.push(`${primary} beauty`, "skincare application");
+  if (has("beauty", "skincare", "cosmetics", "makeup")) {
+    variants.push("skincare application", "beauty routine");
   } else if (has("outdoor", "hiking", "camping", "trail")) {
     variants.push("hiking outdoor trail", "camping outdoor nature");
   } else if (has("software", "saas", "app", "ai", "laptop", "computer")) {
@@ -409,6 +464,21 @@ function hasExplicitNativeMediaFields(item: {
   );
 }
 
+export function isUrlLikeMediaText(value: unknown): boolean {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  return (
+    /https?:\/\//i.test(raw) ||
+    /\bwww\./i.test(raw) ||
+    /(?:pexels|pixabay|vecteezy|videezy)\.com/i.test(raw)
+  );
+}
+
+function evidenceBlob(value: unknown): string {
+  if (isUrlLikeMediaText(value)) return "";
+  return normalizeText(String(value || "").replace(/-/g, " "));
+}
+
 export function extractNativeMediaText(item: {
   nativeTitle?: unknown;
   nativeDescription?: unknown;
@@ -419,18 +489,16 @@ export function extractNativeMediaText(item: {
   url?: unknown;
   thumb?: unknown;
 }): string {
+  if (!hasExplicitNativeMediaFields(item)) return "";
+
   const nativeTags = Array.isArray(item.nativeTags)
     ? item.nativeTags.join(" ")
     : String(item.nativeTags || "");
 
-  if (hasExplicitNativeMediaFields(item)) {
-    return normalizeText([item.nativeTitle || "", item.nativeDescription || "", nativeTags].join(" "));
-  }
-
-  const fallbackTags = Array.isArray(item.tags) ? item.tags.join(" ") : String(item.tags || "");
-  return normalizeText(
-    [item.title || "", item.description || "", fallbackTags].join(" ")
+  const parts = [item.nativeTitle, item.nativeDescription, nativeTags].filter(
+    (part) => !isUrlLikeMediaText(part)
   );
+  return evidenceBlob(parts.join(" "));
 }
 
 export function isGraphicUnsafeStock(text: unknown): boolean {
@@ -659,7 +727,8 @@ export function isStrongProductObjectNative(
   input: ProductMediaOfferInput,
   nativeText: unknown
 ): boolean {
-  const blob = normalizeText(nativeText);
+  if (isUrlLikeMediaText(nativeText)) return false;
+  const blob = evidenceBlob(nativeText);
   if (!blob || isGraphicUnsafeStock(blob)) return false;
   if (hasIncompatibleBagClassConflict(input, blob)) return false;
 
@@ -678,14 +747,32 @@ export function isStrongProductObjectNative(
   return nativeHasSupportingVerifiedFacts(input, nativeTokens);
 }
 
+export function isUseCaseProductNative(
+  input: ProductMediaOfferInput,
+  nativeText: unknown
+): boolean {
+  if (isUrlLikeMediaText(nativeText)) return false;
+  const blob = evidenceBlob(nativeText);
+  if (!blob || isGraphicUnsafeStock(blob)) return false;
+  if (hasIncompatibleBagClassConflict(input, blob)) return false;
+  if (isStrongProductObjectNative(input, blob)) return false;
+
+  const nativeTokens = nativeMatchTokens(blob).filter((token) => !MEDIA_NOISE_TOKENS.has(token));
+  const hasAction = nativeTokens.some((token) => USE_CASE_ACTION_TOKENS.has(token));
+  if (!hasAction) return false;
+  return nativeHasSupportingContext(input, nativeTokens);
+}
+
 export function isContextualProductNative(
   input: ProductMediaOfferInput,
   nativeText: unknown
 ): boolean {
-  const blob = normalizeText(nativeText);
+  if (isUrlLikeMediaText(nativeText)) return false;
+  const blob = evidenceBlob(nativeText);
   if (!blob || isGraphicUnsafeStock(blob)) return false;
   if (hasIncompatibleBagClassConflict(input, blob)) return false;
   if (isStrongProductObjectNative(input, blob)) return false;
+  if (isUseCaseProductNative(input, blob)) return false;
 
   const nativeTokens = nativeMatchTokens(blob).filter((token) => !MEDIA_NOISE_TOKENS.has(token));
   return nativeHasSupportingContext(input, nativeTokens);
@@ -693,10 +780,27 @@ export function isContextualProductNative(
 
 export function classifyProductMediaRole(
   input: ProductMediaOfferInput,
-  nativeText: unknown
+  nativeText: unknown,
+  provenance?: ProductSearchProvenance | null
 ): ProductMediaRole {
-  if (isStrongProductObjectNative(input, nativeText)) return "strong";
-  if (isContextualProductNative(input, nativeText)) return "contextual";
+  if (isUrlLikeMediaText(nativeText)) {
+    return sparseProvenanceRole(provenance);
+  }
+
+  const blob = evidenceBlob(nativeText);
+  if (blob && isGraphicUnsafeStock(blob)) return "none";
+  if (blob && hasIncompatibleBagClassConflict(input, blob)) return "none";
+  if (blob && isStrongProductObjectNative(input, blob)) return "strong";
+  if (blob && isUseCaseProductNative(input, blob)) return "use_case";
+  if (blob && isContextualProductNative(input, blob)) return "contextual";
+  if (blob) return "none";
+  return sparseProvenanceRole(provenance);
+}
+
+function sparseProvenanceRole(provenance?: ProductSearchProvenance | null): ProductMediaRole {
+  const tier = provenance?.tier;
+  if (tier === "A" || tier === "B" || tier === "C") return "contextual";
+  if (tier === "D" || tier === "neutral") return "neutral";
   return "none";
 }
 
@@ -761,6 +865,7 @@ export function isAcceptableProductPoolItem(
     tags?: unknown;
     description?: unknown;
     thumb?: unknown;
+    searchTier?: unknown;
   }
 ): boolean {
   const nativeText = extractNativeMediaText(item);
@@ -771,8 +876,31 @@ export function isAcceptableProductPoolItem(
     return candidateMatchesVerifiedProduct(buildVerifiedProductMediaTerms(input), nativeText);
   }
 
-  const role = classifyProductMediaRole(input, nativeText);
-  return role === "strong" || role === "contextual";
+  const role = classifyProductMediaRole(input, nativeText, provenanceFromItem(item));
+  return role === "strong" || role === "use_case" || role === "contextual" || role === "neutral";
+}
+
+function provenanceFromItem(item: { searchTier?: unknown }): ProductSearchProvenance | null {
+  const tier = item?.searchTier;
+  if (tier === "A" || tier === "B" || tier === "C" || tier === "D" || tier === "neutral") {
+    return { tier };
+  }
+  return null;
+}
+
+export function productMediaRoleForItem(
+  input: ProductMediaOfferInput,
+  item: {
+    type?: unknown;
+    url?: unknown;
+    nativeTitle?: unknown;
+    nativeDescription?: unknown;
+    nativeTags?: unknown;
+    searchTier?: unknown;
+  }
+): ProductMediaRole {
+  if (!isReelSceneVideo(item)) return "none";
+  return classifyProductMediaRole(input, extractNativeMediaText(item), provenanceFromItem(item));
 }
 
 export function physicalProductReelNeedsObjectVideo(input: ProductMediaOfferInput): boolean {
@@ -823,13 +951,28 @@ export function finalizeReelScenePool<
   const videos = filterReelSceneVideos(items);
   if (offerMode !== "product") return videos;
 
-  const acceptable = videos.filter((item) => isAcceptableProductPoolItem(input, item));
-  if (physicalProductReelNeedsObjectVideo(input)) {
-    if (!acceptable.some((item) => isStrongProductVideo(input, item))) {
-      return [];
-    }
+  const ranked = videos
+    .map((item) => ({ item, role: productMediaRoleForItem(input, item) }))
+    .filter((entry) => entry.role !== "none");
+
+  if (!physicalProductReelNeedsObjectVideo(input)) {
+    const digital = videos.filter((item) => isAcceptableProductPoolItem(input, item));
+    return digital;
   }
-  return acceptable;
+
+  const hasBetterThanNeutral = ranked.some((entry) => entry.role !== "neutral");
+  const kept = hasBetterThanNeutral ? ranked.filter((entry) => entry.role !== "neutral") : ranked;
+  const seen = new Set<string>();
+
+  return kept
+    .sort((a, b) => PRODUCT_ROLE_RANK[a.role] - PRODUCT_ROLE_RANK[b.role])
+    .filter((entry) => {
+      const url = String(entry.item.url || "");
+      if (!url || seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    })
+    .map((entry) => ({ ...entry.item, mediaRole: entry.role }));
 }
 
 export function isProductMediaRelevant(
@@ -859,4 +1002,163 @@ export function isProductMediaRelevant(
 export function productQueryContainsForbiddenGenericExpansion(query: string): boolean {
   const blob = normalizeText(query);
   return GENERIC_PRODUCT_QUERY_NOISE.some((phrase) => blob.includes(phrase));
+}
+
+function categoryNeutralQueries(input: ProductMediaOfferInput): string[] {
+  const verified = buildVerifiedProductMediaTerms(input);
+  const category = tokenizeMediaText(input.category);
+  const tokens = [...verified, ...category];
+
+  if (hasAny(tokens, ["gym", "fitness", "workout", "sports"])) {
+    return ["fitness lifestyle", "gym environment", "active lifestyle"];
+  }
+  if (hasAny(tokens, ["beauty", "skincare", "cosmetics", "makeup", "serum"])) {
+    return ["skincare routine", "beauty lifestyle"];
+  }
+  if (hasAny(tokens, ["software", "saas", "app", "ai", "laptop", "computer"])) {
+    return ["laptop workspace", "digital work", "business software"];
+  }
+  if (hasAny(tokens, ["outdoor", "hiking", "camping", "trail", "bottle", "poles", "pole"])) {
+    return ["outdoor activity", "hiking lifestyle"];
+  }
+  return [];
+}
+
+export function buildProductDiscoveryTiers(input: ProductMediaOfferInput): ProductSearchTier[] {
+  const verified = buildVerifiedProductMediaTerms(input);
+  const anchors = derivePhysicalProductObjectAnchors(input);
+  const neutral = categoryNeutralQueries(input);
+
+  let tiers: ProductSearchTier[];
+
+  if (
+    (anchors.tokens.includes("bag") || anchors.tokens.includes("duffel")) &&
+    hasAny(verified, ["gym", "fitness", "workout", "sports", "duffel"])
+  ) {
+    tiers = [
+      { tier: "A", queries: ["gym bag", "duffel bag", "sports bag"] },
+      { tier: "B", queries: ["packing gym bag", "carrying gym bag", "gym duffel", "workout bag"] },
+      { tier: "C", queries: ["packing workout clothes", "gym gear", "fitness equipment"] },
+      { tier: "D", queries: ["gym workout", "fitness training", "sports training"] },
+    ];
+  } else if (anchors.tokens.includes("bottle")) {
+    tiers = [
+      { tier: "A", queries: ["water bottle", "reusable water bottle"] },
+      { tier: "B", queries: ["drinking water bottle"] },
+      { tier: "C", queries: ["drinking water", "outdoor hydration"] },
+      { tier: "D", queries: ["outdoor activity"] },
+    ];
+  } else if (hasAny(anchors.tokens, ["earbuds", "earbud", "headphones", "headphone"])) {
+    tiers = [
+      { tier: "A", queries: ["wireless earbuds", "headphones"] },
+      { tier: "B", queries: ["using headphones", "wearing earbuds"] },
+      { tier: "C", queries: ["listening to music"] },
+      { tier: "D", queries: ["music lifestyle"] },
+    ];
+  } else if (hasAny(anchors.tokens, ["poles", "pole"])) {
+    tiers = [
+      { tier: "A", queries: ["hiking poles", "trekking poles"] },
+      { tier: "B", queries: ["hiker using poles"] },
+      { tier: "C", queries: ["hiking trail"] },
+      { tier: "D", queries: ["outdoor hiking"] },
+    ];
+  } else if (anchors.tokens.includes("serum")) {
+    tiers = [
+      { tier: "A", queries: ["skincare serum"] },
+      { tier: "B", queries: ["applying serum"] },
+      { tier: "C", queries: ["skincare routine"] },
+      { tier: "D", queries: ["beauty routine"] },
+    ];
+  } else {
+    const objectQueries = anchors.phrases.filter(Boolean).slice(0, 3);
+    tiers = [
+      { tier: "A", queries: objectQueries },
+      { tier: "B", queries: objectQueries.slice(0, 2).map((phrase) => `using ${phrase}`) },
+      { tier: "C", queries: [] },
+      { tier: "D", queries: [] },
+    ];
+  }
+
+  return [...tiers, { tier: "neutral", queries: neutral }];
+}
+
+export function productDiscoveryIsSufficient(counts: ProductDiscoveryCounts): boolean {
+  const useful = counts.strong + counts.useCase + counts.contextual;
+  return counts.strong >= 2 || (counts.strong >= 1 && useful >= 4);
+}
+
+export function selectNextProductSearchStage(params: {
+  tiers: ProductSearchTier[];
+  completed: Array<{ tier: ProductSearchTierId; page: number }>;
+  counts: ProductDiscoveryCounts;
+  tierAPage1Count: number;
+}): ProductSearchStage | null {
+  const done = (tier: ProductSearchTierId, page: number) =>
+    params.completed.some((stage) => stage.tier === tier && stage.page === page);
+
+  const stageFor = (tier: ProductSearchTierId, page: number): ProductSearchStage | null => {
+    const queries = params.tiers.find((entry) => entry.tier === tier)?.queries.filter(Boolean) || [];
+    if (!queries.length) return null;
+    return { tier, page, queries };
+  };
+
+  if (!done("A", 1)) return stageFor("A", 1);
+  if (productDiscoveryIsSufficient(params.counts)) return null;
+
+  const useful = params.counts.strong + params.counts.useCase + params.counts.contextual;
+  const thinPage = params.tierAPage1Count < 4;
+
+  if (thinPage && !done("A", 2)) return stageFor("A", 2);
+  if (!done("B", 1)) return stageFor("B", 1);
+  if (!thinPage && !done("A", 2) && params.counts.strong < 1) return stageFor("A", 2);
+  if (params.counts.strong >= 1 && useful >= 4) return null;
+  if (!done("C", 1) && params.counts.strong + params.counts.useCase < 2) return stageFor("C", 1);
+  if (!done("D", 1) && useful < 2) return stageFor("D", 1);
+  if (!done("neutral", 1) && useful === 0) return stageFor("neutral", 1);
+  return null;
+}
+
+export function strongestProductMediaRole(
+  roles: Array<ProductMediaRole | null | undefined>
+): ProductMediaRole {
+  let best: ProductMediaRole = "none";
+  for (const role of roles) {
+    if (!role || role === "none") continue;
+    if (PRODUCT_ROLE_RANK[role] < PRODUCT_ROLE_RANK[best]) best = role;
+  }
+  return best;
+}
+
+export function productVisibleClaimAllowed(role: ProductMediaRole): boolean {
+  return role === "strong";
+}
+
+export function productVisualDirection(role: ProductMediaRole, offerName: string): string {
+  const name = offerName.trim() || "this product";
+  if (productVisibleClaimAllowed(role)) {
+    return `Strong product footage is available. Shot language may show ${name} as visible.`;
+  }
+  return [
+    `The footage does not prove ${name} is visible.`,
+    `Do NOT say "Here is the ${name} in action".`,
+    `Do NOT say "Look at this bag" or "Watch this bag being used".`,
+    `Do NOT say "Reveal ${name}".`,
+    "Talk about the need, the use case, or the category instead.",
+  ].join(" ");
+}
+
+export function productSceneSolutionCopy(
+  offerName: string,
+  role: ProductMediaRole
+): { description: string; visualCue: string } {
+  if (productVisibleClaimAllowed(role)) {
+    return {
+      description: `Reveal ${offerName} as the cleaner smarter product shift`,
+      visualCue: "sharp transformation reveal, cleaner modern look",
+    };
+  }
+  return {
+    description: `${offerName} is the smarter way to handle this, without claiming the footage shows it`,
+    visualCue: "category-relevant motion, no fake product close-up",
+  };
 }

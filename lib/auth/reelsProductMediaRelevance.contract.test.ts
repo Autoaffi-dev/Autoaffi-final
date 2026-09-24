@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "path";
 import { describe, it } from "node:test";
 import {
+  buildProductDiscoveryTiers,
   buildProductMediaQuery,
+  buildProductSearchQueryVariants,
   buildSafeReelFallbackVideo,
   buildVerifiedProductMediaTerms,
   candidateMatchesVerifiedProduct,
@@ -20,8 +22,12 @@ import {
   isReelSceneVideo,
   isStrongProductObjectNative,
   isStrongProductVideo,
+  isUseCaseProductNative,
   physicalProductScenePoolHasRequiredObjectVideo,
   productQueryContainsForbiddenGenericExpansion,
+  productSceneSolutionCopy,
+  productVisibleClaimAllowed,
+  selectNextProductSearchStage,
 } from "../content-optimizer/reelsProductMediaRelevance.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -176,13 +182,14 @@ describe("Reels product media relevance", () => {
     assert.equal(pool.length, 2);
   });
 
-  it("10. Product Reel cannot be Product-relevant if every scene is only generic gym context", () => {
+  it("10. contextual gym video can ship when no strong Product-object video exists", () => {
     const pool = finalizeReelScenePool("product", gymBag, [
       videoItem("fitness workout athlete", { url: "https://cdn.example.com/a.mp4" }),
       videoItem("gym training exercise", { url: "https://cdn.example.com/b.mp4" }),
       videoItem("athlete training gym", { url: "https://cdn.example.com/c.mp4" }),
     ]);
-    assert.equal(pool.length, 0);
+    assert.equal(pool.length, 3);
+    assert.equal(pool.every((item) => item.mediaRole === "contextual"), true);
     assert.equal(
       physicalProductScenePoolHasRequiredObjectVideo(gymBag, [
         videoItem("fitness workout athlete"),
@@ -496,7 +503,8 @@ describe("Reels product media relevance", () => {
 
   it("query still uses verified Product facts without generic gadget vocabulary", () => {
     const query = buildProductMediaQuery(gymBag);
-    assert.match(query, /adidas/i);
+    assert.equal(query, "gym bag");
+    assert.doesNotMatch(query, /adidas/i);
     assert.match(query, /gym/i);
     assert.match(query, /bag/i);
     assert.equal(productQueryContainsForbiddenGenericExpansion(query), false);
@@ -585,12 +593,13 @@ describe("Reels final product video pool invariant", () => {
     assert.equal(pool.some((item) => String(item.nativeTitle).includes("camera")), false);
   });
 
-  it("10. Product pool with no strong physical Product-object video is empty for fallback", () => {
+  it("10. contextual Product pool survives with zero strong clips", () => {
     const pool = finalizeReelScenePool("product", gymBag, [
       videoItem("fitness workout athlete", { url: "https://cdn.example.com/a.mp4" }),
       videoItem("gym training exercise", { url: "https://cdn.example.com/b.mp4" }),
     ]);
-    assert.equal(pool.length, 0);
+    assert.equal(pool.length, 2);
+    assert.equal(pool.every((item) => item.mediaRole === "contextual"), true);
   });
 
   it("11. Recurring finalizer is video-only and does not apply Product semantic rules", () => {
@@ -655,5 +664,156 @@ describe("Reels final product video pool invariant", () => {
     assert.match(read(canonicalTestRel), /Reels canonical offer destination \+ mode lock/);
     assert.match(read(identityTestRel), /hasTrustworthyProductIdentity/);
     assert.match(read(subidRel), /export function buildProductSubId/);
+  });
+});
+
+describe("Always-deliver Product video ladder", () => {
+  const gymBag = {
+    name: "Adidas Power Gym Bag",
+    category: "fitness",
+    description: "Durable gym bag for carrying workout clothes and shoes.",
+  };
+  const tiers = buildProductDiscoveryTiers(gymBag);
+  const queries = (tier: "A" | "B" | "C" | "D" | "neutral") =>
+    tiers.find((entry) => entry.tier === tier)?.queries || [];
+
+  it("1. first stock query is not the long Adidas string", () => {
+    const first = buildProductSearchQueryVariants(gymBag)[0];
+    assert.equal(first, "gym bag");
+    assert.doesNotMatch(first, /adidas power gym bag fitness durable/i);
+  });
+
+  it("2-4. object queries come before context and Adidas is not required", () => {
+    assert.deepEqual(queries("A"), ["gym bag", "duffel bag", "sports bag"]);
+    const flat = tiers.flatMap((tier) => tier.queries);
+    const bagAt = flat.indexOf("gym bag");
+    const workoutAt = flat.indexOf("gym workout");
+    assert.ok(bagAt >= 0 && bagAt < workoutAt);
+    assert.equal(flat.some((query) => /adidas/i.test(query)), false);
+  });
+
+  it("5-7. page 1 is first and deeper or lower tiers wait until the pool is thin", () => {
+    const first = selectNextProductSearchStage({
+      tiers,
+      completed: [],
+      counts: { strong: 0, useCase: 0, contextual: 0 },
+      tierAPage1Count: 0,
+    });
+    assert.deepEqual(first, { tier: "A", page: 1, queries: queries("A") });
+
+    const enough = selectNextProductSearchStage({
+      tiers,
+      completed: [{ tier: "A", page: 1 }],
+      counts: { strong: 2, useCase: 0, contextual: 2 },
+      tierAPage1Count: 8,
+    });
+    assert.equal(enough, null);
+
+    const needsDepth = selectNextProductSearchStage({
+      tiers,
+      completed: [{ tier: "A", page: 1 }],
+      counts: { strong: 0, useCase: 0, contextual: 0 },
+      tierAPage1Count: 1,
+    });
+    assert.equal(needsDepth?.tier, "A");
+    assert.equal(needsDepth?.page, 2);
+  });
+
+  it("8-18. roles stay strict and stills stay out", () => {
+    assert.equal(classifyProductMediaRole(gymBag, "gym bag"), "strong");
+    assert.equal(classifyProductMediaRole(gymBag, "sports bag"), "strong");
+    assert.equal(classifyProductMediaRole(gymBag, "duffel bag"), "strong");
+    assert.equal(isUseCaseProductNative(gymBag, "packing workout clothes"), true);
+    assert.equal(classifyProductMediaRole(gymBag, "preparing gym gear"), "use_case");
+    assert.equal(classifyProductMediaRole(gymBag, "fitness workout athlete"), "contextual");
+    assert.equal(classifyProductMediaRole(gymBag, "gym training"), "contextual");
+    assert.equal(classifyProductMediaRole(gymBag, "calm river"), "none");
+    assert.equal(classifyProductMediaRole(gymBag, "lotion bottle"), "none");
+    assert.equal(classifyProductMediaRole(gymBag, "fashion handbag crossbody"), "none");
+    assert.equal(isReelSceneVideo(imageItem("gym bag")), false);
+  });
+
+  it("19-24. URL, query text, and synthetic tags cannot become strong; Pixabay tags can", () => {
+    const pexelsUrl = "https://www.pexels.com/video/woman-packing-a-bag-at-the-gym-123/";
+    assert.equal(isStrongProductObjectNative(gymBag, pexelsUrl), false);
+    assert.equal(classifyProductMediaRole(gymBag, "", { tier: "A" }), "contextual");
+    assert.notEqual(classifyProductMediaRole(gymBag, "", { tier: "A" }), "strong");
+    assert.equal(
+      isStrongProductObjectNative(gymBag, extractNativeMediaText({ tags: ["gym", "bag", "product demo"] })),
+      false
+    );
+    assert.equal(
+      classifyProductMediaRole(gymBag, extractNativeMediaText({ nativeTags: ["gym", "bag", "fitness"] })),
+      "strong"
+    );
+    assert.equal(
+      classifyProductMediaRole(gymBag, extractNativeMediaText({ nativeTags: ["fitness", "training"] })),
+      "contextual"
+    );
+  });
+
+  it("25-31. ladder keeps lower video roles and does not invent a product error", () => {
+    const mixed = finalizeReelScenePool("product", gymBag, [
+      videoItem("sports bag athlete", { url: "https://cdn.example.com/bag.mp4" }),
+      videoItem("fitness workout athlete", { url: "https://cdn.example.com/gym.mp4" }),
+    ]);
+    assert.equal(mixed.length, 2);
+    assert.equal(mixed[0].mediaRole, "strong");
+
+    const useCase = finalizeReelScenePool("product", gymBag, [
+      videoItem("packing workout clothes", { url: "https://cdn.example.com/pack.mp4" }),
+    ]);
+    assert.equal(useCase.length, 1);
+    assert.equal(useCase[0].mediaRole, "use_case");
+
+    const contextual = finalizeReelScenePool("product", gymBag, [
+      videoItem("fitness workout athlete", { url: "https://cdn.example.com/gym.mp4" }),
+    ]);
+    assert.equal(contextual[0].mediaRole, "contextual");
+
+    const neutral = finalizeReelScenePool("product", gymBag, [
+      {
+        ...videoItem("", { url: "https://cdn.example.com/neutral.mp4", nativeTitle: "", nativeTags: [] }),
+        searchTier: "neutral",
+      },
+    ]);
+    assert.equal(neutral.length, 1);
+    assert.equal(neutral[0].mediaRole, "neutral");
+
+    const irrelevant = finalizeReelScenePool("product", gymBag, [
+      videoItem("calm river forest", { url: "https://cdn.example.com/river.mp4" }),
+    ]);
+    assert.equal(irrelevant.length, 0);
+
+    const generate = read(generateRel);
+    assert.doesNotMatch(generate, /PRODUCT_VIDEO_UNAVAILABLE/);
+    assert.match(generate, /getSafeOfferMode\(offerMetaInput\?\.mode\) !== "product"/);
+  });
+
+  it("32-36. visible product claims require strong footage", () => {
+    assert.equal(productVisibleClaimAllowed("strong"), true);
+    assert.equal(productVisibleClaimAllowed("use_case"), false);
+    assert.equal(productVisibleClaimAllowed("contextual"), false);
+    assert.equal(productVisibleClaimAllowed("neutral"), false);
+    assert.match(productSceneSolutionCopy("Adidas Power Gym Bag", "strong").description, /Reveal Adidas Power Gym Bag/);
+    assert.doesNotMatch(
+      productSceneSolutionCopy("Adidas Power Gym Bag", "contextual").description,
+      /Reveal Adidas Power Gym Bag/
+    );
+    assert.doesNotMatch(
+      productSceneSolutionCopy("Adidas Power Gym Bag", "use_case").description,
+      /Reveal Adidas Power Gym Bag/
+    );
+    assert.doesNotMatch(
+      productSceneSolutionCopy("Adidas Power Gym Bag", "neutral").description,
+      /Reveal Adidas Power Gym Bag/
+    );
+  });
+
+  it("sparse tier D is neutral and page 2 is skipped when page 1 is already enough", () => {
+    assert.equal(classifyProductMediaRole(gymBag, "", { tier: "D" }), "neutral");
+    assert.equal(classifyProductMediaRole(gymBag, "calm river", { tier: "A" }), "none");
+    const render = read(renderRel);
+    assert.doesNotMatch(render, /product demo ugc creator lifestyle result review/);
   });
 });
