@@ -694,6 +694,14 @@ describe("CJ phase 1 fail-closed property and advertiser binding", () => {
     await assertRemoteInactive("TERMINATED");
   });
 
+  it("A. a matching remote handle with the wrong publisher id does not create", async () => {
+    await assertRemotePublisherMismatch("2222222");
+  });
+
+  it("B. a matching remote handle with a blank publisher id does not create", async () => {
+    await assertRemotePublisherMismatch("");
+  });
+
   it("G. the same PID is reused only for the same user and social property", async () => {
     const row = mapping({ cj_pid: "555001" });
     const store = hiddenPropertyStore(row);
@@ -999,6 +1007,30 @@ async function assertLocalInactive(status: string) {
   assert.equal(calls, 0);
   assert.equal(store.rows.length, 1);
   assert.equal(store.rows[0].status, status);
+}
+
+async function assertRemotePublisherMismatch(publisherId: string) {
+  const store = memoryStore();
+  let creates = 0;
+  await assert.rejects(
+    syncCjPromotionalProperty({
+      canonicalUserId: "user-a",
+      account: instagramAccount(),
+      store,
+      pat: "test-pat",
+      publisherId: "1111111",
+      fetchImpl: propertyFetch({
+        listed: remoteNode("ACTIVE", { publisherId }),
+        onCreate: () => {
+          creates += 1;
+        },
+      }),
+    }),
+    (err: unknown) =>
+      err instanceof CjPropertyMappingError && err.code === "CJ_PROPERTY_RESPONSE_MISMATCH"
+  );
+  assert.equal(creates, 0);
+  assert.equal(store.rows.length, 0);
 }
 
 async function assertRemoteInactive(status: string) {
