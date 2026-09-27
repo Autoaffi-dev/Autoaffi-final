@@ -41,6 +41,7 @@ create table if not exists public.cj_program_reviews (
   permitted_methods text[] not null default '{}',
   notes text null,
   reviewed_at timestamptz null,
+  reviewed_by uuid null,
   updated_at timestamptz not null default now(),
   constraint cj_program_reviews_status_check
     check (status in ('allowed', 'disabled'))

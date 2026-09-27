@@ -14,11 +14,13 @@ import {
   readCjServerConfig,
 } from "../affiliate/cj/config.ts";
 import { evaluateCjAdvertiserUse } from "../affiliate/cj/eligibility.ts";
+import { CjGraphqlError } from "../affiliate/cj/graphql.ts";
 import {
   classifyCjCommission,
   getCJAdvertiserContract,
   isActiveCjContractStatus,
   isKnownCjCommissionRateType,
+  type CjAdvertiserContract,
   type CjStructuredCommission,
 } from "../affiliate/cj/programTerms.ts";
 import {
@@ -27,6 +29,7 @@ import {
 } from "../affiliate/cj/promotionalProperty.ts";
 import {
   CjPropertyMappingError,
+  resolveCjPidInsertConflict,
   type CjPropertyMappingInsert,
   type CjPropertyMappingRow,
   type CjPropertyMappingStore,
@@ -443,14 +446,43 @@ describe("CJ phase 1 foundation", () => {
     assert.equal((await statusOf("CANCELLED"))?.isActive, false);
     assert.equal((await statusOf("EXPIRED"))?.isActive, false);
     assert.equal(await statusOf(null), null);
+
+    const mismatched = await getCJAdvertiserContract({
+      pat: "test-pat",
+      publisherId: "1111111",
+      advertiserId: "42",
+      fetchImpl: async () =>
+        jsonResponse({
+          data: {
+            publisher: {
+              contracts: {
+                resultList: [
+                  {
+                    advertiserId: "99",
+                    status: "ACTIVE",
+                    programTerms: { id: "pt-other", name: "Other", actionTerms: [] },
+                  },
+                  {
+                    advertiserId: "",
+                    status: "ACTIVE",
+                    programTerms: { id: "pt-blank", name: "Blank", actionTerms: [] },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+    });
+    assert.equal(mismatched, null);
   });
 
   it("19-22. review, method, and customer commission stay fail-closed", () => {
     const base = {
       canonicalUserId: "user-a",
+      advertiserId: "42",
       account: instagramAccount(),
       mapping: mapping(),
-      contractStatus: "ACTIVE",
+      contract: activeContract(),
       method: "social_media",
     };
 
@@ -485,7 +517,11 @@ describe("CJ phase 1 foundation", () => {
       { ok: false, reason: "CJ_PROPERTY_INACTIVE" }
     );
     assert.deepEqual(
-      evaluateCjAdvertiserUse({ ...base, contractStatus: "PENDING_OFFER", review: allowedReview() }),
+      evaluateCjAdvertiserUse({
+        ...base,
+        contract: { ...activeContract(), contractStatus: "PENDING_OFFER", isActive: false },
+        review: allowedReview(),
+      }),
       { ok: false, reason: "CJ_CONTRACT_NOT_ACTIVE" }
     );
 
@@ -593,6 +629,271 @@ describe("CJ phase 1 foundation", () => {
     assert.doesNotMatch(sql, /references public\.user_social_accounts/);
     assert.doesNotMatch(sql, /wayfair|rexing|dhgate|booking/i);
     assert.doesNotMatch(sql, /insert into public\.cj_program_reviews/i);
+    assert.match(sql, /reviewed_by uuid null/);
+  });
+});
+
+describe("CJ phase 1 fail-closed property and advertiser binding", () => {
+  it("A. an existing ACTIVE local property syncs idempotently", async () => {
+    const store = memoryStore([mapping()]);
+    let calls = 0;
+    const result = await syncCjPromotionalProperty({
+      canonicalUserId: "user-a",
+      account: instagramAccount(),
+      store,
+      pat: "test-pat",
+      publisherId: "1111111",
+      fetchImpl: async () => {
+        calls += 1;
+        throw new Error("CJ must not be called for an active local mapping");
+      },
+    });
+    assert.equal(result.idempotent, true);
+    assert.equal(result.mapping.cj_pid, "100125586");
+    assert.equal(result.mapping.status, "ACTIVE");
+    assert.equal(calls, 0);
+    assert.equal(store.rows.length, 1);
+  });
+
+  it("B. an existing ARCHIVED local property fails closed", async () => {
+    await assertLocalInactive("ARCHIVED");
+  });
+
+  it("C. an existing TERMINATED local property fails closed", async () => {
+    await assertLocalInactive("TERMINATED");
+  });
+
+  it("D. a remote ACTIVE Instagram property for the same handle is reused", async () => {
+    const store = memoryStore();
+    let creates = 0;
+    const result = await syncCjPromotionalProperty({
+      canonicalUserId: "user-a",
+      account: instagramAccount(),
+      store,
+      pat: "test-pat",
+      publisherId: "1111111",
+      fetchImpl: propertyFetch({
+        listed: remoteNode("ACTIVE", { id: "777001" }),
+        onCreate: () => {
+          creates += 1;
+        },
+      }),
+    });
+    assert.equal(creates, 0);
+    assert.equal(result.idempotent, false);
+    assert.equal(result.mapping.cj_pid, "777001");
+    assert.equal(result.mapping.status, "ACTIVE");
+    assert.equal(store.rows.length, 1);
+  });
+
+  it("E. a remote ARCHIVED matching property fails and does not create another", async () => {
+    await assertRemoteInactive("ARCHIVED");
+  });
+
+  it("F. a remote TERMINATED matching property fails and does not create another", async () => {
+    await assertRemoteInactive("TERMINATED");
+  });
+
+  it("G. the same PID is reused only for the same user and social property", async () => {
+    const row = mapping({ cj_pid: "555001" });
+    const store = hiddenPropertyStore(row);
+    const result = await syncCjPromotionalProperty({
+      canonicalUserId: "user-a",
+      account: instagramAccount(),
+      store,
+      pat: "test-pat",
+      publisherId: "1111111",
+      fetchImpl: propertyFetch({ listed: remoteNode("ACTIVE", { id: "555001" }) }),
+    });
+    assert.equal(result.idempotent, true);
+    assert.equal(result.mapping.cj_pid, "555001");
+    assert.equal(result.mapping.social_account_identifier, "instagram:1789001");
+    assert.equal(store.inserts, 0);
+
+    const recovered = resolveCjPidInsertConflict(insertFrom(row), row, null);
+    assert.equal(recovered.cj_pid, "555001");
+    assert.equal(recovered.social_account_identifier, "instagram:1789001");
+  });
+
+  it("H. the same PID on a different social property of the same user is a mismatch", async () => {
+    const row = mapping({
+      cj_pid: "555001",
+      social_account_identifier: "instagram:999",
+      social_media_handle: "other.handle",
+    });
+    const store = hiddenPropertyStore(row);
+    await assert.rejects(
+      syncCjPromotionalProperty({
+        canonicalUserId: "user-a",
+        account: instagramAccount(),
+        store,
+        pat: "test-pat",
+        publisherId: "1111111",
+        fetchImpl: propertyFetch({ listed: remoteNode("ACTIVE", { id: "555001" }) }),
+      }),
+      (err: unknown) =>
+        err instanceof CjPropertyMappingError && err.code === "CJ_PID_PROPERTY_MISMATCH"
+    );
+    assert.equal(store.inserts, 0);
+    assert.equal(store.rows[0].social_account_identifier, "instagram:999");
+
+    assert.throws(
+      () => resolveCjPidInsertConflict(insertFrom(mapping({ cj_pid: "555001" })), row, null),
+      (err: unknown) =>
+        err instanceof CjPropertyMappingError && err.code === "CJ_PID_PROPERTY_MISMATCH"
+    );
+  });
+
+  it("I. a PID owned by another canonical user stays owned by that user", async () => {
+    const row = mapping({
+      user_id: "user-b",
+      cj_pid: "555001",
+      social_account_identifier: "instagram:999",
+    });
+    const store = hiddenPropertyStore(row);
+    await assert.rejects(
+      syncCjPromotionalProperty({
+        canonicalUserId: "user-a",
+        account: instagramAccount(),
+        store,
+        pat: "test-pat",
+        publisherId: "1111111",
+        fetchImpl: propertyFetch({ listed: remoteNode("ACTIVE", { id: "555001" }) }),
+      }),
+      (err: unknown) =>
+        err instanceof CjPropertyMappingError && err.code === "CJ_PID_OWNED_BY_ANOTHER_USER"
+    );
+    assert.equal(store.inserts, 0);
+    assert.equal(store.rows[0].user_id, "user-b");
+  });
+
+  it("J. a create response with the wrong publisher id is rejected", async () => {
+    await assertCreateRejected(
+      createdNode({ publisherId: "2222222" }),
+      "CJ_PROPERTY_RESPONSE_MISMATCH"
+    );
+  });
+
+  it("K. a create response with a blank publisher id is rejected", async () => {
+    await assertCreateRejected(createdNode({ publisherId: "" }), "CJ_PROPERTY_RESPONSE_MISMATCH");
+    await assertCreateRejected(createdNode({ publisherId: "   " }), "CJ_PROPERTY_RESPONSE_MISMATCH");
+  });
+
+  it("L. a create response with the wrong property type is rejected", async () => {
+    await assertCreateRejected(
+      createdNode({
+        propertyTypeDetails: {
+          type: "WEBSITE",
+          socialMediaHandle: "linus.creator",
+          socialMediaPlatform: "INSTAGRAM",
+        },
+      }),
+      "CJ_PROPERTY_RESPONSE_MISMATCH"
+    );
+  });
+
+  it("M. a create response with the wrong social platform is rejected", async () => {
+    await assertCreateRejected(
+      createdNode({
+        propertyTypeDetails: {
+          type: "SOCIAL_MEDIA",
+          socialMediaHandle: "linus.creator",
+          socialMediaPlatform: "FACEBOOK",
+        },
+      }),
+      "CJ_PROPERTY_RESPONSE_MISMATCH"
+    );
+  });
+
+  it("N. a create response with the wrong handle is rejected", async () => {
+    await assertCreateRejected(
+      createdNode({
+        propertyTypeDetails: {
+          type: "SOCIAL_MEDIA",
+          socialMediaHandle: "someone.else",
+          socialMediaPlatform: "INSTAGRAM",
+        },
+      }),
+      "CJ_PROPERTY_RESPONSE_MISMATCH"
+    );
+  });
+
+  it("O. a create response that is ARCHIVED or TERMINATED is rejected", async () => {
+    await assertCreateRejected(createdNode({ status: "ARCHIVED" }), "CJ_PROPERTY_INACTIVE");
+    await assertCreateRejected(createdNode({ status: "TERMINATED" }), "CJ_PROPERTY_INACTIVE");
+  });
+
+  it("P. a review for a different advertiser cannot authorize the requested advertiser", () => {
+    const result = evaluateCjAdvertiserUse({
+      ...eligibleArgs(),
+      review: { ...allowedReview(), advertiser_id: "99" },
+    });
+    assert.deepEqual(result, { ok: false, reason: "CJ_PROGRAM_REVIEW_ADVERTISER_MISMATCH" });
+  });
+
+  it("Q. a contract for a different advertiser cannot authorize the requested advertiser", () => {
+    const result = evaluateCjAdvertiserUse({
+      ...eligibleArgs(),
+      contract: activeContract("7"),
+    });
+    assert.deepEqual(result, { ok: false, reason: "CJ_CONTRACT_ADVERTISER_MISMATCH" });
+
+    const crossed = evaluateCjAdvertiserUse({
+      ...eligibleArgs(),
+      advertiserId: "C",
+      contract: activeContract("A"),
+      review: { ...allowedReview(), advertiser_id: "B" },
+    });
+    assert.deepEqual(crossed, { ok: false, reason: "CJ_CONTRACT_ADVERTISER_MISMATCH" });
+
+    const reviewCrossed = evaluateCjAdvertiserUse({
+      ...eligibleArgs(),
+      advertiserId: "C",
+      contract: activeContract("C"),
+      review: { ...allowedReview(), advertiser_id: "B" },
+    });
+    assert.deepEqual(reviewCrossed, {
+      ok: false,
+      reason: "CJ_PROGRAM_REVIEW_ADVERTISER_MISMATCH",
+    });
+  });
+
+  it("R. matching advertiser, ACTIVE contract, ACTIVE property, and allowed social_media review succeeds", () => {
+    const result = evaluateCjAdvertiserUse(eligibleArgs());
+    assert.deepEqual(result, { ok: true, cjPid: "100125586", method: "social_media" });
+  });
+
+  it("S. the review migration records reviewed_by and still has no seed or customer grants", () => {
+    const sql = read("supabase/migrations/20260927_cj_phase1_property_contract.sql");
+    assert.match(sql, /reviewed_by uuid null/);
+    assert.match(sql, /enable row level security/);
+    assert.match(sql, /revoke all on table public\.cj_program_reviews from authenticated/);
+    assert.match(sql, /revoke all on table public\.cj_promotional_properties from authenticated/);
+    assert.match(sql, /to service_role/);
+    assert.doesNotMatch(sql, /grant .+ to authenticated/i);
+    assert.doesNotMatch(sql, /grant .+ to anon/i);
+    assert.doesNotMatch(sql, /insert into public\.cj_program_reviews/i);
+    assert.doesNotMatch(sql, /wayfair|rexing|dhgate|booking/i);
+    assert.doesNotMatch(sql, /references public\.profiles/);
+    assert.doesNotMatch(sql, /references auth\.users/);
+  });
+
+  it("T. CJ remains excluded from the tracking-ready automated sources", () => {
+    assert.deepEqual([...BETA_TRACKING_READY_AUTOMATED_SOURCES], ["warriorplus"]);
+    assert.equal(isBetaAutomatedSource("cj", "cj"), false);
+    assert.deepEqual(getBetaAutomatedSources("cj"), []);
+    const readiness = read("lib/affiliate/productSourceReadiness.ts");
+    assert.match(readiness, /BETA_TRACKING_READY_AUTOMATED_SOURCES = \["warriorplus"\]/);
+    assert.doesNotMatch(readiness, /"cj"/);
+  });
+
+  it("U. WarriorPlus and BYO offer contracts remain unchanged", () => {
+    const select = read("app/api/offers/select/route.ts");
+    assert.match(select, /warriorPlusTrackingMatches/);
+    assert.match(select, /BYO_URL_MUST_BE_HTTP/);
+    assert.match(select, /SOURCE_NOT_BETA_ENABLED/);
+    assert.doesNotMatch(select, /cj_promotional_properties/);
+    assert.doesNotMatch(select, /evaluateCjAdvertiserUse/);
   });
 });
 
@@ -602,6 +903,197 @@ function allowedReview() {
     status: "allowed",
     permitted_methods: ["social_media"],
   };
+}
+
+function activeContract(advertiserId = "42"): CjAdvertiserContract {
+  return {
+    advertiserId,
+    contractStatus: "ACTIVE",
+    programTermsId: "pt-1",
+    programTermsName: "Default",
+    startTime: "2026-01-01T00:00:00Z",
+    endTime: null,
+    isActive: true,
+    commissions: [],
+  };
+}
+
+function eligibleArgs() {
+  return {
+    canonicalUserId: "user-a",
+    advertiserId: "42",
+    account: instagramAccount(),
+    mapping: mapping(),
+    contract: activeContract("42"),
+    review: allowedReview(),
+    method: "social_media" as const,
+  };
+}
+
+function remoteNode(status: string, extra: Record<string, unknown> = {}) {
+  return {
+    id: "555001",
+    publisherId: "1111111",
+    name: "Instagram @linus.creator",
+    status,
+    isPrimary: false,
+    propertyTypeDetails: {
+      type: "SOCIAL_MEDIA",
+      socialMediaHandle: "linus.creator",
+      socialMediaPlatform: "INSTAGRAM",
+    },
+    ...extra,
+  };
+}
+
+function createdNode(overrides: Record<string, unknown> = {}) {
+  return {
+    ...remoteNode("ACTIVE"),
+    description: "Connected Instagram account registered by Autoaffi.",
+    ...overrides,
+  };
+}
+
+function propertyFetch(args: {
+  listed: unknown | null;
+  onCreate?: () => void;
+}): typeof fetch {
+  return async (_url, init) => {
+    const body = JSON.parse(String(init?.body || "{}"));
+    const query = String(body.query || "");
+    if (query.includes("createPromotionalProperty")) {
+      args.onCreate?.();
+      return jsonResponse({
+        data: { createPromotionalProperty: createdNode() },
+      });
+    }
+    return jsonResponse({
+      data: {
+        promotionalProperties: {
+          totalCount: args.listed ? 1 : 0,
+          resultList: args.listed ? [args.listed] : [],
+        },
+      },
+    });
+  };
+}
+
+async function assertLocalInactive(status: string) {
+  const store = memoryStore([mapping({ status })]);
+  let calls = 0;
+  await assert.rejects(
+    syncCjPromotionalProperty({
+      canonicalUserId: "user-a",
+      account: instagramAccount(),
+      store,
+      pat: "test-pat",
+      publisherId: "1111111",
+      fetchImpl: async () => {
+        calls += 1;
+        throw new Error("CJ must not be called for an inactive local mapping");
+      },
+    }),
+    (err: unknown) =>
+      err instanceof CjPropertyMappingError && err.code === "CJ_PROPERTY_INACTIVE"
+  );
+  assert.equal(calls, 0);
+  assert.equal(store.rows.length, 1);
+  assert.equal(store.rows[0].status, status);
+}
+
+async function assertRemoteInactive(status: string) {
+  const store = memoryStore();
+  let creates = 0;
+  await assert.rejects(
+    syncCjPromotionalProperty({
+      canonicalUserId: "user-a",
+      account: instagramAccount(),
+      store,
+      pat: "test-pat",
+      publisherId: "1111111",
+      fetchImpl: propertyFetch({
+        listed: remoteNode(status),
+        onCreate: () => {
+          creates += 1;
+        },
+      }),
+    }),
+    (err: unknown) =>
+      err instanceof CjPropertyMappingError && err.code === "CJ_PROPERTY_INACTIVE"
+  );
+  assert.equal(creates, 0);
+  assert.equal(store.rows.length, 0);
+}
+
+function hiddenPropertyStore(row: CjPropertyMappingRow) {
+  return {
+    rows: [row],
+    inserts: 0,
+    async findByUserProperty() {
+      return null;
+    },
+    async findByPid(cjPid: string) {
+      return row.cj_pid === cjPid ? row : null;
+    },
+    async insert() {
+      this.inserts += 1;
+      throw new Error("insert should not run");
+    },
+  };
+}
+
+function insertFrom(row: CjPropertyMappingRow): CjPropertyMappingInsert {
+  return {
+    user_id: row.user_id,
+    platform: row.platform,
+    social_account_id: row.social_account_id,
+    social_account_identifier: row.social_account_identifier,
+    social_media_handle: row.social_media_handle,
+    cj_social_platform: row.cj_social_platform,
+    cj_pid: row.cj_pid,
+    property_type: row.property_type,
+    status: row.status,
+  };
+}
+
+async function assertCreateRejected(created: unknown, code: string) {
+  const store = memoryStore();
+  await assert.rejects(
+    createCJPromotionalProperty({
+      pat: "test-pat",
+      publisherId: "1111111",
+      name: "Instagram @linus.creator",
+      socialMediaHandle: "linus.creator",
+      socialMediaPlatform: "INSTAGRAM",
+      fetchImpl: async () =>
+        jsonResponse({ data: { createPromotionalProperty: created } }),
+    }),
+    (err: unknown) => err instanceof CjGraphqlError && err.code === code
+  );
+
+  let creates = 0;
+  await assert.rejects(
+    syncCjPromotionalProperty({
+      canonicalUserId: "user-a",
+      account: instagramAccount(),
+      store,
+      pat: "test-pat",
+      publisherId: "1111111",
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String(init?.body || "{}"));
+        if (String(body.query || "").includes("createPromotionalProperty")) {
+          creates += 1;
+          return jsonResponse({ data: { createPromotionalProperty: created } });
+        }
+        return jsonResponse({
+          data: { promotionalProperties: { totalCount: 0, resultList: [] } },
+        });
+      },
+    }),
+    (err: unknown) => err instanceof CjGraphqlError && err.code === code
+  );
+  assert.equal(creates, 1);
+  assert.equal(store.rows.length, 0);
 }
 
 function walk(dir: string, visit: (file: string) => void) {

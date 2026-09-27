@@ -158,13 +158,18 @@ function normalizeContract(
   const status = stringOrEmpty(record.status);
   if (!status) return null;
 
+  const advertiserId = stringOrEmpty(record.advertiserId);
+  if (!advertiserId || advertiserId !== requestedAdvertiserId) {
+    return null;
+  }
+
   const terms =
     record.programTerms && typeof record.programTerms === "object"
       ? (record.programTerms as Record<string, unknown>)
       : null;
 
   return {
-    advertiserId: stringOrEmpty(record.advertiserId) || requestedAdvertiserId,
+    advertiserId,
     contractStatus: status,
     programTermsId: terms ? stringOrEmpty(terms.id) || null : null,
     programTermsName: terms ? stringOrEmpty(terms.name) || null : null,

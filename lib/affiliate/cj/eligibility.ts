@@ -1,4 +1,4 @@
-import { isActiveCjContractStatus } from "./programTerms";
+import type { CjAdvertiserContract } from "./programTerms";
 import { resolveSocialPromotionalProperty } from "./socialAccountProperty";
 import type { CjSocialAccountSnapshot } from "./socialAccountProperty";
 import type { CjPropertyMappingRow } from "./propertyMapping";
@@ -9,6 +9,7 @@ export type CjProgramReviewSnapshot = {
   advertiser_id: string;
   status: string;
   permitted_methods: string[];
+  reviewed_by?: string | null;
 };
 
 export type CjEligibilityReason =
@@ -19,7 +20,9 @@ export type CjEligibilityReason =
   | "CJ_PROPERTY_MISSING"
   | "CJ_PROPERTY_INACTIVE"
   | "CJ_CONTRACT_NOT_ACTIVE"
+  | "CJ_CONTRACT_ADVERTISER_MISMATCH"
   | "CJ_PROGRAM_NOT_REVIEWED"
+  | "CJ_PROGRAM_REVIEW_ADVERTISER_MISMATCH"
   | "CJ_PROGRAM_DISABLED"
   | "CJ_METHOD_NOT_ALLOWED";
 
@@ -34,12 +37,14 @@ export type CjEligibilityResult =
  */
 export function evaluateCjAdvertiserUse(args: {
   canonicalUserId: string;
+  advertiserId: string;
   account: CjSocialAccountSnapshot | null;
   mapping: CjPropertyMappingRow | null;
-  contractStatus: string | null;
+  contract: CjAdvertiserContract | null;
   review: CjProgramReviewSnapshot | null;
   method?: string;
 }): CjEligibilityResult {
+  const advertiserId = String(args.advertiserId || "").trim();
   const method = String(args.method || CJ_ELIGIBILITY_METHOD_SOCIAL_MEDIA)
     .trim()
     .toLowerCase();
@@ -67,13 +72,23 @@ export function evaluateCjAdvertiserUse(args: {
     return { ok: false, reason: "CJ_PROPERTY_INACTIVE" };
   }
 
-  if (!isActiveCjContractStatus(args.contractStatus)) {
+  const contract = args.contract;
+  if (!contract) {
+    return { ok: false, reason: "CJ_CONTRACT_NOT_ACTIVE" };
+  }
+  if (!advertiserId || contract.advertiserId !== advertiserId) {
+    return { ok: false, reason: "CJ_CONTRACT_ADVERTISER_MISMATCH" };
+  }
+  if (!contract.isActive || String(contract.contractStatus || "").trim().toUpperCase() !== "ACTIVE") {
     return { ok: false, reason: "CJ_CONTRACT_NOT_ACTIVE" };
   }
 
   const review = args.review;
   if (!review) {
     return { ok: false, reason: "CJ_PROGRAM_NOT_REVIEWED" };
+  }
+  if (review.advertiser_id !== advertiserId) {
+    return { ok: false, reason: "CJ_PROGRAM_REVIEW_ADVERTISER_MISMATCH" };
   }
 
   const reviewStatus = String(review.status || "").trim().toLowerCase();

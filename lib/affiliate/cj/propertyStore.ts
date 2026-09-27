@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   CjPropertyMappingError,
+  resolveCjPidInsertConflict,
   type CjPropertyMappingInsert,
   type CjPropertyMappingRow,
   type CjPropertyMappingStore,
@@ -44,15 +45,13 @@ export function createSupabaseCjPropertyStore(): CjPropertyMappingStore {
         .maybeSingle();
 
       if (error?.code === "23505") {
-        const existing =
-          (await findOne({ cj_pid: row.cj_pid })) ||
-          (await findOne({
-            user_id: row.user_id,
-            platform: row.platform,
-            social_account_identifier: row.social_account_identifier,
-          }));
-        if (existing && existing.user_id === row.user_id) return existing;
-        throw new CjPropertyMappingError("CJ_PID_OWNED_BY_ANOTHER_USER");
+        const byPid = await findOne({ cj_pid: row.cj_pid });
+        const byProperty = await findOne({
+          user_id: row.user_id,
+          platform: row.platform,
+          social_account_identifier: row.social_account_identifier,
+        });
+        return resolveCjPidInsertConflict(row, byPid, byProperty);
       }
 
       if (error || !data) {

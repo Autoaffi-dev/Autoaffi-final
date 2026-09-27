@@ -175,19 +175,50 @@ export async function createCJPromotionalProperty(
   });
 
   const created = mapSocialProperty(data.createPromotionalProperty);
+  assertCreatedInstagramProperty(created, {
+    publisherId: options.publisherId,
+    socialMediaHandle: handle,
+  });
+  return created as CjSocialMediaProperty;
+}
+
+/**
+ * The created CJ property must describe the property we asked for.
+ * Local Instagram values are not stored in place of a mismatched response.
+ */
+export function assertCreatedInstagramProperty(
+  created: CjSocialMediaProperty | null,
+  expected: { publisherId: string; socialMediaHandle: string }
+): asserts created is CjSocialMediaProperty {
   if (!created?.id) {
     throw new CjGraphqlError("CJ_PID_MISSING");
   }
 
-  if (!CJ_PROPERTY_STATUSES.includes(created.status as CjPropertyStatus)) {
-    throw new CjGraphqlError("CJ_RESPONSE_MALFORMED");
+  if (created.status === "ARCHIVED" || created.status === "TERMINATED") {
+    throw new CjGraphqlError("CJ_PROPERTY_INACTIVE");
   }
 
-  if (created.publisherId && created.publisherId !== options.publisherId) {
-    throw new CjGraphqlError("CJ_RESPONSE_MALFORMED");
-  }
+  const expectedHandle = normalizeCjSocialHandle(expected.socialMediaHandle);
+  const returnedHandle = normalizeCjSocialHandle(created.socialMediaHandle);
+  const publisherId = String(expected.publisherId || "").trim();
 
-  return created;
+  if (
+    created.status !== "ACTIVE" ||
+    !publisherId ||
+    created.publisherId !== publisherId ||
+    created.propertyType !== CJ_PROPERTY_TYPE_SOCIAL_MEDIA ||
+    created.socialMediaPlatform !== CJ_SOCIAL_PLATFORM_INSTAGRAM ||
+    !expectedHandle ||
+    returnedHandle !== expectedHandle
+  ) {
+    throw new CjGraphqlError("CJ_PROPERTY_RESPONSE_MISMATCH");
+  }
+}
+
+export function normalizeCjSocialHandle(value: string) {
+  const trimmed = String(value || "").trim();
+  const withoutAt = trimmed.startsWith("@") ? trimmed.slice(1).trim() : trimmed;
+  return withoutAt.toLowerCase();
 }
 
 export function mapSocialProperty(row: unknown): CjSocialMediaProperty | null {

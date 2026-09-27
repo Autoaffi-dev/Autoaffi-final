@@ -1,5 +1,6 @@
 import { readCjServerConfig } from "./config";
 import {
+  assertReusablePidMapping,
   CjPropertyMappingError,
   type CjPropertyMappingRow,
   type CjPropertyMappingStore,
@@ -7,6 +8,7 @@ import {
 import {
   createCJPromotionalProperty,
   listCJPromotionalProperties,
+  normalizeCjSocialHandle,
   type CjSocialMediaProperty,
 } from "./promotionalProperty";
 import {
@@ -61,13 +63,12 @@ export async function syncCjPromotionalProperty(args: {
   );
 
   if (existing) {
-    if (existing.user_id !== canonicalUserId) {
-      throw new CjPropertyMappingError("CJ_PID_OWNED_BY_ANOTHER_USER");
-    }
-    if (!existing.cj_pid) {
-      throw new CjPropertyMappingError("CJ_PID_MISSING");
-    }
-    return { mapping: existing, idempotent: true };
+    const reusable = assertReusablePidMapping(existing, {
+      user_id: canonicalUserId,
+      platform: resolved.platform,
+      social_account_identifier: resolved.socialAccountIdentifier,
+    });
+    return { mapping: reusable, idempotent: true };
   }
 
   const config =
@@ -94,21 +95,20 @@ export async function syncCjPromotionalProperty(args: {
       socialMediaPlatform: "INSTAGRAM",
     }));
 
-  if (!property.id) {
-    throw new CjPropertyMappingError("CJ_PID_MISSING");
-  }
-
-  if (!["ACTIVE", "ARCHIVED", "TERMINATED"].includes(property.status)) {
-    throw new CjPropertyMappingError("CJ_RESPONSE_MALFORMED");
+  if (property.status !== "ACTIVE" || !property.id) {
+    throw new CjPropertyMappingError(
+      property.id ? "CJ_PROPERTY_INACTIVE" : "CJ_PID_MISSING"
+    );
   }
 
   const pidOwner = await args.store.findByPid(property.id);
-  if (pidOwner && pidOwner.user_id !== canonicalUserId) {
-    throw new CjPropertyMappingError("CJ_PID_OWNED_BY_ANOTHER_USER");
-  }
-
-  if (pidOwner && pidOwner.user_id === canonicalUserId) {
-    return { mapping: pidOwner, idempotent: true };
+  if (pidOwner) {
+    const reusable = assertReusablePidMapping(pidOwner, {
+      user_id: canonicalUserId,
+      platform: resolved.platform,
+      social_account_identifier: resolved.socialAccountIdentifier,
+    });
+    return { mapping: reusable, idempotent: true };
   }
 
   const mapping = await args.store.insert({
@@ -123,9 +123,11 @@ export async function syncCjPromotionalProperty(args: {
     status: property.status,
   });
 
-  if (mapping.user_id !== canonicalUserId) {
-    throw new CjPropertyMappingError("CJ_PID_OWNED_BY_ANOTHER_USER");
-  }
+  assertReusablePidMapping(mapping, {
+    user_id: canonicalUserId,
+    platform: resolved.platform,
+    social_account_identifier: resolved.socialAccountIdentifier,
+  });
 
   return { mapping, idempotent: false };
 }
@@ -142,21 +144,23 @@ async function findRemoteInstagramProperty(args: {
     fetchImpl: args.fetchImpl,
   });
 
-  const needle = args.handle.toLowerCase();
-  return (
+  const needle = normalizeCjSocialHandle(args.handle);
+  const match =
     properties.find((property) => {
-      if (property.publisherId && property.publisherId !== args.publisherId) {
-        return false;
-      }
       if (property.propertyType !== "SOCIAL_MEDIA") return false;
       if (property.socialMediaPlatform !== "INSTAGRAM") return false;
-      return normalizeHandle(property.socialMediaHandle) === needle;
-    }) || null
-  );
-}
+      return normalizeCjSocialHandle(property.socialMediaHandle) === needle;
+    }) || null;
 
-function normalizeHandle(value: string) {
-  const trimmed = value.trim();
-  const withoutAt = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
-  return withoutAt.trim().toLowerCase();
+  if (!match) return null;
+
+  if (!match.publisherId || match.publisherId !== args.publisherId) {
+    throw new CjPropertyMappingError("CJ_PROPERTY_RESPONSE_MISMATCH");
+  }
+
+  if (match.status !== "ACTIVE") {
+    throw new CjPropertyMappingError("CJ_PROPERTY_INACTIVE");
+  }
+
+  return match;
 }
