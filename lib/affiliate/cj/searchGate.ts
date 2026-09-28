@@ -1,4 +1,5 @@
 import type { CjProgramReviewSnapshot } from "./eligibility";
+import { normalizeCjSocialHandle } from "./promotionalProperty";
 import type { CjPropertyMappingRow } from "./propertyMapping";
 import type { CjSocialAccountSnapshot } from "./socialAccountProperty";
 import { resolveSocialPromotionalProperty } from "./socialAccountProperty";
@@ -57,10 +58,20 @@ export function eligibleInstagramProperties(args: {
       property.user_id === args.canonicalUserId &&
       property.platform === resolved.platform &&
       property.social_account_identifier === resolved.socialAccountIdentifier &&
+      property.property_type === resolved.propertyType &&
+      property.cj_social_platform === resolved.socialMediaPlatform &&
+      instagramHandlesMatch(property.social_media_handle, resolved.socialMediaHandle) &&
       String(property.status || "").trim().toUpperCase() === "ACTIVE" &&
       Boolean(String(property.cj_pid || "").trim())
     );
   });
+}
+
+function instagramHandlesMatch(stored: string, resolvedHandle: string) {
+  const left = normalizeCjSocialHandle(stored);
+  const right = normalizeCjSocialHandle(resolvedHandle);
+  if (!left || !right) return false;
+  return left === right;
 }
 
 function reviewAllowsSocial(

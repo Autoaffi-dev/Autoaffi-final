@@ -4,7 +4,10 @@ import { CjGraphqlError } from "./graphql";
  * Finalizes an official CJ clickUrl.
  * Hosts are the exact hosts in current CJ Product Feed, Link Search,
  * and publisher-parameter examples. Comparison is exact, never a suffix.
- * SID is appended only when absent. A different sid fails closed.
+ * Only the default HTTPS port is accepted.
+ * The private-beta click path is exactly /click-{pid}-{aid}.
+ * SID is appended only when no sid parameter exists.
+ * One sid must equal the expected stable SID. Two or more fail closed.
  * Documented click URL length limit is 1000 characters.
  *
  * cjsku is not treated as the product id. The Product Feed schema describes
@@ -19,7 +22,7 @@ export const CJ_TRACKING_HOSTS = [
 
 export const CJ_TRACKING_URL_MAX_LENGTH = 1000;
 
-const CLICK_PATH = /^\/click-(\d+)-(\d+)(?:-(\d+))?$/;
+const CLICK_PATH = /^\/click-(\d+)-(\d+)$/;
 
 export function finalizeCjTrackingUrl(args: {
   clickUrl: string;
@@ -46,16 +49,7 @@ export function finalizeCjTrackingUrl(args: {
     );
   }
 
-  const existingSid = url.searchParams.get("sid");
-  if (existingSid === null || existingSid === "") {
-    url.searchParams.set("sid", expectedSid);
-  } else if (existingSid !== expectedSid) {
-    throw new CjGraphqlError("CJ_SID_MISMATCH");
-  }
-
-  if (url.searchParams.get("sid") !== expectedSid) {
-    throw new CjGraphqlError("CJ_SID_MISMATCH");
-  }
+  applyExpectedSid(url, expectedSid, "append");
 
   const finalized = url.toString();
   if (finalized.length > CJ_TRACKING_URL_MAX_LENGTH) {
@@ -77,9 +71,7 @@ export function assertStoredCjTrackingUrl(affiliateLink: string, expectedSid: st
   if (!identity || !isLegitimateAid(identity.aid)) {
     throw new CjGraphqlError("CJ_TRACKING_URL_INVALID");
   }
-  if (!expected || url.searchParams.get("sid") !== expected) {
-    throw new CjGraphqlError("CJ_SID_MISMATCH");
-  }
+  applyExpectedSid(url, expected, "require");
   if (url.toString().length > CJ_TRACKING_URL_MAX_LENGTH) {
     throw new CjGraphqlError("CJ_TRACKING_URL_INVALID");
   }
@@ -95,9 +87,10 @@ export function readCjClickPid(affiliateLink: string) {
 }
 
 function parseHttpsUrl(value: string) {
+  const raw = String(value || "").trim();
   let url: URL;
   try {
-    url = new URL(String(value || "").trim());
+    url = new URL(raw);
   } catch {
     throw new CjGraphqlError("CJ_TRACKING_URL_INVALID");
   }
@@ -107,7 +100,37 @@ function parseHttpsUrl(value: string) {
   if (url.username || url.password) {
     throw new CjGraphqlError("CJ_TRACKING_URL_INVALID");
   }
+  if (url.port || hasExplicitPort(raw)) {
+    throw new CjGraphqlError("CJ_TRACKING_URL_INVALID");
+  }
   return url;
+}
+
+function hasExplicitPort(raw: string) {
+  const match = /^https:\/\/([^/?#]+)/i.exec(raw);
+  if (!match) return true;
+  const authority = match[1];
+  const host = authority.includes("@")
+    ? authority.slice(authority.lastIndexOf("@") + 1)
+    : authority;
+  return host.includes(":");
+}
+
+function applyExpectedSid(url: URL, expectedSid: string, mode: "append" | "require") {
+  const sids = url.searchParams.getAll("sid");
+  if (sids.length > 1) {
+    throw new CjGraphqlError("CJ_SID_MISMATCH");
+  }
+  if (sids.length === 1) {
+    if (sids[0] !== expectedSid) {
+      throw new CjGraphqlError("CJ_SID_MISMATCH");
+    }
+    return;
+  }
+  if (mode === "require") {
+    throw new CjGraphqlError("CJ_SID_MISMATCH");
+  }
+  url.searchParams.append("sid", expectedSid);
 }
 
 function assertOfficialHost(url: URL) {

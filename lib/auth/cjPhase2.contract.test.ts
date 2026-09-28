@@ -12,8 +12,8 @@ import { CJ_PRODUCT_FEED_ENDPOINT } from "../affiliate/cj/config.ts";
 import { toCustomerSavedOffer } from "../affiliate/cj/customerOffer.ts";
 import { CjOfferDestinationError, resolveCjOfferDestination } from "../affiliate/cj/resolveCjOfferDestination.ts";
 import { CJ_PRODUCT_CLICK_QUERY, getCJProductClickUrl } from "../affiliate/cj/linkCode.ts";
-import { filterCjSearchItems } from "../affiliate/cj/searchGate.ts";
-import { finalizeCjTrackingUrl } from "../affiliate/cj/trackingUrl.ts";
+import { eligibleInstagramProperties, filterCjSearchItems } from "../affiliate/cj/searchGate.ts";
+import { assertStoredCjTrackingUrl, finalizeCjTrackingUrl } from "../affiliate/cj/trackingUrl.ts";
 import type { CjAdvertiserContract } from "../affiliate/cj/programTerms.ts";
 import { CjPropertyMappingError, type CjPropertyMappingRow } from "../affiliate/cj/propertyMapping.ts";
 import type { CjSocialAccountSnapshot } from "../affiliate/cj/socialAccountProperty.ts";
@@ -448,6 +448,170 @@ describe("CJ phase 2 official click foundation", () => {
     assert.match(webhook, /AFFILIATE_WEBHOOK_DISABLED/);
     const payouts = read("app/api/dashboard/payouts/route.ts");
     assert.match(payouts, /PAYOUTS_DISABLED/);
+  });
+
+  it("A-P. index, property metadata, port, SID, click path, and unknown errors fail closed", async () => {
+    const sid = buildStableSubId(userId, "cj", externalId);
+    const index = baseArgs().indexRow as Record<string, unknown>;
+
+    for (const isActive of [undefined, null, false, "true"]) {
+      await assert.rejects(
+        resolveCjOfferDestination(baseArgs({ indexRow: { ...index, is_active: isActive } }) as any),
+        (err: unknown) => err instanceof CjOfferDestinationError && err.code === "CJ_PRODUCT_MISMATCH"
+      );
+    }
+    for (const isApproved of [undefined, null, false, "yes"]) {
+      await assert.rejects(
+        resolveCjOfferDestination(
+          baseArgs({ indexRow: { ...index, is_approved: isApproved } }) as any
+        ),
+        (err: unknown) => err instanceof CjOfferDestinationError && err.code === "CJ_PRODUCT_MISMATCH"
+      );
+    }
+
+    const approved = await resolveCjOfferDestination(
+      baseArgs({ indexRow: { ...index, is_active: true, is_approved: true } }) as any
+    );
+    assert.equal(approved.productId, "sku900");
+
+    const propertyArgs = {
+      canonicalUserId: userId,
+      account: account(),
+      properties: [property()],
+    };
+    assert.equal(eligibleInstagramProperties(propertyArgs).length, 1);
+    assert.equal(
+      eligibleInstagramProperties({
+        ...propertyArgs,
+        properties: [property({ property_type: "WEBSITE" })],
+      }).length,
+      0
+    );
+    assert.equal(
+      eligibleInstagramProperties({
+        ...propertyArgs,
+        properties: [property({ cj_social_platform: "TIKTOK" })],
+      }).length,
+      0
+    );
+    assert.equal(
+      eligibleInstagramProperties({
+        ...propertyArgs,
+        properties: [property({ social_media_handle: "other.creator" })],
+      }).length,
+      0
+    );
+    assert.equal(
+      eligibleInstagramProperties({
+        ...propertyArgs,
+        properties: [property({ social_media_handle: "@Linus.Creator" })],
+      }).length,
+      1
+    );
+
+    await assert.rejects(
+      resolveCjOfferDestination(
+        baseArgs({ properties: [property({ property_type: "WEBSITE" })] }) as any
+      ),
+      (err: unknown) => err instanceof CjOfferDestinationError && err.code === "CJ_PROPERTY_MISSING"
+    );
+
+    assert.throws(
+      () =>
+        finalizeCjTrackingUrl({
+          clickUrl: `https://www.kqzyfj.com:8443/click-${pid}-${aid}`,
+          expectedPid: pid,
+          expectedSid: sid,
+        }),
+      (err: unknown) => err instanceof Error && err.message === "CJ_TRACKING_URL_INVALID"
+    );
+
+    const appended = new URL(
+      finalizeCjTrackingUrl({
+        clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}`,
+        expectedPid: pid,
+        expectedSid: sid,
+      })
+    );
+    assert.deepEqual(appended.searchParams.getAll("sid"), [sid]);
+
+    const kept = finalizeCjTrackingUrl({
+      clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}?sid=${sid}`,
+      expectedPid: pid,
+      expectedSid: sid,
+    });
+    assert.deepEqual(new URL(kept).searchParams.getAll("sid"), [sid]);
+    assert.equal(assertStoredCjTrackingUrl(kept, sid).pid, pid);
+
+    for (const duplicate of [
+      `https://www.kqzyfj.com/click-${pid}-${aid}?sid=${sid}&sid=other`,
+      `https://www.kqzyfj.com/click-${pid}-${aid}?sid=${sid}&sid=${sid}`,
+    ]) {
+      assert.throws(
+        () =>
+          finalizeCjTrackingUrl({
+            clickUrl: duplicate,
+            expectedPid: pid,
+            expectedSid: sid,
+          }),
+        (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
+      );
+      assert.throws(
+        () => assertStoredCjTrackingUrl(duplicate, sid),
+        (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
+      );
+    }
+
+    assert.throws(
+      () =>
+        finalizeCjTrackingUrl({
+          clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}?sid=other-sid`,
+          expectedPid: pid,
+          expectedSid: sid,
+        }),
+      (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
+    );
+
+    const official = finalizeCjTrackingUrl({
+      clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}`,
+      expectedPid: pid,
+      expectedSid: sid,
+    });
+    assert.match(official, new RegExp(`/click-${pid}-${aid}(?:\\?|$)`));
+
+    assert.throws(
+      () =>
+        finalizeCjTrackingUrl({
+          clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}-123`,
+          expectedPid: pid,
+          expectedSid: sid,
+        }),
+      (err: unknown) => err instanceof Error && err.message === "CJ_TRACKING_URL_INVALID"
+    );
+    assert.throws(
+      () =>
+        finalizeCjTrackingUrl({
+          clickUrl: `https://www.kqzyfj.com/click-${pid}-00000000`,
+          expectedPid: pid,
+          expectedSid: sid,
+        }),
+      (err: unknown) => err instanceof Error && err.message === "CJ_TRACKING_URL_INVALID"
+    );
+
+    await assert.rejects(
+      resolveCjOfferDestination(
+        baseArgs({
+          fetchImpl: async () => {
+            throw new Error("secret upstream detail");
+          },
+        }) as any
+      ),
+      (err: unknown) =>
+        err instanceof CjOfferDestinationError &&
+        err.code === "CJ_TRACKING_URL_INVALID" &&
+        err.message === "CJ_TRACKING_URL_INVALID" &&
+        !err.message.includes("secret")
+    );
   });
 
   it("search hides CJ unless the advertiser is allowed and one Instagram property is eligible", () => {

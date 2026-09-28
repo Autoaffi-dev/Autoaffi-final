@@ -82,7 +82,7 @@ export async function resolveCjOfferDestination(args: {
   if (String(args.indexRow.source || "").trim().toLowerCase() !== "cj") {
     throw new CjOfferDestinationError("CJ_PRODUCT_MISMATCH");
   }
-  if (args.indexRow.is_active === false || args.indexRow.is_approved === false) {
+  if (args.indexRow.is_active !== true || args.indexRow.is_approved !== true) {
     throw new CjOfferDestinationError("CJ_PRODUCT_MISMATCH");
   }
 
@@ -224,9 +224,6 @@ function asDestinationError(err: unknown) {
   }
   if (err instanceof CjGraphqlError) {
     return new CjOfferDestinationError(err.code);
-  }
-  if (err instanceof Error && err.message) {
-    return new CjOfferDestinationError(err.message);
   }
   return new CjOfferDestinationError("CJ_TRACKING_URL_INVALID");
 }
