@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { requireUserId, UNAUTHORIZED_ERROR } from "@/lib/auth/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildAffiliateLink } from "@/lib/affiliate/buildAffiliateLink";
+import { toCustomerSavedOffer } from "@/lib/affiliate/cj/customerOffer";
+import { CjOfferDestinationError } from "@/lib/affiliate/cj/resolveCjOfferDestination";
+import { resolveStoredCjOfferDestination } from "@/lib/affiliate/cj/resolveStoredCjOfferDestination";
+import { CjPropertyMappingError } from "@/lib/affiliate/cj/propertyMapping";
 import {
   customerFacingProductCommission,
   isBetaAutomatedSource,
@@ -32,6 +36,7 @@ type IncomingItem = {
   url?: string | null;
   product_url?: string | null;
   landing_url?: string | null;
+  affiliate_link?: string | null;
 
   price?: number | null;
   currency?: string | null;
@@ -125,6 +130,11 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
     void body?.userId;
+    void body?.pid;
+    void body?.cj_pid;
+    void body?.aid;
+    void body?.linkId;
+    void body?.sid;
     const payload: IncomingItem | null = body?.item || body || null;
 
     if (!payload) {
@@ -250,22 +260,66 @@ export async function POST(req: Request) {
     }
 
     const subid = buildStableSubId(userId, source, externalId);
+    let cjAffiliateLink = "";
 
-    const built = await buildAffiliateLink({
-      source,
-      productUrl,
-      externalId,
-      userId,
-      subid,
-      title,
-      merchantName,
-      campaign,
-      context,
-    });
+    if (source === "cj") {
+      void payload.merchant_id;
+      void payload.product_url;
+      void payload.affiliate_link;
+      void payload.commission;
+      void payload.epc;
+      try {
+        const resolved = await resolveStoredCjOfferDestination({
+          canonicalUserId: userId,
+          indexRow: {
+            source,
+            external_id: externalId,
+            merchant_id: merchantId,
+            product_url: productUrl,
+            is_active: true,
+            is_approved: true,
+          },
+          promotionContext: context,
+          promotionPlatform:
+            typeof body?.promotionPlatform === "string" ? body.promotionPlatform : null,
+          clientAdvertiserId: payload.merchant_id,
+          clientPid: body?.pid ?? body?.cj_pid,
+          clientAid: body?.aid ?? body?.linkId,
+          clientDestination: payload.product_url ?? payload.url ?? payload.affiliate_link,
+          clientSid: body?.sid,
+        });
+        if (resolved.subid !== subid) {
+          return jsonNoStore({ ok: false, error: "CJ_SID_MISMATCH" }, 400);
+        }
+        cjAffiliateLink = resolved.affiliateLink;
+      } catch (err) {
+        const code =
+          err instanceof CjOfferDestinationError || err instanceof CjPropertyMappingError
+            ? err.code
+            : "CJ_TRACKING_URL_INVALID";
+        return jsonNoStore({ ok: false, error: code }, 400);
+      }
+    }
 
-    const finalAffiliateLink = safeString(built?.affiliateLink);
+    const built =
+      source === "cj"
+        ? null
+        : await buildAffiliateLink({
+            source,
+            productUrl,
+            externalId,
+            userId,
+            subid,
+            title,
+            merchantName,
+            campaign,
+            context,
+          });
+
+    const finalAffiliateLink =
+      source === "cj" ? cjAffiliateLink : safeString(built?.affiliateLink);
     const finalProductUrl = manual ? productUrl : safeString(built?.productUrl) || productUrl;
-    const finalSubId = safeString(built?.subid) || subid;
+    const finalSubId = source === "cj" ? subid : safeString(built?.subid) || subid;
 
     if (manual && finalAffiliateLink !== productUrl) {
       return jsonNoStore({ ok: false, error: "BYO_URL_REWRITTEN" }, 400);
@@ -354,23 +408,33 @@ export async function POST(req: Request) {
 
     const saved = (upsertRes.data as SavedUserOfferRow | null) ?? null;
     const displayLink = buildDisplayLink(saved?.id);
+    const customerSaved = saved && source === "cj" ? toCustomerSavedOffer(saved) : saved;
 
     return jsonNoStore({
       ok: true,
-      saved,
+      saved: customerSaved,
       affiliate_link: displayLink || null,
       display_link: displayLink || null,
-      subid: saved?.subid || finalSubId,
-      builder_meta: {
-        ...(built?.meta || {}),
-        source,
-        externalId,
-        context,
-        campaign,
-        network_affiliate_link: finalAffiliateLink,
-        autoaffi_display_link: displayLink || null,
-        subid: saved?.subid || finalSubId,
-      },
+      subid: source === "cj" ? null : saved?.subid || finalSubId,
+      builder_meta:
+        source === "cj"
+          ? {
+              source,
+              externalId,
+              context,
+              tracking_label: "CJ · Instagram",
+              autoaffi_display_link: displayLink || null,
+            }
+          : {
+              ...(built?.meta || {}),
+              source,
+              externalId,
+              context,
+              campaign,
+              network_affiliate_link: finalAffiliateLink,
+              autoaffi_display_link: displayLink || null,
+              subid: saved?.subid || finalSubId,
+            },
     });
   } catch (e: any) {
     return jsonNoStore(

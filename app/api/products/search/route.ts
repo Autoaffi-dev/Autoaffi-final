@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import { applyCjSearchGate } from "@/lib/affiliate/cj/applyCjSearchGate";
 import {
   customerFacingProductCommission,
   getBetaAutomatedSources,
@@ -29,6 +32,7 @@ type ProductIndexRow = {
   last_seen_at: string | null;
   is_approved: boolean | null;
   merchant_name?: string | null;
+  merchant_id?: string | null;
 };
 
 type ProductKind = "digital" | "physical" | "unknown";
@@ -1454,6 +1458,7 @@ async function fetchRows(params: {
         "last_seen_at",
         "is_approved",
         "merchant_name",
+        "merchant_id",
       ].join(",")
     )
     .eq("is_active", true)
@@ -1616,16 +1621,23 @@ export async function GET(req: NextRequest) {
         ...normalized,
         relevanceScore: item.relevanceScore,
         productKind: item.productKind,
+        merchant_id: item.row.merchant_id ?? null,
+        epc: String(normalized.source || "").toLowerCase() === "cj" ? null : normalized.epc,
+        commission: customerFacingProductCommission(),
       };
     });
+
+    const session = await getServerSession(authOptions as any);
+    const searchUserId = String((session as any)?.user?.id || "");
+    const visibleResults = await applyCjSearchGate(searchUserId, results);
 
     return NextResponse.json({
       success: true,
       query: q,
       intent,
       approvedOnly,
-      count: results.length,
-      results,
+      count: visibleResults.length,
+      results: visibleResults,
     });
   } catch (err: any) {
     console.error("[products/search] error:", err);

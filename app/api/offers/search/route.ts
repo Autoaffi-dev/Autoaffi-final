@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { applyCjSearchGate } from "@/lib/affiliate/cj/applyCjSearchGate";
 import {
   customerFacingProductCommission,
   getBetaAutomatedSources,
@@ -195,7 +196,7 @@ export async function GET(req: Request) {
         price: r.price ?? null,
         currency: r.currency ?? null,
         commission: customerFacingProductCommission(),
-        epc: r.epc ?? null,
+        epc: String(r.source || "").toLowerCase() === "cj" ? null : r.epc ?? null,
         geo_scope: r.geo_scope ?? "worldwide",
         score: r.score ?? null,
         quality_score: r.quality_score ?? 0,
@@ -207,6 +208,8 @@ export async function GET(req: Request) {
       };
     });
 
+    const visibleItems = await applyCjSearchGate(userId, items);
+
     await supabaseAdmin.from("user_search_events").insert({
       user_id: userId,
       context,
@@ -216,7 +219,7 @@ export async function GET(req: Request) {
 
     return jsonNoStore({
       ok: true,
-      items,
+      items: visibleItems,
       meta: { q, limit, context, geo_scope, source, category, niche },
     });
   } catch (err: any) {

@@ -16,6 +16,7 @@ import {
   resolvePostsCtaOfferType,
   type PostsCtaDestinationMode,
 } from "@/lib/content-optimizer/postsCtaLinks";
+import { cjCustomerMessage } from "@/lib/affiliate/cj/customerErrors";
 import { buildPublicGoOfferUrl } from "@/lib/auth/publicAppOrigin";
 
 type Mode = "content_only" | "content_and_offer";
@@ -1298,6 +1299,7 @@ export default function PostOptimizerPage() {
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [productSearchError, setProductSearchError] = useState<string | null>(null);
   const [savingSelectedProduct, setSavingSelectedProduct] = useState(false);
+  const [offerSyncNotice, setOfferSyncNotice] = useState("");
   const [selectedSearchSavedOffer, setSelectedSearchSavedOffer] =
     useState<SavedOffer | null>(null);
   const [lastSyncedProductKey, setLastSyncedProductKey] = useState<string>("");
@@ -1523,6 +1525,7 @@ export default function PostOptimizerPage() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             from: "posts",
+            promotionPlatform: platform,
             item: {
               source: String(product.source).toLowerCase(),
               external_id: product.external_id,
@@ -1541,18 +1544,26 @@ export default function PostOptimizerPage() {
         const json = (await res.json()) as OfferSelectResponse;
 
         if (!res.ok || !json?.ok || !json.saved) {
-          throw new Error(json?.error || "Failed to sync selected product");
+          const code = String(json?.error || "");
+          if (String(product.source || "").toLowerCase() === "cj") {
+            setOfferSyncNotice(cjCustomerMessage(code));
+          }
+          throw new Error(code || "Failed to sync selected product");
         }
 
+        setOfferSyncNotice("");
         setSelectedSearchSavedOffer(json.saved);
         setLastSyncedProductKey(syncKey);
       } catch (err: any) {
+        if (String(product.source || "").toLowerCase() === "cj") {
+          setOfferSyncNotice(cjCustomerMessage(String(err?.message || "")));
+        }
         console.error("Failed to sync selected product into user_offers", err);
       } finally {
         setSavingSelectedProduct(false);
       }
     },
-    [lastSyncedProductKey]
+    [lastSyncedProductKey, platform]
   );
 
   useEffect(() => {
@@ -2541,6 +2552,9 @@ export default function PostOptimizerPage() {
                           <p className="mt-1 text-[11px] text-slate-400">
                             {selectedProductSummary.platform} • {selectedProductSummary.category}
                           </p>
+                          {offerSyncNotice ? (
+                            <p className="mt-2 text-[11px] text-yellow-200">{offerSyncNotice}</p>
+                          ) : null}
                           {selectedProductSummary.merchant ? (
                             <p className="mt-1 text-[10px] text-slate-500">
                               {selectedProductSummary.merchant}

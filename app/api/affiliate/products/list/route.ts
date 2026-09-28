@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
+import { toCustomerSavedOffer } from "@/lib/affiliate/cj/customerOffer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -97,10 +98,14 @@ export async function GET(req: Request) {
     const { data, error } = await qb;
     if (error) throw new Error(error.message);
 
+    const items = (Array.isArray(data) ? data : []).map((row) =>
+      toCustomerSavedOffer(row as { id?: string | null; source?: string | null })
+    );
+
     return jsonNoStore({
       ok: true,
-      count: Array.isArray(data) ? data.length : 0,
-      items: data || [],
+      count: items.length,
+      items,
     });
   } catch (err: any) {
     console.error("[offers/list] error:", err);

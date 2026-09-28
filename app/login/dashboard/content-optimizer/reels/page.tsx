@@ -180,17 +180,6 @@ function normalizeProductForReels(p: any) {
   };
 }
 
-function pickPreferredTrackingLink(data: any) {
-  return (
-    data?.saved?.affiliate_link ||
-    data?.savedOffer?.affiliate_link ||
-    data?.affiliate_link ||
-    data?.builder_meta?.affiliateLink ||
-    data?.builder_meta?.affiliate_link ||
-    ""
-  );
-}
-
 function pickPreferredSubId(data: any) {
   return (
     data?.saved?.subid ||
@@ -569,7 +558,6 @@ export default function Page() {
           throw new Error(data?.error || "Failed to sync selected product");
         }
 
-        const preferredLink = pickPreferredTrackingLink(data);
         const preferredSubId = pickPreferredSubId(data);
         const savedOffer = data?.saved || data?.savedOffer || null;
         const displayLink = buildDisplayAffiliateLink({
@@ -589,13 +577,6 @@ export default function Page() {
           setMissingAffiliateWarning(true);
         }
 
-        console.log("[REELS] synced product tracking", {
-          productId: product.id,
-          affiliate_link: preferredLink,
-          display_link: displayLink,
-          subid: preferredSubId,
-          savedOffer,
-        });
       } catch (error) {
         console.error("[REELS] syncSelectedProductForReels error:", error);
         setSelectedProductResolvedLink("");

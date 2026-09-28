@@ -104,7 +104,8 @@ export default async function OfferBridgePage({
 
   const offer = lookup.data as unknown as OfferRow;
   const continueUrl = `/go/offer/${offer.id}`;
-  const sourceUrl = safeUrl(offer.product_url);
+  const sourceUrl =
+    String(offer.source || "").toLowerCase() === "cj" ? null : safeUrl(offer.product_url);
   const title = offer.title || "Selected Offer";
   const source = sourceLabel(offer.source);
   const description = shortDescription(offer);

@@ -8,6 +8,8 @@ export const CJ_PROMOTIONAL_PROPERTIES_ENDPOINT =
 
 export const CJ_PROGRAM_TERMS_ENDPOINT = "https://programs.api.cj.com/query";
 
+export const CJ_PRODUCT_FEED_ENDPOINT = "https://ads.api.cj.com/query";
+
 export type CjServerConfig = {
   pat: string;
   publisherId: string;

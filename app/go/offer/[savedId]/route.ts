@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertStoredCjTrackingUrl } from "@/lib/affiliate/cj/trackingUrl";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -16,6 +17,33 @@ type OfferRow = {
   saved_from_context: string | null;
   last_used_at: string | null;
 };
+
+async function resolveGoDestination(data: OfferRow) {
+  if (String(data.source || "").trim().toLowerCase() === "cj") {
+    try {
+      const stored = assertStoredCjTrackingUrl(
+        String(data.affiliate_link || ""),
+        String(data.subid || "")
+      );
+      const properties = await supabaseAdmin
+        .from("cj_promotional_properties")
+        .select("cj_pid,status,platform,user_id")
+        .eq("user_id", data.user_id || "")
+        .eq("platform", "instagram")
+        .eq("status", "ACTIVE");
+      if (properties.error) return null;
+      const active = (properties.data || []).filter(
+        (row) => String(row.cj_pid || "") === stored.pid
+      );
+      if (active.length !== 1 || (properties.data || []).length !== 1) return null;
+      return stored.href;
+    } catch {
+      return null;
+    }
+  }
+
+  return normalizeUrl(data.affiliate_link) || normalizeUrl(data.product_url);
+}
 
 function normalizeUrl(input?: string | null) {
   const value = String(input || "").trim();
@@ -79,8 +107,7 @@ export async function GET(
 
     const data = lookup.data as unknown as OfferRow;
 
-    const destination =
-      normalizeUrl(data.affiliate_link) || normalizeUrl(data.product_url);
+    const destination = await resolveGoDestination(data);
 
     if (!destination) {
       console.error("[go/offer] missing valid destination for offer:", savedId);

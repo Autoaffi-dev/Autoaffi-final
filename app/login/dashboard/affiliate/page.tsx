@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import React, { useEffect, useMemo, useState } from "react";
+import { cjCustomerMessage } from "@/lib/affiliate/cj/customerErrors";
 
 type ProductSource =
   | "all"
@@ -268,12 +269,20 @@ export default function AffiliatePage() {
         throw new Error(json?.error || "Search failed");
       }
 
+      if (source === "cj" && json?.meta?.reason === "source_not_beta_enabled") {
+        setResults([]);
+        setSearchError("CJ offers are not available yet.");
+        return;
+      }
+
       const items: SearchItem[] = Array.isArray(json.items) ? json.items : [];
       setResults(items);
 
       if (!items.length) {
         setSearchError(
-          "No results found. Try another keyword or switch source/category."
+          source === "cj"
+            ? "CJ offers are not available yet."
+            : "No results found. Try another keyword or switch source/category."
         );
       }
     } catch (e: any) {
@@ -329,6 +338,10 @@ export default function AffiliatePage() {
 
       const json = await res.json();
       if (!res.ok || !json?.ok) {
+        const code = String(json?.error || "");
+        if (String(item.source || "").toLowerCase() === "cj") {
+          throw new Error(cjCustomerMessage(code));
+        }
         throw new Error(json?.details || json?.error || "Failed to save offer");
       }
 
@@ -637,11 +650,13 @@ export default function AffiliatePage() {
                     {item.title}
                   </p>
                   <p className="text-[11px] text-slate-400">
-                    {item.category || "Uncategorized"} • {item.source}
+                    {item.category || "Uncategorized"} • {cjSourceLabel(item.source)}
+                    {item.merchant_name ? ` • ${item.merchant_name}` : ""}
                   </p>
                   <p className="text-[11px] text-slate-400">
-                    EPC: {item.epc ?? "—"} • Score:{" "}
-                    {item.score ?? item.quality_score ?? "—"}
+                    {isCjSource(item.source)
+                      ? "EPC: Unavailable • Commission: Unavailable"
+                      : `EPC: ${item.epc ?? "—"} • Score: ${item.score ?? item.quality_score ?? "—"}`}
                   </p>
 
                   <div className="mt-2 flex items-center gap-2">
@@ -653,7 +668,7 @@ export default function AffiliatePage() {
                       Save to Offer Vault
                     </button>
 
-                    {resolvedProductUrl(item) ? (
+                    {resolvedProductUrl(item) && !isCjSource(item.source) ? (
                       <a
                         className="rounded-full border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-[11px] font-semibold text-slate-200 hover:bg-slate-900 transition"
                         href={resolvedProductUrl(item)!}
@@ -693,7 +708,14 @@ export default function AffiliatePage() {
                       </p>
                       <p className="text-[11px] text-slate-400">
                         Source:{" "}
-                        <span className="text-slate-200">{item.source}</span>
+                        <span className="text-slate-200">{cjSourceLabel(item.source)}</span>
+                        {item.merchant_name ? (
+                          <>
+                            {" "}
+                            • Advertiser:{" "}
+                            <span className="text-slate-200">{item.merchant_name}</span>
+                          </>
+                        ) : null}
                         {item.category ? (
                           <>
                             {" "}
@@ -722,6 +744,14 @@ export default function AffiliatePage() {
                     </button>
                   </div>
 
+                  {isCjSource(item.source) && item.image_url ? (
+                    <img
+                      src={item.image_url}
+                      alt={item.title}
+                      className="h-24 w-24 rounded-xl border border-slate-800 object-cover"
+                    />
+                  ) : null}
+
                   {item.description ? (
                     <p className="text-[12px] text-slate-300">
                       {item.description}
@@ -729,19 +759,38 @@ export default function AffiliatePage() {
                   ) : null}
 
                   <p className="text-[11px] text-slate-400">
-                    EPC: <span className="text-slate-200">{item.epc ?? "—"}</span>
-                    {" • "}Commission:{" "}
-                    <span className="text-slate-200">
-                      {item.commission ?? "—"}
-                    </span>
-                    {" • "}Score:{" "}
-                    <span className="text-slate-200">
-                      {item.score ?? item.quality_score ?? "—"}
-                    </span>
+                    {isCjSource(item.source) ? (
+                      <>
+                        EPC: <span className="text-slate-200">Unavailable</span>
+                        {" • "}Commission:{" "}
+                        <span className="text-slate-200">Unavailable</span>
+                      </>
+                    ) : (
+                      <>
+                        EPC: <span className="text-slate-200">{item.epc ?? "—"}</span>
+                        {" • "}Commission:{" "}
+                        <span className="text-slate-200">
+                          {item.commission ?? "—"}
+                        </span>
+                        {" • "}Score:{" "}
+                        <span className="text-slate-200">
+                          {item.score ?? item.quality_score ?? "—"}
+                        </span>
+                      </>
+                    )}
+                    {item.price != null ? (
+                      <>
+                        {" • "}Price:{" "}
+                        <span className="text-slate-200">
+                          {item.price}
+                          {item.currency ? ` ${item.currency}` : ""}
+                        </span>
+                      </>
+                    ) : null}
                   </p>
 
                   <div className="flex flex-wrap gap-2 text-[11px]">
-                    {resolvedProductUrl(item) ? (
+                    {resolvedProductUrl(item) && !isCjSource(item.source) ? (
                       <a
                         className="underline underline-offset-2 text-yellow-300 hover:text-yellow-200"
                         href={resolvedProductUrl(item)!}
@@ -822,8 +871,15 @@ export default function AffiliatePage() {
                     <p className="text-[11px] text-slate-400">
                       Source:{" "}
                       <span className="text-slate-200">
-                        {o.source || "unknown"}
+                        {cjSourceLabel(o.source)}
                       </span>
+                      {o.merchant_name ? (
+                        <>
+                          {" "}
+                          • Advertiser:{" "}
+                          <span className="text-slate-200">{o.merchant_name}</span>
+                        </>
+                      ) : null}
                       {o.category ? (
                         <>
                           {" "}
@@ -840,7 +896,7 @@ export default function AffiliatePage() {
                       ) : null}
                     </p>
 
-                    {o.subid ? (
+                    {o.subid && !isCjSource(o.source) ? (
                       <p className="mt-1 text-[11px] text-slate-400">
                         Sub-ID: <span className="text-yellow-300">{o.subid}</span>
                       </p>
@@ -874,7 +930,7 @@ export default function AffiliatePage() {
                 </div>
 
                 <div className="flex flex-wrap gap-2 text-[11px]">
-                  {o.product_url ? (
+                  {o.product_url && !isCjSource(o.source) ? (
                     <a
                       className="underline underline-offset-2 text-yellow-300 hover:text-yellow-200"
                       href={o.product_url}
@@ -885,12 +941,12 @@ export default function AffiliatePage() {
                     </a>
                   ) : null}
                   <Link
-  className="underline underline-offset-2 text-yellow-300 hover:text-yellow-200"
-  href={`/offer/${o.id}`}
-  target="_blank"
->
-  Open affiliate link ↗
-</Link>
+                    className="underline underline-offset-2 text-yellow-300 hover:text-yellow-200"
+                    href={isCjSource(o.source) ? `/go/offer/${o.id}` : `/offer/${o.id}`}
+                    target="_blank"
+                  >
+                    {isCjSource(o.source) ? "Open your Autoaffi link" : "Open affiliate link ↗"}
+                  </Link>
                 </div>
               </div>
             ))}
@@ -1011,6 +1067,14 @@ function InfoBox({
       ) : null}
     </div>
   );
+}
+
+function isCjSource(source?: string | null) {
+  return String(source || "").trim().toLowerCase() === "cj";
+}
+
+function cjSourceLabel(source?: string | null) {
+  return isCjSource(source) ? "CJ · Instagram" : source || "unknown";
 }
 
 function Field({
