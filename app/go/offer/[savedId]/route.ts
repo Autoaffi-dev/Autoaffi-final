@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { selectCjGoInstagramProperty } from "@/lib/affiliate/cj/goProperty";
 import { assertStoredCjTrackingUrl } from "@/lib/affiliate/cj/trackingUrl";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -27,15 +28,17 @@ async function resolveGoDestination(data: OfferRow) {
       );
       const properties = await supabaseAdmin
         .from("cj_promotional_properties")
-        .select("cj_pid,status,platform,user_id")
+        .select("cj_pid,status,platform,user_id,property_type,cj_social_platform")
         .eq("user_id", data.user_id || "")
         .eq("platform", "instagram")
         .eq("status", "ACTIVE");
       if (properties.error) return null;
-      const active = (properties.data || []).filter(
-        (row) => String(row.cj_pid || "") === stored.pid
-      );
-      if (active.length !== 1 || (properties.data || []).length !== 1) return null;
+      const accepted = selectCjGoInstagramProperty({
+        userId: String(data.user_id || ""),
+        expectedPid: stored.pid,
+        rows: properties.data || [],
+      });
+      if (!accepted) return null;
       return stored.href;
     } catch {
       return null;

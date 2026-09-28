@@ -12,6 +12,7 @@ import { CJ_PRODUCT_FEED_ENDPOINT } from "../affiliate/cj/config.ts";
 import { toCustomerSavedOffer } from "../affiliate/cj/customerOffer.ts";
 import { CjOfferDestinationError, resolveCjOfferDestination } from "../affiliate/cj/resolveCjOfferDestination.ts";
 import { CJ_PRODUCT_CLICK_QUERY, getCJProductClickUrl } from "../affiliate/cj/linkCode.ts";
+import { selectCjGoInstagramProperty } from "../affiliate/cj/goProperty.ts";
 import { eligibleInstagramProperties, filterCjSearchItems } from "../affiliate/cj/searchGate.ts";
 import { assertStoredCjTrackingUrl, finalizeCjTrackingUrl } from "../affiliate/cj/trackingUrl.ts";
 import type { CjAdvertiserContract } from "../affiliate/cj/programTerms.ts";
@@ -611,6 +612,72 @@ describe("CJ phase 2 official click foundation", () => {
         err.code === "CJ_TRACKING_URL_INVALID" &&
         err.message === "CJ_TRACKING_URL_INVALID" &&
         !err.message.includes("secret")
+    );
+  });
+
+  it("go accepts one ACTIVE SOCIAL_MEDIA Instagram property and rejects the rest", () => {
+    const row = {
+      user_id: userId,
+      platform: "instagram",
+      status: "ACTIVE",
+      cj_pid: pid,
+      property_type: "SOCIAL_MEDIA",
+      cj_social_platform: "INSTAGRAM",
+    };
+    assert.equal(
+      selectCjGoInstagramProperty({ userId, expectedPid: pid, rows: [row] })?.cj_pid,
+      pid
+    );
+    assert.equal(
+      selectCjGoInstagramProperty({
+        userId,
+        expectedPid: pid,
+        rows: [{ ...row, property_type: "WEBSITE" }],
+      }),
+      null
+    );
+    assert.equal(
+      selectCjGoInstagramProperty({
+        userId,
+        expectedPid: pid,
+        rows: [{ ...row, cj_social_platform: "TIKTOK" }],
+      }),
+      null
+    );
+    assert.equal(
+      selectCjGoInstagramProperty({
+        userId,
+        expectedPid: pid,
+        rows: [{ ...row, status: "ARCHIVED" }],
+      }),
+      null
+    );
+    assert.equal(
+      selectCjGoInstagramProperty({
+        userId,
+        expectedPid: pid,
+        rows: [{ ...row, cj_pid: "999" }],
+      }),
+      null
+    );
+    assert.equal(
+      selectCjGoInstagramProperty({
+        userId,
+        expectedPid: pid,
+        rows: [row, { ...row, cj_pid: "100125587" }],
+      }),
+      null
+    );
+
+    const go = read("app/go/offer/[savedId]/route.ts");
+    const cjGo = go.slice(go.indexOf('=== "cj"'), go.indexOf("return normalizeUrl"));
+    assert.match(cjGo, /property_type,cj_social_platform/);
+    assert.match(cjGo, /selectCjGoInstagramProperty/);
+    assert.doesNotMatch(cjGo, /product_url/);
+    assert.doesNotMatch(cjGo, /getCJProductClickUrl|getCJAdvertiserContract|buildCJLink/);
+    assert.match(
+      go,
+      /return normalizeUrl\(data\.affiliate_link\) \|\| normalizeUrl\(data\.product_url\)/
     );
   });
 
