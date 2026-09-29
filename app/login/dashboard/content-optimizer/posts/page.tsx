@@ -1531,6 +1531,7 @@ export default function PostOptimizerPage() {
     {
       platform,
       selectedProductSource: selectedProduct?.source,
+      selectedProductExternalId: selectedProduct?.external_id,
     }
   );
 

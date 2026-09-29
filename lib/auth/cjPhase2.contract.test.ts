@@ -805,6 +805,65 @@ describe("CJ phase 2 official click foundation", () => {
     assert.doesNotMatch(reels, /synced product tracking/);
   });
 
+  it("search offer must match the selected product before it can drive a link", () => {
+    const warriorA = { id: "saved-wp-a", source: "warriorplus", external_id: "wp-a" };
+    const cjA = { id: "saved-cj-a", source: "cj", external_id: "cj-a" };
+    const cjB = { id: "saved-cj-b", source: "CJ", external_id: "cj-b" };
+
+    assert.equal(
+      eligiblePostsSearchOffer(warriorA, {
+        platform: "instagram",
+        selectedProductSource: "cj",
+        selectedProductExternalId: "cj-b",
+      }),
+      null
+    );
+    assert.equal(
+      eligiblePostsSearchOffer(cjA, {
+        platform: "instagram",
+        selectedProductSource: "cj",
+        selectedProductExternalId: "cj-b",
+      }),
+      null
+    );
+    assert.equal(
+      eligiblePostsSearchOffer(cjB, {
+        platform: "instagram",
+        selectedProductSource: "cj",
+        selectedProductExternalId: "cj-b",
+      })?.id,
+      "saved-cj-b"
+    );
+    assert.equal(
+      eligiblePostsSearchOffer(cjB, {
+        platform: "tiktok",
+        selectedProductSource: "cj",
+        selectedProductExternalId: "cj-b",
+      }),
+      null
+    );
+    assert.equal(
+      eligiblePostsSearchOffer(warriorA, {
+        platform: "tiktok",
+        selectedProductSource: "WarriorPlus",
+        selectedProductExternalId: "wp-a",
+      })?.id,
+      "saved-wp-a"
+    );
+    assert.equal(
+      eligiblePostsSearchOffer(warriorA, {
+        platform: "instagram",
+        selectedProductSource: "warriorplus",
+        selectedProductExternalId: "wp-b",
+      }),
+      null
+    );
+
+    const posts = read("app/login/dashboard/content-optimizer/posts/page.tsx");
+    assert.match(posts, /selectedProductExternalId: selectedProduct\?\.external_id/);
+    assert.match(posts, /setSelectedSearchSavedOffer\(null\)/);
+  });
+
   it("search hides CJ unless the advertiser is allowed and one Instagram property is eligible", () => {
     const items = [
       { source: "warriorplus", merchant_id: "wp" },

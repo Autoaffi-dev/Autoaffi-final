@@ -27,21 +27,42 @@ export function eligiblePostsSavedOffer<T extends { source?: string | null }>(
   return String(platform || "").trim().toLowerCase() === "instagram" ? offer : null;
 }
 
-export function eligiblePostsSearchOffer<T extends { source?: string | null }>(
+export function eligiblePostsSearchOffer<
+  T extends { source?: string | null; external_id?: string | null }
+>(
   offer: T | null | undefined,
-  args: { platform?: string | null; selectedProductSource?: string | null }
+  args: {
+    platform?: string | null;
+    selectedProductSource?: string | null;
+    selectedProductExternalId?: string | null;
+  }
 ): T | null {
+  if (!offer) return null;
+
   const productSource = String(args.selectedProductSource || "").trim().toLowerCase();
-  const platform = String(args.platform || "").trim().toLowerCase();
-  if (productSource === "cj" && platform !== "instagram") return null;
+  if (productSource) {
+    const offerSource = String(offer.source || "").trim().toLowerCase();
+    if (offerSource !== productSource) return null;
+  }
+
+  const productExternalId = args.selectedProductExternalId;
+  if (typeof productExternalId === "string" && productExternalId !== "") {
+    if (offer.external_id !== productExternalId) return null;
+  }
+
   return eligiblePostsSavedOffer(offer, args.platform);
 }
 
 export function postsEligibleGoOfferId(args: {
-  selectedSearchSavedOffer?: { id?: string | null; source?: string | null } | null;
+  selectedSearchSavedOffer?: {
+    id?: string | null;
+    source?: string | null;
+    external_id?: string | null;
+  } | null;
   activeVaultOffer?: { id?: string | null; source?: string | null } | null;
   platform?: string | null;
   selectedProductSource?: string | null;
+  selectedProductExternalId?: string | null;
 }) {
   const search = eligiblePostsSearchOffer(args.selectedSearchSavedOffer, args);
   const vault = eligiblePostsSavedOffer(args.activeVaultOffer, args.platform);
