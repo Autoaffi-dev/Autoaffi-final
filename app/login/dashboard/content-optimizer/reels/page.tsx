@@ -579,6 +579,8 @@ export default function Page() {
 
       } catch (error) {
         console.error("[REELS] syncSelectedProductForReels error:", error);
+        setSelectedSearchSavedOffer(null);
+        setLastSyncedProductKey("");
         setSelectedProductResolvedLink("");
         setSelectedProductSubId("");
         setAffiliateLink(null);

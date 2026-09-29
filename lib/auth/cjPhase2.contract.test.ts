@@ -13,6 +13,12 @@ import { toCustomerSavedOffer } from "../affiliate/cj/customerOffer.ts";
 import { CjOfferDestinationError, resolveCjOfferDestination } from "../affiliate/cj/resolveCjOfferDestination.ts";
 import { CJ_PRODUCT_CLICK_QUERY, getCJProductClickUrl } from "../affiliate/cj/linkCode.ts";
 import { selectCjGoInstagramProperty } from "../affiliate/cj/goProperty.ts";
+import {
+  eligiblePostsSavedOffer,
+  eligiblePostsSearchOffer,
+  postsEligibleGoOfferId,
+  postsProductSyncKey,
+} from "../affiliate/cj/postsOfferEligibility.ts";
 import { eligibleInstagramProperties, filterCjSearchItems } from "../affiliate/cj/searchGate.ts";
 import { assertStoredCjTrackingUrl, finalizeCjTrackingUrl } from "../affiliate/cj/trackingUrl.ts";
 import type { CjAdvertiserContract } from "../affiliate/cj/programTerms.ts";
@@ -679,6 +685,124 @@ describe("CJ phase 2 official click foundation", () => {
       go,
       /return normalizeUrl\(data\.affiliate_link\) \|\| normalizeUrl\(data\.product_url\)/
     );
+  });
+
+  it("A-O. Affiliate Offers, Posts, and Reels fail closed on the client", () => {
+    const affiliate = read("app/login/dashboard/affiliate/page.tsx");
+    const disabled = affiliate.slice(
+      affiliate.indexOf('reason === "source_not_beta_enabled"'),
+      affiliate.indexOf("const items: SearchItem[]")
+    );
+    assert.match(disabled, /CJ offers are not available yet/);
+    const emptyStart = affiliate.indexOf("if (!items.length)");
+    const empty = affiliate.slice(
+      emptyStart,
+      affiliate.indexOf("} catch (e: any)", emptyStart)
+    );
+    assert.match(
+      empty,
+      /No results found\. Try another keyword or switch source\/category\./
+    );
+    assert.doesNotMatch(empty, /not available yet/);
+
+    const externalId = "cj_42_sku900";
+    assert.equal(
+      postsProductSyncKey({ source: "CJ", externalId, platform: "instagram" }),
+      `cj:${externalId}:instagram`
+    );
+    assert.notEqual(
+      postsProductSyncKey({ source: "cj", externalId, platform: "instagram" }),
+      postsProductSyncKey({ source: "cj", externalId, platform: "tiktok" })
+    );
+    assert.equal(
+      postsProductSyncKey({
+        source: "WarriorPlus",
+        externalId: "wp-1",
+        platform: "tiktok",
+      }),
+      "WarriorPlus:wp-1"
+    );
+
+    const cjOffer = { id: "saved-cj", source: "cj" };
+    const warriorOffer = { id: "saved-wp", source: "warriorplus" };
+    assert.equal(eligiblePostsSavedOffer(cjOffer, "instagram")?.id, "saved-cj");
+    assert.equal(eligiblePostsSearchOffer(cjOffer, { platform: "Instagram" })?.id, "saved-cj");
+    for (const platform of ["tiktok", "facebook", "youtube"]) {
+      assert.equal(eligiblePostsSavedOffer(cjOffer, platform), null);
+      assert.equal(eligiblePostsSearchOffer(cjOffer, { platform })?.id, undefined);
+      assert.equal(
+        postsEligibleGoOfferId({
+          selectedSearchSavedOffer: cjOffer,
+          platform,
+        }),
+        ""
+      );
+      assert.equal(
+        postsEligibleGoOfferId({
+          activeVaultOffer: cjOffer,
+          platform,
+        }),
+        ""
+      );
+    }
+    assert.equal(
+      postsEligibleGoOfferId({
+        selectedSearchSavedOffer: cjOffer,
+        platform: "instagram",
+      }),
+      "saved-cj"
+    );
+    assert.equal(
+      postsEligibleGoOfferId({
+        activeVaultOffer: cjOffer,
+        platform: "instagram",
+      }),
+      "saved-cj"
+    );
+    assert.equal(
+      postsEligibleGoOfferId({
+        selectedSearchSavedOffer: warriorOffer,
+        activeVaultOffer: cjOffer,
+        platform: "youtube",
+      }),
+      "saved-wp"
+    );
+    assert.equal(eligiblePostsSavedOffer(warriorOffer, "facebook")?.id, "saved-wp");
+    assert.equal(
+      postsEligibleGoOfferId({
+        selectedSearchSavedOffer: warriorOffer,
+        selectedProductSource: "cj",
+        platform: "tiktok",
+      }),
+      ""
+    );
+
+    const posts = read("app/login/dashboard/content-optimizer/posts/page.tsx");
+    const syncStart = posts.indexOf("const syncSelectedProductToOfferCenter");
+    const syncEnd = posts.indexOf("useEffect(() => {\n    if (", syncStart);
+    const sync = posts.slice(syncStart, syncEnd);
+    const syncCatch = sync.slice(sync.lastIndexOf("} catch"));
+    assert.match(sync, /postsProductSyncKey/);
+    assert.match(syncCatch, /setSelectedSearchSavedOffer\(null\)/);
+    assert.match(syncCatch, /setLastSyncedProductKey\(""\)/);
+    assert.match(syncCatch, /cjCustomerMessage/);
+    assert.match(posts, /eligibleActiveVaultOffer/);
+    assert.match(posts, /eligibleSelectedSearchOffer/);
+    assert.match(posts, /productAffiliateUrl/);
+    assert.match(posts, /trackingReady: Boolean\(eligibleSelectedSearchOffer\?\.id\)/);
+    assert.match(posts, /CJ_PROMOTION_PLATFORM_UNSUPPORTED/);
+
+    const reels = read("app/login/dashboard/content-optimizer/reels/page.tsx");
+    const reelsStart = reels.indexOf("const syncSelectedProductForReels");
+    const reelsEnd = reels.indexOf("let isMounted", reelsStart);
+    const reelsSync = reels.slice(reelsStart, reelsEnd);
+    const reelsCatch = reelsSync.slice(reelsSync.lastIndexOf("} catch"));
+    assert.match(reelsCatch, /setSelectedSearchSavedOffer\(null\)/);
+    assert.match(reelsCatch, /setLastSyncedProductKey\(""\)/);
+    assert.match(reelsSync, /from: "reels"/);
+    assert.doesNotMatch(reels, /promotionPlatform/);
+    assert.doesNotMatch(reels, /pickPreferredTrackingLink/);
+    assert.doesNotMatch(reels, /synced product tracking/);
   });
 
   it("search hides CJ unless the advertiser is allowed and one Instagram property is eligible", () => {

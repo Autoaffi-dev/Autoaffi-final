@@ -17,6 +17,11 @@ import {
   type PostsCtaDestinationMode,
 } from "@/lib/content-optimizer/postsCtaLinks";
 import { cjCustomerMessage } from "@/lib/affiliate/cj/customerErrors";
+import {
+  eligiblePostsSavedOffer,
+  eligiblePostsSearchOffer,
+  postsProductSyncKey,
+} from "@/lib/affiliate/cj/postsOfferEligibility";
 import { buildPublicGoOfferUrl } from "@/lib/auth/publicAppOrigin";
 
 type Mode = "content_only" | "content_and_offer";
@@ -1503,19 +1508,42 @@ export default function PostOptimizerPage() {
     return vaultOffers.find((offer) => offer.id === selectedVaultOfferId) || null;
   }, [vaultOffers, selectedVaultOfferId]);
 
-  const activeVaultOffer = selectedVaultOffer || primaryVaultOffer || null;
+  const candidateVaultOffer = selectedVaultOffer || primaryVaultOffer || null;
+  const activeVaultOffer = candidateVaultOffer;
+  const eligibleActiveVaultOffer = eligiblePostsSavedOffer(
+    candidateVaultOffer,
+    platform
+  );
+  const ineligibleCjVaultNotice =
+    candidateVaultOffer &&
+    !eligibleActiveVaultOffer &&
+    String(candidateVaultOffer.source || "").trim().toLowerCase() === "cj"
+      ? cjCustomerMessage("CJ_PROMOTION_PLATFORM_UNSUPPORTED")
+      : "";
 
   const selectedProduct = useMemo(() => {
     if (!selectedProductId) return null;
     return productResults.find((p) => p.id === selectedProductId) || null;
   }, [productResults, selectedProductId]);
 
+  const eligibleSelectedSearchOffer = eligiblePostsSearchOffer(
+    selectedSearchSavedOffer,
+    {
+      platform,
+      selectedProductSource: selectedProduct?.source,
+    }
+  );
+
   const syncSelectedProductToOfferCenter = useCallback(
     async (product: ProductResult) => {
       if (!product?.source || !product?.external_id) return;
 
-      const syncKey = `${product.source}:${product.external_id}`;
-      if (lastSyncedProductKey === syncKey) return;
+      const syncKey = postsProductSyncKey({
+        source: product.source,
+        externalId: product.external_id,
+        platform,
+      });
+      if (!syncKey || lastSyncedProductKey === syncKey) return;
 
       try {
         setSavingSelectedProduct(true);
@@ -1555,6 +1583,8 @@ export default function PostOptimizerPage() {
         setSelectedSearchSavedOffer(json.saved);
         setLastSyncedProductKey(syncKey);
       } catch (err: any) {
+        setSelectedSearchSavedOffer(null);
+        setLastSyncedProductKey("");
         if (String(product.source || "").toLowerCase() === "cj") {
           setOfferSyncNotice(cjCustomerMessage(String(err?.message || "")));
         }
@@ -1567,9 +1597,28 @@ export default function PostOptimizerPage() {
   );
 
   useEffect(() => {
-    if (!selectedProduct || activeVaultOffer) return;
+    if (
+      selectedSearchSavedOffer &&
+      String(selectedSearchSavedOffer.source || "").trim().toLowerCase() === "cj" &&
+      String(platform || "").trim().toLowerCase() !== "instagram"
+    ) {
+      setLastSyncedProductKey("");
+    }
+  }, [platform, selectedSearchSavedOffer]);
+
+  useEffect(() => {
+    if (!selectedProduct || eligibleActiveVaultOffer) return;
+    if (
+      String(selectedProduct.source || "").trim().toLowerCase() === "cj" &&
+      String(platform || "").trim().toLowerCase() !== "instagram"
+    ) {
+      setSelectedSearchSavedOffer(null);
+      setLastSyncedProductKey("");
+      setOfferSyncNotice(cjCustomerMessage("CJ_PROMOTION_PLATFORM_UNSUPPORTED"));
+      return;
+    }
     void syncSelectedProductToOfferCenter(selectedProduct);
-  }, [selectedProduct, activeVaultOffer, syncSelectedProductToOfferCenter]);
+  }, [selectedProduct, eligibleActiveVaultOffer, platform, syncSelectedProductToOfferCenter]);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
@@ -1711,8 +1760,8 @@ export default function PostOptimizerPage() {
 
   const productAffiliateUrl: string | undefined =
     buildDisplayAffiliateLink({
-      activeVaultOffer,
-      selectedSearchSavedOffer,
+      activeVaultOffer: eligibleActiveVaultOffer,
+      selectedSearchSavedOffer: eligibleSelectedSearchOffer,
     }) || undefined;
 
   const selectedOfferType:
@@ -1722,8 +1771,8 @@ export default function PostOptimizerPage() {
     | undefined = resolvePostsCtaOfferType({
     destinationMode,
     hasProduct: Boolean(
-      activeVaultOffer ||
-        selectedSearchSavedOffer ||
+      eligibleActiveVaultOffer ||
+        eligibleSelectedSearchOffer ||
         selectedProduct ||
         productAffiliateUrl
     ),
@@ -1762,10 +1811,10 @@ export default function PostOptimizerPage() {
 
   const displayAffiliateLink = useMemo(() => {
     return buildDisplayAffiliateLink({
-      activeVaultOffer,
-      selectedSearchSavedOffer,
+      activeVaultOffer: eligibleActiveVaultOffer,
+      selectedSearchSavedOffer: eligibleSelectedSearchOffer,
     });
-  }, [activeVaultOffer, selectedSearchSavedOffer]);
+  }, [eligibleActiveVaultOffer, eligibleSelectedSearchOffer]);
 
   useEffect(() => {
     setLastGeneratedCopy({
@@ -2227,7 +2276,7 @@ export default function PostOptimizerPage() {
       epc: getEpcLabel(selectedProduct),
       affiliate: buildDisplayAffiliateLink({
         activeVaultOffer: null,
-        selectedSearchSavedOffer,
+        selectedSearchSavedOffer: eligibleSelectedSearchOffer,
       }),
       merchant:
         selectedProduct.merchantName ||
@@ -2239,9 +2288,9 @@ export default function PostOptimizerPage() {
         selectedSearchSavedOffer?.image_url ||
         selectedProduct.imageUrl ||
         null,
-      trackingReady: Boolean(selectedSearchSavedOffer?.id),
+      trackingReady: Boolean(eligibleSelectedSearchOffer?.id),
     };
-  }, [selectedProduct, selectedSearchSavedOffer]);
+  }, [selectedProduct, eligibleSelectedSearchOffer]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 px-4 py-8 md:py-10">
@@ -2447,6 +2496,12 @@ export default function PostOptimizerPage() {
                   {vaultError && (
                     <p className="text-[11px] text-red-300/90">{vaultError}</p>
                   )}
+
+                  {ineligibleCjVaultNotice ? (
+                    <p className="mb-2 text-[11px] text-yellow-200/80">
+                      {ineligibleCjVaultNotice}
+                    </p>
+                  ) : null}
 
                   {!vaultLoading && !vaultOffers.length && (
                     <p className="text-[11px] text-yellow-200/80">

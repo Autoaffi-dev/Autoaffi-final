@@ -280,9 +280,7 @@ export default function AffiliatePage() {
 
       if (!items.length) {
         setSearchError(
-          source === "cj"
-            ? "CJ offers are not available yet."
-            : "No results found. Try another keyword or switch source/category."
+          "No results found. Try another keyword or switch source/category."
         );
       }
     } catch (e: any) {
