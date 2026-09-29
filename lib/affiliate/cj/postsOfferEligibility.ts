@@ -40,10 +40,10 @@ export function eligiblePostsSearchOffer<
   if (!offer) return null;
 
   const productSource = String(args.selectedProductSource || "").trim().toLowerCase();
-  if (productSource) {
-    const offerSource = String(offer.source || "").trim().toLowerCase();
-    if (offerSource !== productSource) return null;
-  }
+  if (!productSource) return null;
+
+  const offerSource = String(offer.source || "").trim().toLowerCase();
+  if (offerSource !== productSource) return null;
 
   const productExternalId = args.selectedProductExternalId;
   if (typeof productExternalId === "string" && productExternalId !== "") {

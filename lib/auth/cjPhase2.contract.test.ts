@@ -726,7 +726,7 @@ describe("CJ phase 2 official click foundation", () => {
     const cjOffer = { id: "saved-cj", source: "cj" };
     const warriorOffer = { id: "saved-wp", source: "warriorplus" };
     assert.equal(eligiblePostsSavedOffer(cjOffer, "instagram")?.id, "saved-cj");
-    assert.equal(eligiblePostsSearchOffer(cjOffer, { platform: "Instagram" })?.id, "saved-cj");
+    assert.equal(eligiblePostsSearchOffer(cjOffer, { platform: "Instagram" }), null);
     for (const platform of ["tiktok", "facebook", "youtube"]) {
       assert.equal(eligiblePostsSavedOffer(cjOffer, platform), null);
       assert.equal(eligiblePostsSearchOffer(cjOffer, { platform })?.id, undefined);
@@ -750,7 +750,7 @@ describe("CJ phase 2 official click foundation", () => {
         selectedSearchSavedOffer: cjOffer,
         platform: "instagram",
       }),
-      "saved-cj"
+      ""
     );
     assert.equal(
       postsEligibleGoOfferId({
@@ -765,7 +765,7 @@ describe("CJ phase 2 official click foundation", () => {
         activeVaultOffer: cjOffer,
         platform: "youtube",
       }),
-      "saved-wp"
+      ""
     );
     assert.equal(eligiblePostsSavedOffer(warriorOffer, "facebook")?.id, "saved-wp");
     assert.equal(
@@ -862,6 +862,60 @@ describe("CJ phase 2 official click foundation", () => {
     const posts = read("app/login/dashboard/content-optimizer/posts/page.tsx");
     assert.match(posts, /selectedProductExternalId: selectedProduct\?\.external_id/);
     assert.match(posts, /setSelectedSearchSavedOffer\(null\)/);
+  });
+
+  it("a search offer with no selected product cannot drive a link", () => {
+    const warriorA = { id: "saved-wp-a", source: "warriorplus", external_id: "wp-a" };
+    const cjB = { id: "saved-cj-b", source: "cj", external_id: "cj-b" };
+
+    assert.equal(
+      eligiblePostsSearchOffer(warriorA, { platform: "instagram" }),
+      null
+    );
+    assert.equal(
+      eligiblePostsSearchOffer(cjB, { platform: "instagram", selectedProductSource: "   " }),
+      null
+    );
+    assert.equal(
+      postsEligibleGoOfferId({
+        selectedSearchSavedOffer: warriorA,
+        platform: "instagram",
+      }),
+      ""
+    );
+    assert.equal(
+      postsEligibleGoOfferId({
+        selectedSearchSavedOffer: cjB,
+        platform: "instagram",
+      }),
+      ""
+    );
+    assert.equal(
+      eligiblePostsSearchOffer(warriorA, {
+        platform: "youtube",
+        selectedProductSource: "warriorplus",
+        selectedProductExternalId: "wp-a",
+      })?.id,
+      "saved-wp-a"
+    );
+    assert.equal(
+      eligiblePostsSearchOffer(cjB, {
+        platform: "instagram",
+        selectedProductSource: "cj",
+        selectedProductExternalId: "cj-b",
+      })?.id,
+      "saved-cj-b"
+    );
+    assert.equal(eligiblePostsSavedOffer(warriorA, "facebook")?.id, "saved-wp-a");
+    assert.equal(eligiblePostsSavedOffer(cjB, "instagram")?.id, "saved-cj-b");
+    assert.equal(eligiblePostsSavedOffer(cjB, "tiktok"), null);
+    assert.equal(
+      postsEligibleGoOfferId({
+        activeVaultOffer: cjB,
+        platform: "instagram",
+      }),
+      "saved-cj-b"
+    );
   });
 
   it("search hides CJ unless the advertiser is allowed and one Instagram property is eligible", () => {
