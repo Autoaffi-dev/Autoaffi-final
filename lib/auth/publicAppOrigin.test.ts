@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { describe, it } from "node:test";
 import {
   PUBLIC_ORIGIN_NOT_CONFIGURED,
+  buildPublicGoOfferUrl,
   requirePublicAppOrigin,
   resolvePublicAppOrigin,
 } from "./publicAppOrigin.ts";
@@ -87,6 +89,29 @@ describe("Phase 1B Recurring public origin", () => {
       `${origin}/?ref=${encodeURIComponent(encoded)}`,
       "https://autoaffi-final.vercel.app/?ref=a%2Fb%3Fx%3D1"
     );
+  });
+
+  it("buildPublicGoOfferUrl uses the trusted production origin", () => {
+    assert.equal(
+      buildPublicGoOfferUrl("saved-123", {
+        nodeEnv: "production",
+        env: { NEXT_PUBLIC_APP_URL: "https://autoaffi-final.vercel.app" },
+      }),
+      "https://autoaffi-final.vercel.app/go/offer/saved-123"
+    );
+    assert.equal(
+      buildPublicGoOfferUrl("saved-123", { nodeEnv: "production", env: {} }),
+      ""
+    );
+  });
+
+  it("runtime path reads NEXT_PUBLIC_APP_URL statically", () => {
+    const src = fs.readFileSync(new URL("./publicAppOrigin.ts", import.meta.url), "utf8");
+    assert.match(src, /process\.env\.NEXT_PUBLIC_APP_URL/);
+    assert.match(src, /process\.env\.QR_PUBLIC_BASE_URL/);
+    assert.doesNotMatch(src, /process\.env\[/);
+    assert.doesNotMatch(src, /process\.env\.VERCEL_URL/);
+    assert.doesNotMatch(src, /window\.location\.origin/);
   });
 
   it("does not consult Host, X-Forwarded-Host, Origin, request.url, or VERCEL_URL", () => {

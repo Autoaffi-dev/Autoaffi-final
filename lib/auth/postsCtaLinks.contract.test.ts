@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import {
   buildPostsFinalLink,
+  recommendPostsCta,
   resolvePostsCtaOfferType,
 } from "../content-optimizer/postsCtaLinks.ts";
 
@@ -245,6 +246,46 @@ describe("Posts CTA link correctness", () => {
     assert.match(reels, /fetch\("\/api\/recurring\/platforms"/);
     assert.match(reels, /affiliateUrl: p\.promo_link/);
     assert.match(reels, /promo_link: string \| null/);
+  });
+
+  it("16. recommended CTA follows destination mode, not available resources", () => {
+    const posts = read(postsRel);
+    assert.equal(
+      recommendPostsCta({
+        destinationMode: "product",
+        hasSelectedOffer: true,
+        recurringLabel: "autoaffi",
+      }),
+      "Get instant access to the offer"
+    );
+    assert.equal(
+      recommendPostsCta({
+        destinationMode: "recurring",
+        hasSelectedOffer: true,
+        recurringLabel: "autoaffi",
+      }),
+      "Do this once → earn monthly with autoaffi"
+    );
+    assert.equal(
+      recommendPostsCta({
+        destinationMode: "funnel",
+        hasSelectedOffer: true,
+        recurringLabel: "autoaffi",
+      }),
+      "Unlock the first step — free training inside"
+    );
+    const recommended = recommendPostsCta({
+      destinationMode: "product",
+      hasSelectedOffer: true,
+    });
+    const selectedCTA = "Link in bio";
+    const finalCTA = selectedCTA || recommended;
+    assert.equal(finalCTA, "Link in bio");
+    assert.match(posts, /const finalCTA = selectedCTA \|\| recommendedCTA/);
+    assert.match(posts, /recommendPostsCta\(\{/);
+    assert.match(posts, /destinationMode,/);
+    assert.match(posts, /buildPublicGoOfferUrl\(savedId\)/);
+    assert.doesNotMatch(posts, /funnel \+ recurring = freedom/);
   });
 
   it("15. No new /f route, /go wrapper, schema change, or tracking builder is added", () => {

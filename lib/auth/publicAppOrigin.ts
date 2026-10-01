@@ -21,12 +21,24 @@ export type PublicAppOriginOpts = {
 
 const LOCAL_DEV_ORIGIN = "http://localhost:3000";
 
-function readEnv(
-  env: NodeJS.Dict<string | undefined> | undefined,
-  key: string
-): string {
-  const source = env ?? process.env;
-  return String(source[key] || "").trim();
+/**
+ * Default runtime reads are static so Next.js can inline NEXT_PUBLIC_APP_URL
+ * into client bundles. opts.env is the test override and is not process.env.
+ * QR_PUBLIC_BASE_URL is only a server fallback.
+ */
+function readTrustedOriginValues(opts?: PublicAppOriginOpts): [string, string] {
+  if (opts && Object.prototype.hasOwnProperty.call(opts, "env")) {
+    const env = opts.env ?? {};
+    return [
+      String(env.NEXT_PUBLIC_APP_URL || "").trim(),
+      String(env.QR_PUBLIC_BASE_URL || "").trim(),
+    ];
+  }
+
+  return [
+    String(process.env.NEXT_PUBLIC_APP_URL || "").trim(),
+    String(process.env.QR_PUBLIC_BASE_URL || "").trim(),
+  ];
 }
 
 function parseHttpOrigin(raw: string): string | null {
@@ -70,9 +82,10 @@ function isLocalhostOrigin(origin: string): boolean {
 export function resolvePublicAppOrigin(opts?: PublicAppOriginOpts): string | null {
   const nodeEnv = opts?.nodeEnv ?? process.env.NODE_ENV;
   const isProduction = nodeEnv === "production";
+  const [appUrl, qrUrl] = readTrustedOriginValues(opts);
 
-  for (const key of TRUSTED_PUBLIC_ORIGIN_ENV_KEYS) {
-    const origin = parseHttpOrigin(readEnv(opts?.env, key));
+  for (const raw of [appUrl, qrUrl]) {
+    const origin = parseHttpOrigin(raw);
     if (!origin) continue;
     if (isProduction && isLocalhostOrigin(origin)) continue;
     return origin;

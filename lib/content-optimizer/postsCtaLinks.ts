@@ -16,6 +16,32 @@ export function resolvePostsCtaOfferType(input: {
   return undefined;
 }
 
+/**
+ * Recommended CTA follows the explicit destination mode.
+ * A recurring platform or funnel that merely exists does not change a product post.
+ */
+export function recommendPostsCta(input: {
+  destinationMode: PostsCtaDestinationMode;
+  hasSelectedOffer: boolean;
+  recurringLabel?: string | null;
+}): string {
+  if (input.destinationMode === "recurring") {
+    const recurringLabel =
+      String(input.recurringLabel || "").trim() || "your recurring stack";
+    return `Do this once → earn monthly with ${recurringLabel}`;
+  }
+
+  if (input.destinationMode === "funnel") {
+    return "Unlock the first step — free training inside";
+  }
+
+  if (input.hasSelectedOffer) {
+    return "Get instant access to the offer";
+  }
+
+  return "Save this so you don’t lose it";
+}
+
 export function buildPostsFinalLink(input: {
   mode: PostsCtaMode;
   offerType?: PostsCtaOfferType;

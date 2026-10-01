@@ -12,6 +12,7 @@ import Link from "next/link";
 import { runExactFixEngine } from "@/components/content-optimizer/ExactFixEngine";
 import {
   buildPostsFinalLink,
+  recommendPostsCta,
   resolvePostsCtaOfferType,
   type PostsCtaDestinationMode,
 } from "@/lib/content-optimizer/postsCtaLinks";
@@ -1700,31 +1701,16 @@ export default function PostOptimizerPage() {
   ]);
 
   const recommendedCTA = useMemo(() => {
-    if (hasFunnel && hasRecurringStack) {
-      return "Start the 3-step system: funnel + recurring = freedom";
-    }
-
-    if (hasFunnel) {
-      return "Unlock the first step — free training inside";
-    }
-
-    if (hasRecurringStack) {
-      const recurringLabel =
-        selectedRecurringPlatform?.platform || "your recurring stack";
-      return `Do this once → earn monthly with ${recurringLabel}`;
-    }
-
-    if (activeProductTitle || offerIdea) {
-      return "Get instant access to the offer";
-    }
-
-    return "Save this so you don’t lose it";
+    return recommendPostsCta({
+      destinationMode,
+      hasSelectedOffer: Boolean(activeProductTitle || offerIdea),
+      recurringLabel: selectedRecurringPlatform?.platform,
+    });
   }, [
-    hasFunnel,
-    hasRecurringStack,
-    selectedRecurringPlatform,
+    destinationMode,
     activeProductTitle,
     offerIdea,
+    selectedRecurringPlatform?.platform,
   ]);
 
   const ctaOptions = [
