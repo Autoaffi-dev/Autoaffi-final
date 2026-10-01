@@ -9,7 +9,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
-import { createClient } from "@supabase/supabase-js";
 import { runExactFixEngine } from "@/components/content-optimizer/ExactFixEngine";
 import {
   buildPostsFinalLink,
@@ -1197,25 +1196,6 @@ export default function PostOptimizerPage() {
   const [platform, setPlatform] = useState<PlatformKey>("tiktok");
   const [selectedQuickCategory, setSelectedQuickCategory] = useState("");
 
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
-
-  const [user, setUser] = useState<any>(null);
-
-  useEffect(() => {
-    async function loadUser() {
-      const { data } = await supabase.auth.getUser();
-      setUser(data?.user || null);
-    }
-    loadUser();
-  }, [supabase]);
-
   const [activeRecurring, setActiveRecurring] = useState<RecurringPlatformRow[]>([]);
   const [selectedRecurringId, setSelectedRecurringId] = useState<string | null>(null);
   const [destinationMode, setDestinationMode] =
@@ -1281,8 +1261,8 @@ export default function PostOptimizerPage() {
   }, []);
 
   useEffect(() => {
-    loadRecurringPlatforms();
-  }, [user?.id]);
+    void loadRecurringPlatforms();
+  }, []);
 
   const hasRecurringStack =
     Array.isArray(activeRecurring) && activeRecurring.length > 0;
@@ -1464,14 +1444,11 @@ export default function PostOptimizerPage() {
   }
 
   useEffect(() => {
-    if (!user?.id) return;
-    loadVaultOffers();
+    void loadVaultOffers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, []);
 
   useEffect(() => {
-    if (!user?.id) return;
-
     const refreshAll = async () => {
       await Promise.all([
         loadVaultOffers(),
@@ -1497,7 +1474,7 @@ export default function PostOptimizerPage() {
       document.removeEventListener("visibilitychange", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, []);
 
   const primaryVaultOffer = useMemo(() => {
     return vaultOffers.find((offer) => offer.is_primary) || null;
