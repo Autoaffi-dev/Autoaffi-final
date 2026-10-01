@@ -1700,16 +1700,21 @@ export default function PostOptimizerPage() {
     manualLink,
   ]);
 
+  const productAffiliateUrl: string | undefined =
+    buildDisplayAffiliateLink({
+      activeVaultOffer: eligibleActiveVaultOffer,
+      selectedSearchSavedOffer: eligibleSelectedSearchOffer,
+    }) || undefined;
+
   const recommendedCTA = useMemo(() => {
     return recommendPostsCta({
       destinationMode,
-      hasSelectedOffer: Boolean(activeProductTitle || offerIdea),
+      hasSelectedOffer: Boolean(productAffiliateUrl),
       recurringLabel: selectedRecurringPlatform?.platform,
     });
   }, [
     destinationMode,
-    activeProductTitle,
-    offerIdea,
+    productAffiliateUrl,
     selectedRecurringPlatform?.platform,
   ]);
 
@@ -1721,12 +1726,6 @@ export default function PostOptimizerPage() {
     "Comment YES and I’ll send details",
     "Share this with a friend",
   ];
-
-  const productAffiliateUrl: string | undefined =
-    buildDisplayAffiliateLink({
-      activeVaultOffer: eligibleActiveVaultOffer,
-      selectedSearchSavedOffer: eligibleSelectedSearchOffer,
-    }) || undefined;
 
   const selectedOfferType:
     | "product"

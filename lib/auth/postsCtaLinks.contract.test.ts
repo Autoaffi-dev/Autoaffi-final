@@ -3,10 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
+  eligiblePostsSavedOffer,
+  postsEligibleGoOfferId,
+} from "../affiliate/cj/postsOfferEligibility.ts";
+import {
   buildPostsFinalLink,
   recommendPostsCta,
   resolvePostsCtaOfferType,
 } from "../content-optimizer/postsCtaLinks.ts";
+import { buildPublicGoOfferUrl } from "./publicAppOrigin.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
 
@@ -274,6 +279,22 @@ describe("Posts CTA link correctness", () => {
       }),
       "Unlock the first step — free training inside"
     );
+    assert.equal(
+      recommendPostsCta({
+        destinationMode: "recurring",
+        hasSelectedOffer: false,
+        recurringLabel: "autoaffi",
+      }),
+      "Do this once → earn monthly with autoaffi"
+    );
+    assert.equal(
+      recommendPostsCta({
+        destinationMode: "funnel",
+        hasSelectedOffer: false,
+        recurringLabel: "autoaffi",
+      }),
+      "Unlock the first step — free training inside"
+    );
     const recommended = recommendPostsCta({
       destinationMode: "product",
       hasSelectedOffer: true,
@@ -286,6 +307,108 @@ describe("Posts CTA link correctness", () => {
     assert.match(posts, /destinationMode,/);
     assert.match(posts, /buildPublicGoOfferUrl\(savedId\)/);
     assert.doesNotMatch(posts, /funnel \+ recurring = freedom/);
+  });
+
+  it("17. product access CTA requires an eligible customer-facing /go link", () => {
+    const posts = read(postsRel);
+    const productUrlStart = posts.indexOf("const productAffiliateUrl");
+    const recommendedStart = posts.indexOf("const recommendedCTA = useMemo");
+    const recommendedEnd = posts.indexOf("const ctaOptions", recommendedStart);
+    assert.ok(productUrlStart > 0);
+    assert.ok(recommendedStart > productUrlStart);
+    assert.ok(recommendedEnd > recommendedStart);
+
+    const productUrlBlock = posts.slice(productUrlStart, recommendedStart);
+    const recommendedBlock = posts.slice(recommendedStart, recommendedEnd);
+    assert.match(productUrlBlock, /buildDisplayAffiliateLink\(\{/);
+    assert.match(productUrlBlock, /activeVaultOffer: eligibleActiveVaultOffer/);
+    assert.match(
+      productUrlBlock,
+      /selectedSearchSavedOffer: eligibleSelectedSearchOffer/
+    );
+    assert.match(
+      recommendedBlock,
+      /hasSelectedOffer: Boolean\(productAffiliateUrl\)/
+    );
+    assert.doesNotMatch(recommendedBlock, /activeProductTitle/);
+    assert.doesNotMatch(recommendedBlock, /offerIdea/);
+    assert.doesNotMatch(recommendedBlock, /hasFunnel/);
+    assert.doesNotMatch(recommendedBlock, /hasRecurringStack/);
+    assert.doesNotMatch(
+      posts,
+      /hasSelectedOffer:\s*Boolean\(activeProductTitle\s*\|\|\s*offerIdea\)/
+    );
+    assert.match(posts, /const finalCTA = selectedCTA \|\| recommendedCTA/);
+
+    const originOpts = {
+      nodeEnv: "test",
+      env: { NEXT_PUBLIC_APP_URL: "https://app.example" },
+    };
+    const validProductAffiliateUrl = buildPublicGoOfferUrl("saved-ok", originOpts);
+    assert.match(validProductAffiliateUrl, /\/go\/offer\/saved-ok$/);
+    assert.equal(
+      recommendPostsCta({
+        destinationMode: "product",
+        hasSelectedOffer: Boolean(validProductAffiliateUrl),
+      }),
+      "Get instant access to the offer"
+    );
+
+    const typedOfferIdea = "A typed offer idea with no customer link";
+    const missingProductAffiliateUrl = buildPublicGoOfferUrl("", originOpts);
+    assert.equal(missingProductAffiliateUrl, "");
+    assert.equal(Boolean(typedOfferIdea), true);
+    assert.equal(Boolean(missingProductAffiliateUrl), false);
+    assert.notEqual(
+      recommendPostsCta({
+        destinationMode: "product",
+        hasSelectedOffer: Boolean(missingProductAffiliateUrl),
+      }),
+      "Get instant access to the offer"
+    );
+
+    const ineligibleCjOffer = {
+      id: "saved-cj",
+      source: "cj",
+      title: "Premium CJ Course Bundle",
+    };
+    assert.equal(eligiblePostsSavedOffer(ineligibleCjOffer, "facebook"), null);
+    const ineligibleGoId = postsEligibleGoOfferId({
+      activeVaultOffer: ineligibleCjOffer,
+      platform: "facebook",
+    });
+    assert.equal(ineligibleGoId, "");
+    const ineligibleProductAffiliateUrl = buildPublicGoOfferUrl(
+      ineligibleGoId,
+      originOpts
+    );
+    assert.equal(ineligibleProductAffiliateUrl, "");
+    assert.equal(Boolean(ineligibleCjOffer.title), true);
+    assert.equal(Boolean(ineligibleProductAffiliateUrl), false);
+    assert.notEqual(
+      recommendPostsCta({
+        destinationMode: "product",
+        hasSelectedOffer: Boolean(ineligibleProductAffiliateUrl),
+      }),
+      "Get instant access to the offer"
+    );
+
+    assert.equal(
+      recommendPostsCta({
+        destinationMode: "recurring",
+        hasSelectedOffer: Boolean(ineligibleProductAffiliateUrl),
+        recurringLabel: "autoaffi",
+      }),
+      "Do this once → earn monthly with autoaffi"
+    );
+    assert.equal(
+      recommendPostsCta({
+        destinationMode: "funnel",
+        hasSelectedOffer: Boolean(validProductAffiliateUrl),
+        recurringLabel: "autoaffi",
+      }),
+      "Unlock the first step — free training inside"
+    );
   });
 
   it("15. No new /f route, /go wrapper, schema change, or tracking builder is added", () => {
