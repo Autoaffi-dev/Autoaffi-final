@@ -4,13 +4,21 @@ import { CjGraphqlError, cjGraphql } from "./graphql";
 /**
  * Official CJ Product Feed click URL for one promotional property.
  * Endpoint: https://ads.api.cj.com/query
- * Schema: products(..., productIds, partnerIds) { linkCode(pid) { clickUrl } }
+ * Schema: products(...) { linkCode(pid, shopperId) { clickUrl } }
  * linkCode does not return a separate AID field. AID stays inside clickUrl.
- * shopperId is not the publisher SID and is not sent.
+ * shopperId is the server-computed stable SubID. CJ returns that value as
+ * the sid query parameter on clickUrl. Callers must not derive it from
+ * browser input, and Autoaffi does not append sid locally.
  */
 
 export const CJ_PRODUCT_CLICK_QUERY = `
-query CJProductClickUrl($companyId: ID!, $partnerIds: [ID!], $productIds: [ID!], $pid: ID!) {
+query CJProductClickUrl(
+  $companyId: ID!,
+  $partnerIds: [ID!],
+  $productIds: [ID!],
+  $pid: ID!,
+  $shopperId: ID!
+) {
   products(
     companyId: $companyId
     partnerIds: $partnerIds
@@ -20,7 +28,7 @@ query CJProductClickUrl($companyId: ID!, $partnerIds: [ID!], $productIds: [ID!],
     resultList {
       id
       advertiserId
-      linkCode(pid: $pid) {
+      linkCode(pid: $pid, shopperId: $shopperId) {
         clickUrl
       }
     }
@@ -46,17 +54,20 @@ export async function getCJProductClickUrl(args: {
   advertiserId: string;
   productId: string;
   promotionalPropertyId: string;
+  shopperId: string;
   fetchImpl?: typeof fetch;
 }): Promise<CjProductClick> {
   const companyId = String(args.companyId || "").trim();
   const advertiserId = String(args.advertiserId || "").trim();
   const productId = String(args.productId || "").trim();
   const promotionalPropertyId = String(args.promotionalPropertyId || "").trim();
+  const shopperId = String(args.shopperId || "").trim();
 
   if (!companyId) throw new CjGraphqlError("CJ_PUBLISHER_ID_MISSING");
   if (!advertiserId || !productId || !promotionalPropertyId) {
     throw new CjGraphqlError("CJ_PRODUCT_MISMATCH");
   }
+  if (!shopperId) throw new CjGraphqlError("CJ_TRACKING_URL_INVALID");
 
   const data = await cjGraphql<{
     products?: { resultList?: unknown };
@@ -69,6 +80,7 @@ export async function getCJProductClickUrl(args: {
       partnerIds: [advertiserId],
       productIds: [productId],
       pid: promotionalPropertyId,
+      shopperId,
     },
     fetchImpl: args.fetchImpl,
   });
