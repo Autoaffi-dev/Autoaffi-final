@@ -16,6 +16,7 @@ import { finalizeCjTrackingUrl } from "./trackingUrl";
  * Posts may use that property only when promotionPlatform is instagram.
  * Reels has no promotional-property context and fails closed.
  * Browser PID, AID, advertiser, destination, and SID are ignored.
+ * The server-computed stable SubID is sent to CJ as shopperId.
  */
 
 export class CjOfferDestinationError extends Error {
@@ -129,6 +130,7 @@ export async function resolveCjOfferDestination(args: {
       advertiserId: identity.advertiserId,
       productId: identity.productId,
       promotionalPropertyId: property.cj_pid,
+      shopperId: subid,
       fetchImpl: args.fetchImpl,
     });
   } catch (err) {

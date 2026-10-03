@@ -101,7 +101,9 @@ function feedResponse(overrides: Record<string, unknown> = {}) {
           {
             id: "sku900",
             advertiserId: "42",
-            linkCode: { clickUrl: clickUrl() },
+            linkCode: {
+              clickUrl: clickUrl({ sid: buildStableSubId(userId, "cj", externalId) }),
+            },
             ...overrides,
           },
         ],
@@ -161,25 +163,48 @@ describe("CJ phase 2 official click foundation", () => {
 
   it("3. Product Feed client uses the official endpoint and bearer PAT", async () => {
     assert.equal(CJ_PRODUCT_FEED_ENDPOINT, "https://ads.api.cj.com/query");
-    assert.match(CJ_PRODUCT_CLICK_QUERY, /linkCode\(pid: \$pid\)/);
+    assert.match(CJ_PRODUCT_CLICK_QUERY, /\$shopperId/);
+    assert.match(CJ_PRODUCT_CLICK_QUERY, /linkCode\(pid: \$pid, shopperId: \$shopperId\)/);
     assert.match(CJ_PRODUCT_CLICK_QUERY, /clickUrl/);
     assert.doesNotMatch(CJ_PRODUCT_CLICK_QUERY, /cjsku/);
+    const sid = buildStableSubId(userId, "cj", externalId);
     let auth = "";
     let seenUrl = "";
+    let variables: any = null;
     await getCJProductClickUrl({
       pat: "test-pat",
       companyId: "1111111",
       advertiserId: "42",
       productId: "sku900",
       promotionalPropertyId: pid,
+      shopperId: sid,
       fetchImpl: fetchImpl(feedResponse(), (url, init) => {
         seenUrl = url;
         auth = String((init.headers as Record<string, string>).Authorization || "");
+        variables = JSON.parse(String(init.body)).variables;
         assert.equal(String(init.body).includes("test-pat"), false);
       }),
     });
     assert.equal(seenUrl, "https://ads.api.cj.com/query");
     assert.equal(auth, "Bearer test-pat");
+    assert.equal(variables.shopperId, sid);
+    let fetched = false;
+    await assert.rejects(
+      getCJProductClickUrl({
+        pat: "test-pat",
+        companyId: "1111111",
+        advertiserId: "42",
+        productId: "sku900",
+        promotionalPropertyId: pid,
+        shopperId: "   ",
+        fetchImpl: async () => {
+          fetched = true;
+          throw new Error("shopperId request must not be sent");
+        },
+      }),
+      (err: unknown) => err instanceof Error && err.message === "CJ_TRACKING_URL_INVALID"
+    );
+    assert.equal(fetched, false);
   });
 
   it("4-8. product identity and tracking ids come from the server, not the client", async () => {
@@ -191,13 +216,18 @@ describe("CJ phase 2 official click foundation", () => {
         }),
       }) as any
     );
+    const sid = buildStableSubId(userId, "cj", externalId);
     assert.equal(variables.partnerIds[0], "42");
     assert.equal(variables.productIds[0], "sku900");
     assert.equal(variables.pid, pid);
     assert.equal(variables.companyId, "1111111");
+    assert.equal(variables.shopperId, sid);
+    assert.notEqual(variables.shopperId, "client-sid");
+    assert.equal(resolved.subid, sid);
     assert.equal(resolved.advertiserId, "42");
     assert.equal(resolved.productId, "sku900");
     assert.equal(resolved.cjPid, pid);
+    assert.deepEqual(new URL(resolved.affiliateLink).searchParams.getAll("sid"), [sid]);
     assert.equal(resolved.affiliateLink.includes("evil.example"), false);
     assert.equal(resolved.affiliateLink.includes("client-sid"), false);
   });
@@ -329,23 +359,26 @@ describe("CJ phase 2 official click foundation", () => {
     );
   });
 
-  it("26-30. SID is appended, preserved, or rejected, and cjsku is not product identity", () => {
+  it("26-30. official sid is required exactly, and cjsku is not product identity", () => {
     const sid = buildStableSubId(userId, "cj", externalId);
-    const appended = new URL(
-      finalizeCjTrackingUrl({
-        clickUrl: clickUrl(),
-        expectedPid: pid,
-        expectedSid: sid,
-      })
-    );
-    assert.equal(appended.searchParams.get("sid"), sid);
-
+    const official = clickUrl({ sid });
     const kept = finalizeCjTrackingUrl({
-      clickUrl: clickUrl({ sid }),
+      clickUrl: official,
       expectedPid: pid,
       expectedSid: sid,
     });
-    assert.equal(new URL(kept).searchParams.get("sid"), sid);
+    assert.equal(kept, official);
+    assert.deepEqual(new URL(kept).searchParams.getAll("sid"), [sid]);
+
+    assert.throws(
+      () =>
+        finalizeCjTrackingUrl({
+          clickUrl: clickUrl(),
+          expectedPid: pid,
+          expectedSid: sid,
+        }),
+      (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
+    );
 
     assert.throws(
       () =>
@@ -357,13 +390,30 @@ describe("CJ phase 2 official click foundation", () => {
       (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
     );
 
+    for (const duplicate of [
+      `https://www.kqzyfj.com/click-${pid}-${aid}?sid=${sid}&sid=other`,
+      `https://www.kqzyfj.com/click-${pid}-${aid}?sid=${sid}&sid=${sid}`,
+    ]) {
+      assert.throws(
+        () =>
+          finalizeCjTrackingUrl({
+            clickUrl: duplicate,
+            expectedPid: pid,
+            expectedSid: sid,
+          }),
+        (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
+      );
+    }
+
     const resolvedSid = buildStableSubId(userId, "cj", externalId);
     assert.equal(resolvedSid.includes("_"), true);
     assert.equal(resolvedSid.length < 64, true);
     const linkCode = read("lib/affiliate/cj/linkCode.ts");
     const tracking = read("lib/affiliate/cj/trackingUrl.ts");
     assert.doesNotMatch(linkCode, /cjsku/);
+    assert.doesNotMatch(linkCode, /shopperId is not the publisher SID/);
     assert.match(tracking, /cjsku is not treated as the product id/);
+    assert.doesNotMatch(tracking, /SID is appended/);
   });
 
   it("31-34. customers receive /go only, and CJ clicks cannot use the merchant URL", () => {
@@ -533,20 +583,27 @@ describe("CJ phase 2 official click foundation", () => {
       (err: unknown) => err instanceof Error && err.message === "CJ_TRACKING_URL_INVALID"
     );
 
-    const appended = new URL(
-      finalizeCjTrackingUrl({
-        clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}`,
-        expectedPid: pid,
-        expectedSid: sid,
-      })
+    assert.throws(
+      () =>
+        finalizeCjTrackingUrl({
+          clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}`,
+          expectedPid: pid,
+          expectedSid: sid,
+        }),
+      (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
     );
-    assert.deepEqual(appended.searchParams.getAll("sid"), [sid]);
+    assert.throws(
+      () => assertStoredCjTrackingUrl(`https://www.kqzyfj.com/click-${pid}-${aid}`, sid),
+      (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
+    );
 
+    const official = `https://www.kqzyfj.com/click-${pid}-${aid}?sid=${sid}`;
     const kept = finalizeCjTrackingUrl({
-      clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}?sid=${sid}`,
+      clickUrl: official,
       expectedPid: pid,
       expectedSid: sid,
     });
+    assert.equal(kept, official);
     assert.deepEqual(new URL(kept).searchParams.getAll("sid"), [sid]);
     assert.equal(assertStoredCjTrackingUrl(kept, sid).pid, pid);
 
@@ -578,13 +635,6 @@ describe("CJ phase 2 official click foundation", () => {
         }),
       (err: unknown) => err instanceof Error && err.message === "CJ_SID_MISMATCH"
     );
-
-    const official = finalizeCjTrackingUrl({
-      clickUrl: `https://www.kqzyfj.com/click-${pid}-${aid}`,
-      expectedPid: pid,
-      expectedSid: sid,
-    });
-    assert.match(official, new RegExp(`/click-${pid}-${aid}(?:\\?|$)`));
 
     assert.throws(
       () =>

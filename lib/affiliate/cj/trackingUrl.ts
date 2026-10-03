@@ -6,8 +6,9 @@ import { CjGraphqlError } from "./graphql";
  * and publisher-parameter examples. Comparison is exact, never a suffix.
  * Only the default HTTPS port is accepted.
  * The private-beta click path is exactly /click-{pid}-{aid}.
- * SID is appended only when no sid parameter exists.
- * One sid must equal the expected stable SID. Two or more fail closed.
+ * The official clickUrl must already contain exactly one sid, and that
+ * sid must equal the expected stable SubID. Missing, wrong, or duplicate
+ * sid values fail closed. Autoaffi does not append, replace, or remove sid.
  * Documented click URL length limit is 1000 characters.
  *
  * cjsku is not treated as the product id. The Product Feed schema describes
@@ -49,7 +50,7 @@ export function finalizeCjTrackingUrl(args: {
     );
   }
 
-  applyExpectedSid(url, expectedSid, "append");
+  requireExpectedSid(url, expectedSid);
 
   const finalized = url.toString();
   if (finalized.length > CJ_TRACKING_URL_MAX_LENGTH) {
@@ -71,7 +72,7 @@ export function assertStoredCjTrackingUrl(affiliateLink: string, expectedSid: st
   if (!identity || !isLegitimateAid(identity.aid)) {
     throw new CjGraphqlError("CJ_TRACKING_URL_INVALID");
   }
-  applyExpectedSid(url, expected, "require");
+  requireExpectedSid(url, expected);
   if (url.toString().length > CJ_TRACKING_URL_MAX_LENGTH) {
     throw new CjGraphqlError("CJ_TRACKING_URL_INVALID");
   }
@@ -116,21 +117,11 @@ function hasExplicitPort(raw: string) {
   return host.includes(":");
 }
 
-function applyExpectedSid(url: URL, expectedSid: string, mode: "append" | "require") {
+function requireExpectedSid(url: URL, expectedSid: string) {
   const sids = url.searchParams.getAll("sid");
-  if (sids.length > 1) {
+  if (sids.length !== 1 || sids[0] !== expectedSid) {
     throw new CjGraphqlError("CJ_SID_MISMATCH");
   }
-  if (sids.length === 1) {
-    if (sids[0] !== expectedSid) {
-      throw new CjGraphqlError("CJ_SID_MISMATCH");
-    }
-    return;
-  }
-  if (mode === "require") {
-    throw new CjGraphqlError("CJ_SID_MISMATCH");
-  }
-  url.searchParams.append("sid", expectedSid);
 }
 
 function assertOfficialHost(url: URL) {
