@@ -60,10 +60,10 @@ export async function createCjTrackingLink(
   };
 }
 
-export const cjAdapter: AffiliateConnector = {
+export const cjAdapter = {
   source: "cj",
   capabilities: CJ_CONNECTOR_CAPABILITIES,
   createTrackingLink(input) {
     return createCjTrackingLink(input);
   },
-};
+} satisfies AffiliateConnector<"cj">;

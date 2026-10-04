@@ -44,8 +44,8 @@ export type AffiliateTrackingLinkResult = {
   subid: string;
 };
 
-export type AffiliateConnector = {
-  readonly source: string;
+export type AffiliateConnector<TSource extends string> = {
+  readonly source: TSource;
   readonly capabilities: AffiliateConnectorCapabilities;
   createTrackingLink?(
     input: AffiliateTrackingLinkRequest
