@@ -29,6 +29,7 @@ export type CjIndexedProduct = {
 
   image_url?: string | null;
   deep_link?: string | null;
+  product_url?: string | null;
 
   price?: number | null;
   currency?: string | null;
@@ -56,6 +57,14 @@ type FetchCjOptions = {
 
   keywords?: string;
   advertiserIds?: string[]; // schema-B uses partnerIds (we reuse this list)
+  productIds?: string[];
+  limit?: number;
+  /**
+   * Explicit server-scoped ingestion. Presentation filters stay on the
+   * unscoped winners path. This path still refuses an empty advertiser scope.
+   */
+  scopedIngestion?: boolean;
+  fetchImpl?: typeof fetch;
 
   winnersOnly?: boolean;
   maxPerMerchant?: number;
@@ -170,6 +179,12 @@ const GQL_VIEWER_COMPANY = `query Viewer { viewer { companyId } }`;
 const GQL_ME_COMPANY = `query Me { me { companyId } }`;
 
 export async function fetchCj(opts: FetchCjOptions = {}): Promise<CjIndexedProduct[]> {
+  if (opts.scopedIngestion) {
+    const advertiserIds = normalizeScopeIds(opts.advertiserIds);
+    if (advertiserIds.length === 0) return [];
+    return fetchCjScoped(opts, advertiserIds);
+  }
+
   const endpoint = opts.endpoint || process.env.CJ_GRAPHQL_ENDPOINT || "https://ads.api.cj.com/query";
   const pat = opts.pat || process.env.CJ_PAT || "";
 
@@ -231,11 +246,21 @@ export async function fetchCj(opts: FetchCjOptions = {}): Promise<CjIndexedProdu
   const primaryBuckets = new Map<string, CjIndexedProduct[]>();
   const globalSeen = new Set<string>();
 
-  const schemaMode = await detectSchemaMode({ endpoint, pat, timeoutMs });
+  const schemaMode = await detectSchemaMode({
+    endpoint,
+    pat,
+    timeoutMs,
+    fetchImpl: opts.fetchImpl,
+  });
 
   let companyId = opts.companyId || process.env.CJ_COMPANY_ID || "";
   if (schemaMode === "products" && !companyId) {
-    companyId = await resolveCompanyId({ endpoint, pat, timeoutMs });
+    companyId = await resolveCompanyId({
+      endpoint,
+      pat,
+      timeoutMs,
+      fetchImpl: opts.fetchImpl,
+    });
   }
 
   // ✅ pick a deep link field that actually exists and returns URLs
@@ -247,6 +272,7 @@ export async function fetchCj(opts: FetchCjOptions = {}): Promise<CjIndexedProdu
       timeoutMs,
       companyId,
       partnerIds: opts.advertiserIds?.length ? opts.advertiserIds : null,
+      fetchImpl: opts.fetchImpl,
     });
   }
 
@@ -296,6 +322,7 @@ export async function fetchCj(opts: FetchCjOptions = {}): Promise<CjIndexedProdu
         timeoutMs,
         query,
         variables,
+        fetchImpl: opts.fetchImpl,
       });
     } catch (e: any) {
       const msg = String(e?.message || e);
@@ -446,12 +473,18 @@ export async function fetchCj(opts: FetchCjOptions = {}): Promise<CjIndexedProdu
 
 /* ----------------------------- Schema detection ----------------------------- */
 
-async function detectSchemaMode(args: { endpoint: string; pat: string; timeoutMs: number }): Promise<"productFeed" | "products"> {
+async function detectSchemaMode(args: {
+  endpoint: string;
+  pat: string;
+  timeoutMs: number;
+  fetchImpl?: typeof fetch;
+}): Promise<"productFeed" | "products"> {
   try {
     await cjGraphql({
       endpoint: args.endpoint,
       pat: args.pat,
       timeoutMs: args.timeoutMs,
+      fetchImpl: args.fetchImpl,
       query: `query _Test($page:Int!, $limit:Int!){ productFeed(pageNumber:$page,pageSize:$limit){ totalCount } }`,
       variables: { page: 1, limit: 1 },
     });
@@ -464,7 +497,12 @@ async function detectSchemaMode(args: { endpoint: string; pat: string; timeoutMs
   }
 }
 
-async function resolveCompanyId(args: { endpoint: string; pat: string; timeoutMs: number }): Promise<string> {
+async function resolveCompanyId(args: {
+  endpoint: string;
+  pat: string;
+  timeoutMs: number;
+  fetchImpl?: typeof fetch;
+}): Promise<string> {
   const tryQueries = [GQL_VIEWER_COMPANY, GQL_ME_COMPANY];
   for (const q of tryQueries) {
     try {
@@ -472,6 +510,7 @@ async function resolveCompanyId(args: { endpoint: string; pat: string; timeoutMs
         endpoint: args.endpoint,
         pat: args.pat,
         timeoutMs: args.timeoutMs,
+        fetchImpl: args.fetchImpl,
         query: q,
         variables: {},
       });
@@ -495,6 +534,7 @@ async function detectDeepLinkField(args: {
   timeoutMs: number;
   companyId: string;
   partnerIds: string[] | null;
+  fetchImpl?: typeof fetch;
 }) {
   const candidates = ["mobileLink", "link", "buyLink", "productLink", "destinationUrl", "url"];
 
@@ -505,6 +545,7 @@ async function detectDeepLinkField(args: {
         endpoint: args.endpoint,
         pat: args.pat,
         timeoutMs: args.timeoutMs,
+        fetchImpl: args.fetchImpl,
         query: q,
         variables: {
           companyId: args.companyId,
@@ -539,12 +580,20 @@ async function detectDeepLinkField(args: {
 
 /* ----------------------------- GraphQL caller ----------------------------- */
 
-async function cjGraphql(args: { endpoint: string; pat: string; timeoutMs: number; query: string; variables: any }) {
+async function cjGraphql(args: {
+  endpoint: string;
+  pat: string;
+  timeoutMs: number;
+  query: string;
+  variables: any;
+  fetchImpl?: typeof fetch;
+}) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), args.timeoutMs);
+  const doFetch = args.fetchImpl ?? fetch;
 
   try {
-    const res = await fetch(args.endpoint, {
+    const res = await doFetch(args.endpoint, {
       method: "POST",
       signal: controller.signal,
       headers: {
@@ -808,6 +857,253 @@ function safeJson(v: any) {
   } catch {
     return String(v);
   }
+}
+
+const SCOPED_MERCHANT_URL_FIELDS = [
+  "buyUrl",
+  "productUrl",
+  "destinationUrl",
+  "productLink",
+  "link",
+  "url",
+  "mobileLink",
+] as const;
+
+const CJ_CLICK_HOSTS = new Set([
+  "www.kqzyfj.com",
+  "kqzyfj.com",
+  "www.tkqlhce.com",
+  "tkqlhce.com",
+  "www.jdoqocy.com",
+  "jdoqocy.com",
+]);
+
+function normalizeScopeIds(raw: unknown): string[] {
+  const values = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const value of values) {
+    const id = String(value ?? "").trim();
+    if (!/^[0-9]+$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function boundIngestLimit(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(1, Math.min(Math.floor(n), 500));
+}
+
+function isCjClickUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    if (CJ_CLICK_HOSTS.has(host)) return true;
+    if (host === "cj.com" || host.endsWith(".cj.com")) return true;
+    return /^\/click-\d+-\d+(?:\/|$)/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isMerchantDestinationUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (url.username || url.password) return false;
+    return !isCjClickUrl(url.toString());
+  } catch {
+    return false;
+  }
+}
+
+function pickMerchantDestinationUrl(row: Record<string, any>, preferredField: string): string | null {
+  const candidates = [
+    row?.[preferredField],
+    row?.buyUrl,
+    row?.productUrl,
+    row?.destinationUrl,
+    row?.productLink,
+    row?.url,
+    row?.mobileLink,
+    row?.link,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (isMerchantDestinationUrl(trimmed)) return trimmed;
+  }
+  return null;
+}
+
+function buildScopedProductsQuery(merchantUrlField: string) {
+  return `
+query CjScopedProductSearch(
+  $companyId: ID!,
+  $partnerIds: [ID!],
+  $productIds: [ID!],
+  $limit: Int!
+) {
+  products(
+    companyId: $companyId
+    partnerIds: $partnerIds
+    productIds: $productIds
+    limit: $limit
+  ) {
+    totalCount
+    resultList {
+      advertiserId
+      advertiserName
+      id
+      description
+      imageLink
+      ${merchantUrlField}
+      price { amount currency }
+      lastUpdated
+    }
+  }
+}
+`;
+}
+
+function acceptScopedRows(
+  items: any[],
+  field: string,
+  advertiserIds: string[],
+  productIds: string[]
+): { products: CjIndexedProduct[]; missingMerchantUrl: boolean } {
+  const allowedAdvertisers = new Set(advertiserIds);
+  const allowedProducts = new Set(productIds);
+  const products: CjIndexedProduct[] = [];
+  let missingMerchantUrl = false;
+
+  for (const raw of items) {
+    const advertiserId = String(raw?.advertiserId || raw?.partnerId || "").trim();
+    const productId = String(raw?.id || raw?.productId || "").trim();
+    if (!allowedAdvertisers.has(advertiserId)) continue;
+    if (!/^[0-9]+$/.test(productId)) continue;
+    if (allowedProducts.size > 0 && !allowedProducts.has(productId)) continue;
+
+    const merchantUrl = pickMerchantDestinationUrl(raw, field);
+    if (!merchantUrl) {
+      missingMerchantUrl = true;
+      continue;
+    }
+
+    const title = String(raw?.productName || raw?.product_name || raw?.name || raw?.title || "").trim();
+    const description = typeof raw?.description === "string" ? raw.description : null;
+    const image = String(raw?.imageUrl || raw?.image_url || raw?.imageLink || "").trim() || null;
+    const { price, currency } = parsePriceAndCurrency(raw?.price, raw?.currency || raw?.currencyCode);
+    const mapped: CjIndexedProduct = {
+      source: "cj",
+      external_id: `cj_${advertiserId}_${productId}`,
+      title: title || productId,
+      description,
+      merchant_name: String(raw?.advertiserName || raw?.partnerName || "").trim() || null,
+      merchant_id: advertiserId,
+      category: (raw?.productCategory || raw?.category || null) as string | null,
+      image_url: image,
+      deep_link: merchantUrl,
+      product_url: merchantUrl,
+      price,
+      currency,
+      last_updated: toIsoDate(raw?.lastUpdated || raw?.last_updated || ""),
+      quality_score: 0,
+      score: 0,
+      winner_tier: null,
+      geo_scope: "worldwide",
+      is_active: true,
+      is_approved: true,
+    };
+    const quality = computeQualityScore(mapped);
+    mapped.quality_score = quality;
+    mapped.score = quality;
+    mapped.winner_tier = quality >= 85 ? "A" : quality >= 70 ? "B" : quality >= 55 ? "C" : null;
+    products.push(mapped);
+  }
+
+  return { products, missingMerchantUrl };
+}
+
+async function fetchCjScoped(
+  opts: FetchCjOptions,
+  advertiserIds: string[]
+): Promise<CjIndexedProduct[]> {
+  const endpoint = opts.endpoint || process.env.CJ_GRAPHQL_ENDPOINT || "https://ads.api.cj.com/query";
+  const pat = opts.pat || process.env.CJ_PAT || "";
+  if (!pat) {
+    throw new Error("CJ_PAT missing. Create a Personal Access Token in CJ Developer Portal and set CJ_PAT.");
+  }
+
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT;
+  const limit = boundIngestLimit(opts.limit !== undefined ? opts.limit : opts.maxItems);
+  const productIds = normalizeScopeIds(opts.productIds);
+
+  let companyId = String(opts.companyId || process.env.CJ_COMPANY_ID || "").trim();
+  if (!companyId) {
+    companyId = await resolveCompanyId({
+      endpoint,
+      pat,
+      timeoutMs,
+      fetchImpl: opts.fetchImpl,
+    });
+  }
+  if (!companyId) {
+    throw new Error(
+      "CJ_COMPANY_ID missing (schema requires companyId). Set CJ_COMPANY_ID in .env.local OR keep CJ_PAT valid so auto-resolve can work."
+    );
+  }
+
+  const variables = {
+    companyId,
+    partnerIds: advertiserIds,
+    productIds: productIds.length ? productIds : null,
+    limit,
+  };
+
+  let sawScopedProductWithoutMerchantUrl = false;
+  let lastFieldError: unknown = null;
+
+  for (const field of SCOPED_MERCHANT_URL_FIELDS) {
+    let data: any;
+    try {
+      data = await cjGraphql({
+        endpoint,
+        pat,
+        timeoutMs,
+        fetchImpl: opts.fetchImpl,
+        query: buildScopedProductsQuery(field),
+        variables,
+      });
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (msg.includes("403") || msg.toLowerCase().includes("authenticate")) throw e;
+      if (msg.includes("Cannot query field") && msg.includes(field)) {
+        lastFieldError = e;
+        continue;
+      }
+      throw e;
+    }
+
+    const { items } = pickProductsFromResponse(data);
+    if (!items.length) return [];
+
+    const accepted = acceptScopedRows(items, field, advertiserIds, productIds);
+    if (accepted.products.length) return accepted.products.slice(0, limit);
+    if (accepted.missingMerchantUrl) sawScopedProductWithoutMerchantUrl = true;
+  }
+
+  if (sawScopedProductWithoutMerchantUrl) {
+    throw new Error(
+      "CJ controlled ingestion failed closed: scoped product has no merchant destination URL"
+    );
+  }
+  if (lastFieldError) throw lastFieldError;
+
+  return [];
 }
 
 export default fetchCj;
