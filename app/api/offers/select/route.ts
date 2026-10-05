@@ -4,8 +4,8 @@ import { requireUserId, UNAUTHORIZED_ERROR } from "@/lib/auth/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildAffiliateLink } from "@/lib/affiliate/buildAffiliateLink";
 import { toCustomerSavedOffer } from "@/lib/affiliate/cj/customerOffer";
+import { cjAdapter } from "@/lib/affiliate/connectors/cjAdapter";
 import { CjOfferDestinationError } from "@/lib/affiliate/cj/resolveCjOfferDestination";
-import { resolveStoredCjOfferDestination } from "@/lib/affiliate/cj/resolveStoredCjOfferDestination";
 import { CjPropertyMappingError } from "@/lib/affiliate/cj/propertyMapping";
 import {
   customerFacingProductCommission,
@@ -269,11 +269,10 @@ export async function POST(req: Request) {
       void payload.commission;
       void payload.epc;
       try {
-        const resolved = await resolveStoredCjOfferDestination({
-          canonicalUserId: userId,
+        const resolved = await cjAdapter.createTrackingLink({
+          userId,
+          externalId,
           indexRow: {
-            source,
-            external_id: externalId,
             merchant_id: merchantId,
             product_url: productUrl,
             is_active: true,
@@ -282,11 +281,6 @@ export async function POST(req: Request) {
           promotionContext: context,
           promotionPlatform:
             typeof body?.promotionPlatform === "string" ? body.promotionPlatform : null,
-          clientAdvertiserId: payload.merchant_id,
-          clientPid: body?.pid ?? body?.cj_pid,
-          clientAid: body?.aid ?? body?.linkId,
-          clientDestination: payload.product_url ?? payload.url ?? payload.affiliate_link,
-          clientSid: body?.sid,
         });
         if (resolved.subid !== subid) {
           return jsonNoStore({ ok: false, error: "CJ_SID_MISMATCH" }, 400);

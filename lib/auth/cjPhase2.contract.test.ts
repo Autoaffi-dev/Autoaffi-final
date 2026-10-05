@@ -157,7 +157,7 @@ describe("CJ phase 2 official click foundation", () => {
     assert.deepEqual(getBetaAutomatedSources("warriorplus,cj"), ["warriorplus"]);
     const select = read("app/api/offers/select/route.ts");
     const gate = select.indexOf('error: "SOURCE_NOT_BETA_ENABLED"');
-    const call = select.indexOf("await resolveStoredCjOfferDestination");
+    const call = select.indexOf("await cjAdapter.createTrackingLink");
     assert.ok(gate >= 0 && call > gate);
   });
 
@@ -480,7 +480,8 @@ describe("CJ phase 2 official click foundation", () => {
     assert.match(select, /commission: customerFacingProductCommission\(\)/);
     assert.match(select, /epc: null/);
     assert.doesNotMatch(select, /buildCJLink/);
-    assert.match(select, /source === "cj"[\s\S]{0,900}resolveStoredCjOfferDestination/);
+    assert.match(select, /source === "cj"[\s\S]{0,900}cjAdapter\.createTrackingLink/);
+    assert.doesNotMatch(select, /resolveStoredCjOfferDestination/);
     const surfaces = [
       "app/login/dashboard/affiliate/page.tsx",
       "app/api/offers/select/route.ts",

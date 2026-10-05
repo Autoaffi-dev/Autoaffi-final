@@ -184,13 +184,36 @@ describe("CJ connector stage 1 passive adapter", () => {
     assert.match(adapter, /return createCjTrackingLink\(input\)/);
   });
 
-  it("leaves CJ disabled and leaves production callers on the existing resolver", () => {
+  it("save path delegates CJ tracking through cjAdapter and keeps the rest unchanged", () => {
     assert.deepEqual([...BETA_TRACKING_READY_AUTOMATED_SOURCES], ["warriorplus"]);
     const select = read("app/api/offers/select/route.ts");
     const indexer = read("lib/engines/product-indexer/indexer.ts");
-    assert.match(select, /resolveStoredCjOfferDestination/);
-    assert.doesNotMatch(select, /cjAdapter|connectors\/cjAdapter|createCjTrackingLink/);
+    const go = read("app/go/offer/[savedId]/route.ts");
+    const adapter = read("lib/affiliate/connectors/cjAdapter.ts");
+    const cjStart = select.indexOf('if (source === "cj")');
+    const cjBranch = select.slice(cjStart, select.indexOf("const built", cjStart));
+
+    assert.match(cjBranch, /await cjAdapter\.createTrackingLink\(/);
+    assert.doesNotMatch(select, /resolveStoredCjOfferDestination/);
+    assert.doesNotMatch(cjBranch, /clientSid|clientPid|clientAid|clientDestination|clientAdvertiserId/);
+    assert.match(cjBranch, /userId,/);
+    assert.match(cjBranch, /externalId,/);
+    assert.match(cjBranch, /merchant_id: merchantId/);
+    assert.match(cjBranch, /product_url: productUrl/);
+    assert.match(cjBranch, /is_active: true/);
+    assert.match(cjBranch, /is_approved: true/);
+    assert.match(cjBranch, /promotionContext: context/);
+    assert.match(cjBranch, /resolved\.subid !== subid/);
+    assert.match(cjBranch, /CJ_SID_MISMATCH/);
+    assert.match(cjBranch, /CjOfferDestinationError/);
+    assert.match(cjBranch, /CjPropertyMappingError/);
+    assert.match(select, /buildStableSubId\(userId, source, externalId\)/);
+    assert.doesNotMatch(adapter, /buildStableSubId/);
+    assert.match(adapter, /resolveStoredCjOfferDestination/);
+    assert.match(select, /warriorPlusTrackingMatches/);
+    assert.match(select, /BYO_URL_MUST_BE_HTTP/);
     assert.doesNotMatch(indexer, /cjAdapter|connectors\/cjAdapter|createCjTrackingLink/);
-    assert.doesNotMatch(read("app/go/offer/[savedId]/route.ts"), /cjAdapter/);
+    assert.doesNotMatch(go, /cjAdapter/);
+    assert.match(go, /assertStoredCjTrackingUrl/);
   });
 });
