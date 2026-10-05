@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { isCronRequestAuthorized } from "@/lib/auth/cronAuth";
+import {
+  resolveCjIngestScope,
+  resolveProductIndexCronSources,
+} from "@/lib/engines/product-indexer/indexer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,21 +24,10 @@ async function loadIndexerModule() {
 }
 
 function getSources(): Array<"warriorplus" | "awin" | "cj" | "aliexpress"> {
-  const raw = (process.env.PRODUCT_INDEX_CRON_SOURCES || "").trim();
-
-  if (!raw) return ["warriorplus", "awin", "aliexpress"];
-
-  const parts = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean) as any[];
-
   const allowed = new Set(["warriorplus", "awin", "cj", "aliexpress"]);
-  const safe = parts.filter((s) => allowed.has(String(s)));
-
-  return (safe.length ? safe : ["warriorplus", "awin", "aliexpress"]) as Array<
-    "warriorplus" | "awin" | "cj" | "aliexpress"
-  >;
+  return resolveProductIndexCronSources(process.env.PRODUCT_INDEX_CRON_SOURCES).filter((source) =>
+    allowed.has(source)
+  ) as Array<"warriorplus" | "awin" | "cj" | "aliexpress">;
 }
 
 async function handle(req: Request) {
@@ -66,10 +59,17 @@ async function handle(req: Request) {
       1,
       Math.min(Number(process.env.PRODUCT_INDEX_CRON_LIMIT || 400), 500)
     );
+    // Server env only. An empty advertiser scope must not become an unscoped CJ search.
+    const cjScope = resolveCjIngestScope({
+      advertiserIds: process.env.CJ_INGEST_ADVERTISER_IDS,
+      productIds: process.env.CJ_INGEST_PRODUCT_IDS,
+    });
 
     const result = await runner({
       limit,
       sources,
+      cjAdvertiserIds: cjScope.advertiserIds,
+      cjProductIds: cjScope.productIds,
     });
 
     const { ok: _ok, tookMs: _tookMs, ...safe } = (result ?? {}) as any;

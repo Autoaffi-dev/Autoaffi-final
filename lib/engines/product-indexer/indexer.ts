@@ -158,7 +158,59 @@ function computeWinnerTier(quality_score: number): string | null {
   return null;
 }
 
-function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow | null {
+export function resolveProductIndexCronSources(
+  rawValue: string | undefined | null
+): Array<"warriorplus" | "awin" | "cj" | "aliexpress"> {
+  const raw = String(rawValue ?? "").trim();
+  if (!raw) return ["warriorplus", "awin", "aliexpress"];
+
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const allowed = new Set(["warriorplus", "awin", "cj", "aliexpress"]);
+  const safe = parts.filter((s) => allowed.has(s));
+
+  return (safe.length ? safe : ["warriorplus", "awin", "aliexpress"]) as Array<
+    "warriorplus" | "awin" | "cj" | "aliexpress"
+  >;
+}
+
+export function parseCjScopeIds(raw: string | null | undefined): string[] {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const part of String(raw ?? "").split(",")) {
+    const id = part.trim();
+    if (!/^[0-9]+$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+export function resolveCjIngestScope(input?: {
+  advertiserIds?: string | null;
+  productIds?: string | null;
+}): { advertiserIds: string[]; productIds: string[] } {
+  return {
+    advertiserIds: parseCjScopeIds(input?.advertiserIds),
+    productIds: parseCjScopeIds(input?.productIds),
+  };
+}
+
+function cjRowMatchesScope(
+  row: ProductIndexRow,
+  advertiserIds: string[],
+  productIds: string[]
+): boolean {
+  const merchantId = String(row.merchant_id || "").trim();
+  if (!advertiserIds.includes(merchantId)) return false;
+  if (!productIds.length) return true;
+  return productIds.some((productId) => row.external_id === `cj_${merchantId}_${productId}`);
+}
+
+export function normalizeRow(input: any, source: ProductIndexerSource): ProductIndexRow | null {
   const externalIdRaw =
     input?.external_id ??
     input?.externalId ??
@@ -392,6 +444,8 @@ async function applyWinnerPolicyIfEnabled() {
 export async function runProductIndexer(args?: {
   sources?: ProductIndexerSource[];
   limit?: number;
+  cjAdvertiserIds?: string[];
+  cjProductIds?: string[];
 }): Promise<ProductIndexerReport> {
   const started = Date.now();
   const triggeredAt = toIsoNow();
@@ -416,10 +470,33 @@ export async function runProductIndexer(args?: {
     },
   };
 
+  const cjAdvertiserIds = parseCjScopeIds((args?.cjAdvertiserIds || []).join(","));
+  const cjProductIds = parseCjScopeIds((args?.cjProductIds || []).join(","));
+
   for (const source of sources) {
     try {
+      if (source === "cj" && cjAdvertiserIds.length === 0) {
+        report.sources.cj.errors.push("CJ ingestion skipped: advertiser scope is empty");
+        continue;
+      }
+
       const fetcher = await loadFetcher(source);
-      const raw = await fetcher({ limit });
+      const raw =
+        source === "cj"
+          ? await (
+              fetcher as (scoped: {
+                limit: number;
+                advertiserIds: string[];
+                productIds: string[];
+                scopedIngestion: boolean;
+              }) => Promise<any[]>
+            )({
+              limit,
+              advertiserIds: cjAdvertiserIds,
+              productIds: cjProductIds,
+              scopedIngestion: true,
+            })
+          : await fetcher({ limit });
 
       report.sources[source].fetched = Array.isArray(raw) ? raw.length : 0;
 
@@ -432,7 +509,15 @@ export async function runProductIndexer(args?: {
           skipped++;
           continue;
         }
+        if (source === "cj" && !cjRowMatchesScope(row, cjAdvertiserIds, cjProductIds)) {
+          skipped++;
+          continue;
+        }
         normalized.push(row);
+      }
+
+      if (source === "cj" && normalized.length > limit) {
+        normalized.length = limit;
       }
 
       report.sources[source].skipped = skipped;
