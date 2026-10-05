@@ -130,7 +130,6 @@ describe("CJ controlled ingestion", () => {
     };
     globalThis.fetch = fetchImpl;
 
-    assert.deepEqual(await fetchCj({ fetchImpl, pat: "test-cj-pat" }), []);
     assert.deepEqual(
       await fetchCj({
         fetchImpl,
@@ -159,6 +158,58 @@ describe("CJ controlled ingestion", () => {
     assert.equal(report.sources.cj.fetched, 0);
     assert.equal(report.sources.cj.upserted, 0);
     assert.match(report.sources.cj.errors.join("\n"), /advertiser scope is empty/);
+  });
+
+  it("scoped ingestion refuses an empty advertiser scope and leaves legacy fetchCj unchanged", async () => {
+    let scopedCalls = 0;
+    const scopedFetch: typeof fetch = async () => {
+      scopedCalls += 1;
+      throw new Error("scoped CJ fetch");
+    };
+    assert.deepEqual(
+      await fetchCj({
+        fetchImpl: scopedFetch,
+        pat: "test-cj-pat",
+        scopedIngestion: true,
+        advertiserIds: [],
+      }),
+      []
+    );
+    assert.equal(scopedCalls, 0);
+
+    const controlledBodies: any[] = [];
+    await fetchCj({
+      pat: "test-cj-pat",
+      companyId: "7858215",
+      scopedIngestion: true,
+      advertiserIds: [ADVERTISER_ID],
+      limit: 1,
+      fetchImpl: async (_input, init) => {
+        controlledBodies.push(JSON.parse(String(init?.body || "{}")));
+        return jsonResponse(catalogData([catalogRow()]));
+      },
+    });
+    assert.equal(controlledBodies.length, 1);
+    assert.match(controlledBodies[0].query, /CjScopedProductSearch/);
+    assert.deepEqual(controlledBodies[0].variables.partnerIds, [ADVERTISER_ID]);
+
+    const legacyBodies: any[] = [];
+    const legacy = await fetchCj({
+      pat: "test-cj-pat",
+      fetchImpl: async (_input, init) => {
+        legacyBodies.push(JSON.parse(String(init?.body || "{}")));
+        return jsonResponse({
+          data: { productFeed: { totalCount: 0, resultList: [] } },
+        });
+      },
+    });
+    assert.deepEqual(legacy, []);
+    assert.ok(legacyBodies.length > 0);
+    assert.ok(legacyBodies.some((body) => String(body.query || "").includes("productFeed")));
+    assert.equal(
+      legacyBodies.some((body) => String(body.query || "").includes("CjScopedProductSearch")),
+      false
+    );
   });
 
   it("C-D. scoped advertiser and optional product id are sent as partnerIds and productIds", async () => {

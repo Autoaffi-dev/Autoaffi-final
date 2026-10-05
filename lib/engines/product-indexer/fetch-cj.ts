@@ -179,9 +179,11 @@ const GQL_VIEWER_COMPANY = `query Viewer { viewer { companyId } }`;
 const GQL_ME_COMPANY = `query Me { me { companyId } }`;
 
 export async function fetchCj(opts: FetchCjOptions = {}): Promise<CjIndexedProduct[]> {
-  const advertiserIds = normalizeScopeIds(opts.advertiserIds);
-  if (advertiserIds.length === 0) return [];
-  if (opts.scopedIngestion) return fetchCjScoped(opts, advertiserIds);
+  if (opts.scopedIngestion) {
+    const advertiserIds = normalizeScopeIds(opts.advertiserIds);
+    if (advertiserIds.length === 0) return [];
+    return fetchCjScoped(opts, advertiserIds);
+  }
 
   const endpoint = opts.endpoint || process.env.CJ_GRAPHQL_ENDPOINT || "https://ads.api.cj.com/query";
   const pat = opts.pat || process.env.CJ_PAT || "";
