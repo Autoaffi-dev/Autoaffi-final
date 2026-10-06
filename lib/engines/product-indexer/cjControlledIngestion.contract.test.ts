@@ -160,56 +160,57 @@ describe("CJ controlled ingestion", () => {
     assert.match(report.sources.cj.errors.join("\n"), /advertiser scope is empty/);
   });
 
-  it("scoped ingestion refuses an empty advertiser scope and leaves legacy fetchCj unchanged", async () => {
-    let scopedCalls = 0;
-    const scopedFetch: typeof fetch = async () => {
-      scopedCalls += 1;
-      throw new Error("scoped CJ fetch");
+  it("A-C. unscoped and empty-scope fetchCj perform zero network requests", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      throw new Error("CJ network");
     };
+    globalThis.fetch = fetchImpl;
+
+    assert.deepEqual(await fetchCj({ limit: 1, pat: "test-cj-pat", fetchImpl }), []);
+    assert.deepEqual(await fetchCj({ pat: "test-cj-pat", fetchImpl }), []);
+    assert.deepEqual(await fetchCj({}), []);
     assert.deepEqual(
       await fetchCj({
-        fetchImpl: scopedFetch,
+        fetchImpl,
         pat: "test-cj-pat",
         scopedIngestion: true,
         advertiserIds: [],
       }),
       []
     );
-    assert.equal(scopedCalls, 0);
-
-    const controlledBodies: any[] = [];
-    await fetchCj({
-      pat: "test-cj-pat",
-      companyId: "7858215",
-      scopedIngestion: true,
-      advertiserIds: [ADVERTISER_ID],
-      limit: 1,
-      fetchImpl: async (_input, init) => {
-        controlledBodies.push(JSON.parse(String(init?.body || "{}")));
-        return jsonResponse(catalogData([catalogRow()]));
-      },
-    });
-    assert.equal(controlledBodies.length, 1);
-    assert.match(controlledBodies[0].query, /CjScopedProductSearch/);
-    assert.deepEqual(controlledBodies[0].variables.partnerIds, [ADVERTISER_ID]);
-
-    const legacyBodies: any[] = [];
-    const legacy = await fetchCj({
-      pat: "test-cj-pat",
-      fetchImpl: async (_input, init) => {
-        legacyBodies.push(JSON.parse(String(init?.body || "{}")));
-        return jsonResponse({
-          data: { productFeed: { totalCount: 0, resultList: [] } },
-        });
-      },
-    });
-    assert.deepEqual(legacy, []);
-    assert.ok(legacyBodies.length > 0);
-    assert.ok(legacyBodies.some((body) => String(body.query || "").includes("productFeed")));
-    assert.equal(
-      legacyBodies.some((body) => String(body.query || "").includes("CjScopedProductSearch")),
-      false
+    assert.deepEqual(
+      await fetchCj({
+        fetchImpl,
+        pat: "test-cj-pat",
+        scopedIngestion: true,
+        advertiserIds: ["", "  "],
+      }),
+      []
     );
+    assert.equal(calls, 0);
+
+    const fetchSrc = read("lib/engines/product-indexer/fetch-cj.ts");
+    const entry = fetchSrc.slice(
+      fetchSrc.indexOf("export async function fetchCj"),
+      fetchSrc.indexOf("async function fetchCjScoped")
+    );
+    const failClosed = entry.lastIndexOf("return [];");
+    assert.ok(failClosed > entry.indexOf("opts.scopedIngestion === true"));
+    assert.ok(entry.indexOf("detectSchemaMode(") > failClosed);
+    assert.ok(entry.indexOf("detectDeepLinkField(") > failClosed);
+    assert.ok(entry.indexOf('schemaMode === "productFeed"') > failClosed);
+    assert.equal(fetchSrc.includes("legacyUnscopedCjFetchEnabled"), false);
+    assert.doesNotMatch(entry.slice(0, failClosed), /process\.env/);
+    assert.equal(fetchSrc.split("retainedLegacyCjCatalogFetch(").length - 1, 1);
+    const fetchCjFn = fetchSrc.slice(
+      fetchSrc.indexOf("export async function fetchCj"),
+      fetchSrc.indexOf("async function retainedLegacyCjCatalogFetch")
+    );
+    assert.equal(fetchCjFn.includes("detectSchemaMode("), false);
+    assert.equal(fetchCjFn.includes("detectDeepLinkField("), false);
+    assert.equal(fetchCjFn.includes("productFeed"), false);
   });
 
   it("C-D. scoped advertiser and optional product id are sent as partnerIds and productIds", async () => {
@@ -314,9 +315,11 @@ describe("CJ controlled ingestion", () => {
 
     useIndexerEnv();
     const upserts: any[] = [];
+    const cjBodies: any[] = [];
     globalThis.fetch = async (input, init) => {
       const url = String(input);
       if (url.includes("ads.api.cj.com")) {
+        cjBodies.push(JSON.parse(String(init?.body || "{}")));
         return jsonResponse(catalogData(rows));
       }
       if (url.includes("/rest/v1/product_index")) {
@@ -328,13 +331,31 @@ describe("CJ controlled ingestion", () => {
 
     const report = await runProductIndexer({
       sources: ["cj"],
-      limit: 10,
+      limit: 1,
       cjAdvertiserIds: [ADVERTISER_ID],
       cjProductIds: [PRODUCT_ID],
     });
 
+    assert.equal(cjBodies.length, 1);
+    assert.match(cjBodies[0].query, /query CjScopedProductSearch/);
+    assert.deepEqual(cjBodies[0].variables.partnerIds, [ADVERTISER_ID]);
+    assert.deepEqual(cjBodies[0].variables.productIds, [PRODUCT_ID]);
+    assert.equal(cjBodies[0].variables.limit, 1);
+    assert.equal(
+      cjBodies.some((body) => String(body.query || "").includes("productFeed")),
+      false
+    );
+    assert.equal(
+      cjBodies.some((body) => /query Products\(/.test(String(body.query || ""))),
+      false
+    );
+    assert.equal(
+      cjBodies.some((body) => String(body.query || "").includes("deepLink probe")),
+      false
+    );
     assert.equal(report.sources.cj.errors.length, 0);
     assert.equal(report.sources.cj.upserted, 1);
+    assert.ok(report.sources.cj.upserted <= 1);
     assert.equal(upserts.length, 1);
     assert.equal(upserts[0].length, 1);
     assert.equal(upserts[0][0].source, "cj");
@@ -345,14 +366,24 @@ describe("CJ controlled ingestion", () => {
     assert.equal(JSON.stringify(upserts).includes("kqzyfj.com"), false);
 
     upserts.length = 0;
+    cjBodies.length = 0;
     const limitedReport = await runProductIndexer({
       sources: ["cj"],
       limit: 1,
       cjAdvertiserIds: [ADVERTISER_ID],
     });
     assert.equal(limitedReport.sources.cj.upserted, 1);
+    assert.ok(limitedReport.sources.cj.upserted <= 1);
     assert.equal(upserts[0].length, 1);
     assert.equal(upserts[0][0].merchant_id, ADVERTISER_ID);
+    assert.equal(JSON.stringify(upserts).includes("424242"), false);
+    assert.equal(cjBodies.length, 1);
+    assert.match(cjBodies[0].query, /query CjScopedProductSearch/);
+    assert.equal(cjBodies[0].variables.limit, 1);
+    assert.equal(
+      cjBodies.some((body) => String(body.query || "").includes("productFeed")),
+      false
+    );
   });
 
   it("fails closed when the scoped product has only a CJ click URL", async () => {
@@ -383,37 +414,29 @@ describe("CJ controlled ingestion", () => {
     );
   });
 
-  it("keeps the existing presentation filters on the non-scoped winners path", async () => {
+  it("ordinary fetchCj with advertiser ids but no scoped flag performs zero fetches", async () => {
     const fetchSrc = read("lib/engines/product-indexer/fetch-cj.ts");
     assert.match(fetchSrc, /const DEFAULT_MIN_DESC = 60/);
     assert.match(fetchSrc, /const DEFAULT_REQUIRE_IMAGE = true/);
     assert.match(fetchSrc, /if \(d\.length < minDescriptionLen\) continue/);
 
-    const fetchImpl: typeof fetch = async (_input, init) => {
-      const body = JSON.parse(String(init?.body || "{}"));
-      if (String(body.query || "").includes("productFeed")) {
-        return jsonResponse({
-          errors: [{ message: 'Cannot query field "productFeed" on type Query' }],
-        });
-      }
-      return jsonResponse(
-        catalogData([
-          catalogRow({
-            description: "short",
-            imageLink: null,
-          }),
-        ])
-      );
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      throw new Error("legacy winners path contacted CJ");
     };
 
     const rows = await fetchCj({
       pat: "test-cj-pat",
       companyId: "7858215",
       advertiserIds: [ADVERTISER_ID],
+      productIds: [PRODUCT_ID],
+      limit: 1,
       scopedIngestion: false,
       fetchImpl,
     });
     assert.deepEqual(rows, []);
+    assert.equal(calls, 0);
   });
 
   it("H-J. CJ stays out of the customer beta, search, and save gates", () => {
