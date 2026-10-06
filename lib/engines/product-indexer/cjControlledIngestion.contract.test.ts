@@ -201,12 +201,16 @@ describe("CJ controlled ingestion", () => {
     assert.ok(entry.indexOf("detectSchemaMode(") > failClosed);
     assert.ok(entry.indexOf("detectDeepLinkField(") > failClosed);
     assert.ok(entry.indexOf('schemaMode === "productFeed"') > failClosed);
-    const gate = fetchSrc.slice(
-      fetchSrc.indexOf("function legacyUnscopedCjFetchEnabled"),
-      fetchSrc.indexOf("export async function fetchCj")
+    assert.equal(fetchSrc.includes("legacyUnscopedCjFetchEnabled"), false);
+    assert.doesNotMatch(entry.slice(0, failClosed), /process\.env/);
+    assert.equal(fetchSrc.split("retainedLegacyCjCatalogFetch(").length - 1, 1);
+    const fetchCjFn = fetchSrc.slice(
+      fetchSrc.indexOf("export async function fetchCj"),
+      fetchSrc.indexOf("async function retainedLegacyCjCatalogFetch")
     );
-    assert.match(gate, /return false;/);
-    assert.equal(gate.includes("process.env"), false);
+    assert.equal(fetchCjFn.includes("detectSchemaMode("), false);
+    assert.equal(fetchCjFn.includes("detectDeepLinkField("), false);
+    assert.equal(fetchCjFn.includes("productFeed"), false);
   });
 
   it("C-D. scoped advertiser and optional product id are sent as partnerIds and productIds", async () => {

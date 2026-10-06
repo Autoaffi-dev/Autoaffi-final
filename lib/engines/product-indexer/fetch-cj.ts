@@ -179,15 +179,6 @@ query Products(
 const GQL_VIEWER_COMPANY = `query Viewer { viewer { companyId } }`;
 const GQL_ME_COMPANY = `query Me { me { companyId } }`;
 
-/**
- * Permanent code-level gate for the unused legacy search. It is not an
- * environment flag and it is not an option runProductIndexer can pass.
- * Ordinary fetchCj calls therefore return before any CJ network request.
- */
-function legacyUnscopedCjFetchEnabled(): boolean {
-  return false;
-}
-
 export async function fetchCj(opts: FetchCjOptions = {}): Promise<CjIndexedProduct[]> {
   if (opts.scopedIngestion === true) {
     const advertiserIds = normalizeScopeIds(opts.advertiserIds);
@@ -195,11 +186,11 @@ export async function fetchCj(opts: FetchCjOptions = {}): Promise<CjIndexedProdu
     return fetchCjScoped(opts, advertiserIds);
   }
 
-  // No production caller needs the legacy unscoped search. Ordinary calls
-  // such as fetchCj({ limit: 1 }) fail closed here, before schema detection,
-  // deep-link probes, productFeed, products, or fetch().
-  if (!legacyUnscopedCjFetchEnabled()) return [];
+  return [];
+}
 
+// Not called. Retained only so this unused search still type-checks.
+async function retainedLegacyCjCatalogFetch(opts: FetchCjOptions): Promise<CjIndexedProduct[]> {
   const endpoint = opts.endpoint || process.env.CJ_GRAPHQL_ENDPOINT || "https://ads.api.cj.com/query";
   const pat = opts.pat || process.env.CJ_PAT || "";
 
