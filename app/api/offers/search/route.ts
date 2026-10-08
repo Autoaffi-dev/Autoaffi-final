@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { applyCjSearchGate } from "@/lib/affiliate/cj/applyCjSearchGate";
+import { prepareCjCustomerSearchItems } from "@/lib/affiliate/cj/searchGate";
 import {
   customerFacingProductCommission,
   getBetaAutomatedSources,
@@ -57,9 +58,8 @@ export async function GET(req: Request) {
 
     const limit = clamp(Number(url.searchParams.get("limit") || 30), 1, 120);
 
-    const contextRaw = String(
-      url.searchParams.get("context") || "affiliate_offers"
-    ).trim();
+    const contextParam = url.searchParams.get("context");
+    const contextRaw = String(contextParam || "affiliate_offers").trim();
 
     const context =
       contextRaw === "reels" ||
@@ -208,7 +208,10 @@ export async function GET(req: Request) {
       };
     });
 
-    const visibleItems = await applyCjSearchGate(userId, items);
+    const preparedCjSearch = prepareCjCustomerSearchItems(items, contextParam);
+    const visibleItems = preparedCjSearch.applyReviewGate
+      ? await applyCjSearchGate(userId, preparedCjSearch.items)
+      : preparedCjSearch.items;
 
     await supabaseAdmin.from("user_search_events").insert({
       user_id: userId,

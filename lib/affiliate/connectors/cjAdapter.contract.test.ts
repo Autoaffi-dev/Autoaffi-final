@@ -214,6 +214,7 @@ describe("CJ connector stage 1 passive adapter", () => {
     assert.match(select, /BYO_URL_MUST_BE_HTTP/);
     assert.doesNotMatch(indexer, /cjAdapter|connectors\/cjAdapter|createCjTrackingLink/);
     assert.doesNotMatch(go, /cjAdapter/);
-    assert.match(go, /assertStoredCjTrackingUrl/);
+    assert.match(go, /resolveCjGoClick/);
+    assert.match(read("lib/affiliate/cj/goClick.ts"), /assertStoredCjTrackingUrl/);
   });
 });

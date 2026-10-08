@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
+import { toCustomerSavedOffer } from "@/lib/affiliate/cj/customerOffer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -55,7 +56,15 @@ export async function GET() {
       return jsonNoStore({ ok: true, offer: null }, { status: 200 });
     }
 
-    return jsonNoStore({ ok: true, offer: data || null }, { status: 200 });
+    return jsonNoStore(
+      {
+        ok: true,
+        offer: data
+          ? toCustomerSavedOffer(data as { id?: string | null; source?: string | null })
+          : null,
+      },
+      { status: 200 }
+    );
   } catch (err: any) {
     console.error("[offers/primary][GET] crash:", err);
     return jsonNoStore({ ok: true, offer: null }, { status: 200 });
@@ -165,7 +174,14 @@ export async function POST(req: Request) {
     }
 
     return jsonNoStore(
-      { ok: true, offer: setRes.data || null },
+      {
+        ok: true,
+        offer: setRes.data
+          ? toCustomerSavedOffer(
+              setRes.data as { id?: string | null; source?: string | null }
+            )
+          : null,
+      },
       { status: 200 }
     );
   } catch (err: any) {

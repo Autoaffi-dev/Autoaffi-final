@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { toCustomerTrackingEventMeta } from "@/lib/affiliate/cj/customerOffer";
 import { getSupabaseAdmin, requireUserId } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -372,7 +373,7 @@ export async function GET(req: Request) {
           sourceUrl: row.referer ?? null,
           score: null,
           suggestedOpener: null,
-          meta: {
+          meta: toCustomerTrackingEventMeta({
             offer_id: row.offer_id,
             source: row.source,
             external_id: row.external_id,
@@ -384,7 +385,7 @@ export async function GET(req: Request) {
             clicked_at: row.clicked_at,
             note:
               "Tracking clicks are signals only unless tied to a known opt-in lead.",
-          },
+          }),
         };
       }
     );

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
+import { toCustomerSavedOffer } from "@/lib/affiliate/cj/customerOffer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -111,7 +112,11 @@ export async function POST(req: Request) {
 
     return jsonNoStore({
       ok: true,
-      item: updateRes.data || null,
+      item: updateRes.data
+        ? toCustomerSavedOffer(
+            updateRes.data as { id?: string | null; source?: string | null }
+          )
+        : null,
     });
   } catch (e: any) {
     console.error("[api/affiliate/products/pin] error:", e);

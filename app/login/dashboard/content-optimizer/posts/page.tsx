@@ -1317,7 +1317,9 @@ export default function PostOptimizerPage() {
 
     try {
       const res = await fetch(
-        "/api/products/search?q=" + encodeURIComponent(query) + "&limit=18"
+        "/api/products/search?q=" +
+          encodeURIComponent(query) +
+          "&limit=18&context=posts"
       );
       const data = await res.json();
 

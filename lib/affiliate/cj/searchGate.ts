@@ -1,4 +1,4 @@
-import type { CjProgramReviewSnapshot } from "./eligibility";
+import { cjReviewAllowsSocial, type CjProgramReviewSnapshot } from "./eligibility";
 import { normalizeCjSocialHandle } from "./promotionalProperty";
 import type { CjPropertyMappingRow } from "./propertyMapping";
 import type { CjSocialAccountSnapshot } from "./socialAccountProperty";
@@ -6,9 +6,36 @@ import { resolveSocialPromotionalProperty } from "./socialAccountProperty";
 
 /**
  * Search-time CJ visibility.
- * Uses the admin review and the user's Instagram property.
+ * Context authorization happens before this gate. The gate itself uses the
+ * admin review and the user's Instagram property.
  * Does not call Program Terms. The ACTIVE contract is checked at save.
  */
+
+export const CJ_APPROVED_CUSTOMER_SEARCH_CONTEXTS = ["posts", "affiliate_offers"] as const;
+
+export function isApprovedCjCustomerSearchContext(context: string | null | undefined) {
+  const value = String(context ?? "").trim().toLowerCase();
+  return (CJ_APPROVED_CUSTOMER_SEARCH_CONTEXTS as readonly string[]).includes(value);
+}
+
+/**
+ * CJ rows reach the review/property gate only for an explicit approved context.
+ * Missing, reels, and unknown contexts drop CJ before that gate.
+ * Other sources stay in the list.
+ */
+export function prepareCjCustomerSearchItems<T extends { source?: string | null }>(
+  items: T[],
+  context: string | null | undefined
+): { items: T[]; applyReviewGate: boolean } {
+  if (isApprovedCjCustomerSearchContext(context)) {
+    return { items, applyReviewGate: true };
+  }
+
+  return {
+    applyReviewGate: false,
+    items: items.filter((item) => String(item.source || "").trim().toLowerCase() !== "cj"),
+  };
+}
 
 export function filterCjSearchItems<
   T extends { source?: string | null; merchant_id?: string | null }
@@ -30,7 +57,7 @@ export function filterCjSearchItems<
     if (String(item.source || "").trim().toLowerCase() !== "cj") return true;
     if (!propertyReady) return false;
     const advertiserId = String(item.merchant_id || "").trim();
-    return reviewAllowsSocial(reviews.get(advertiserId) || null, advertiserId);
+    return cjReviewAllowsSocial(reviews.get(advertiserId) || null, advertiserId);
   });
 }
 
@@ -72,17 +99,4 @@ function instagramHandlesMatch(stored: string, resolvedHandle: string) {
   const right = normalizeCjSocialHandle(resolvedHandle);
   if (!left || !right) return false;
   return left === right;
-}
-
-function reviewAllowsSocial(
-  review: CjProgramReviewSnapshot | null,
-  advertiserId: string
-) {
-  if (!review || !advertiserId) return false;
-  if (review.advertiser_id !== advertiserId) return false;
-  if (String(review.status || "").trim().toLowerCase() !== "allowed") return false;
-  const methods = (review.permitted_methods || []).map((item) =>
-    String(item || "").trim().toLowerCase()
-  );
-  return methods.includes("social_media");
 }

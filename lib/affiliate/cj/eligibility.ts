@@ -83,11 +83,44 @@ export function evaluateCjAdvertiserUse(args: {
     return { ok: false, reason: "CJ_CONTRACT_NOT_ACTIVE" };
   }
 
-  const review = args.review;
+  const reviewDecision = evaluateCjSocialReview(args.review, advertiserId, method);
+  if (!reviewDecision.ok) {
+    return reviewDecision;
+  }
+
+  return { ok: true, cjPid: mapping.cj_pid, method };
+}
+
+export type CjSocialReviewDecision =
+  | { ok: true }
+  | {
+      ok: false;
+      reason:
+        | "CJ_PROGRAM_NOT_REVIEWED"
+        | "CJ_PROGRAM_REVIEW_ADVERTISER_MISMATCH"
+        | "CJ_PROGRAM_DISABLED"
+        | "CJ_METHOD_NOT_ALLOWED";
+    };
+
+/**
+ * Single CJ review rule for search, save, and /go.
+ * A review allows social use only when it exists, names the same advertiser,
+ * is allowed, and includes social_media. This does not call CJ.
+ */
+export function evaluateCjSocialReview(
+  review: CjProgramReviewSnapshot | null | undefined,
+  advertiserId: string,
+  method: string = CJ_ELIGIBILITY_METHOD_SOCIAL_MEDIA
+): CjSocialReviewDecision {
+  const requestedAdvertiserId = String(advertiserId || "").trim();
+  const requestedMethod = String(method || CJ_ELIGIBILITY_METHOD_SOCIAL_MEDIA)
+    .trim()
+    .toLowerCase();
+
   if (!review) {
     return { ok: false, reason: "CJ_PROGRAM_NOT_REVIEWED" };
   }
-  if (review.advertiser_id !== advertiserId) {
+  if (review.advertiser_id !== requestedAdvertiserId) {
     return { ok: false, reason: "CJ_PROGRAM_REVIEW_ADVERTISER_MISMATCH" };
   }
 
@@ -102,9 +135,22 @@ export function evaluateCjAdvertiserUse(args: {
   const methods = (review.permitted_methods || []).map((item) =>
     String(item || "").trim().toLowerCase()
   );
-  if (!methods.includes(method)) {
+  if (!methods.includes(requestedMethod)) {
     return { ok: false, reason: "CJ_METHOD_NOT_ALLOWED" };
   }
 
-  return { ok: true, cjPid: mapping.cj_pid, method };
+  return { ok: true };
+}
+
+/** True only when the shared review rule allows social_media for this advertiser. */
+export function cjReviewAllowsSocial(
+  review: CjProgramReviewSnapshot | null | undefined,
+  advertiserId: string
+) {
+  if (!String(advertiserId || "").trim()) return false;
+  return evaluateCjSocialReview(
+    review,
+    advertiserId,
+    CJ_ELIGIBILITY_METHOD_SOCIAL_MEDIA
+  ).ok;
 }

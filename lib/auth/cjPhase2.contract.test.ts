@@ -441,9 +441,12 @@ describe("CJ phase 2 official click foundation", () => {
     assert.match(bridge, /=== "cj" \? null : safeUrl\(offer\.product_url\)/);
 
     const go = read("app/go/offer/[savedId]/route.ts");
+    const goClick = read("lib/affiliate/cj/goClick.ts");
     const cjGo = go.slice(go.indexOf('=== "cj"'), go.indexOf("return normalizeUrl"));
-    assert.match(cjGo, /assertStoredCjTrackingUrl/);
+    assert.match(cjGo, /resolveCjGoClick/);
+    assert.match(goClick, /assertStoredCjTrackingUrl/);
     assert.doesNotMatch(cjGo, /product_url/);
+    assert.doesNotMatch(goClick, /product_url/);
   });
 
   it("35-38. Posts may request Instagram, and Reels cannot infer a CJ property", async () => {
@@ -729,7 +732,9 @@ describe("CJ phase 2 official click foundation", () => {
     const go = read("app/go/offer/[savedId]/route.ts");
     const cjGo = go.slice(go.indexOf('=== "cj"'), go.indexOf("return normalizeUrl"));
     assert.match(cjGo, /property_type,cj_social_platform/);
-    assert.match(cjGo, /selectCjGoInstagramProperty/);
+    assert.match(cjGo, /resolveCjGoClick/);
+    assert.match(cjGo, /cj_program_reviews/);
+    assert.doesNotMatch(cjGo, /selectCjGoInstagramProperty/);
     assert.doesNotMatch(cjGo, /product_url/);
     assert.doesNotMatch(cjGo, /getCJProductClickUrl|getCJAdvertiserContract|buildCJLink/);
     assert.match(

@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { applyCjSearchGate } from "@/lib/affiliate/cj/applyCjSearchGate";
+import { prepareCjCustomerSearchItems } from "@/lib/affiliate/cj/searchGate";
 import {
   customerFacingProductCommission,
   getBetaAutomatedSources,
@@ -1508,6 +1509,7 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "20"), 1), 50);
 
     const sourcesParam = (searchParams.get("sources") ?? "").trim();
+    const rawSearchContext = searchParams.get("context");
     const geoParam = (searchParams.get("geo") ?? "").trim();
     void searchParams.get("approved");
     const approvedOnly = true;
@@ -1629,7 +1631,10 @@ export async function GET(req: NextRequest) {
 
     const session = await getServerSession(authOptions as any);
     const searchUserId = String((session as any)?.user?.id || "");
-    const visibleResults = await applyCjSearchGate(searchUserId, results);
+    const preparedCjSearch = prepareCjCustomerSearchItems(results, rawSearchContext);
+    const visibleResults = preparedCjSearch.applyReviewGate
+      ? await applyCjSearchGate(searchUserId, preparedCjSearch.items)
+      : preparedCjSearch.items;
 
     return NextResponse.json({
       success: true,
