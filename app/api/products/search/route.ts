@@ -5,8 +5,11 @@ import { authOptions } from "@/lib/authOptions";
 import { applyCjSearchGate } from "@/lib/affiliate/cj/applyCjSearchGate";
 import { prepareCjCustomerSearchItems } from "@/lib/affiliate/cj/searchGate";
 import {
+  controlledCjExternalIds,
+  customerAutomatedSources,
   customerFacingProductCommission,
   getBetaAutomatedSources,
+  retainCustomerSearchItem,
 } from "@/lib/affiliate/productSourceReadiness";
 
 export const runtime = "nodejs";
@@ -1427,6 +1430,7 @@ function shouldUseStrictOnly(intent: SearchIntent) {
 
 async function fetchRows(params: {
   supabase: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
   tokens: string[];
   sources: string[] | null;
   geos: string[] | null;
@@ -1466,16 +1470,29 @@ async function fetchRows(params: {
     .eq("is_approved", true);
 
   const betaSources = getBetaAutomatedSources();
+  const sessionSources = customerAutomatedSources(params.userId, betaSources);
   const requested = (params.sources || [])
     .map((source) => String(source || "").trim().toLowerCase())
     .filter(Boolean);
   const allowedSources = requested.length
-    ? requested.filter((source) => betaSources.includes(source))
-    : betaSources;
+    ? requested.filter((source) => sessionSources.includes(source))
+    : sessionSources;
 
   if (allowedSources.length === 0) return [];
 
   qb = qb.in("source", allowedSources);
+
+  const pinnedExternalIds = controlledCjExternalIds(params.userId);
+  if (allowedSources.includes("cj")) {
+    if (pinnedExternalIds.length === 0) return [];
+    if (allowedSources.length === 1) {
+      qb = qb.in("external_id", pinnedExternalIds);
+    } else {
+      qb = qb.or(
+        `source.neq.cj,external_id.in.(${pinnedExternalIds.join(",")})`
+      );
+    }
+  }
 
   if (params.geos && params.geos.length > 0) {
     qb = qb.in("geo_scope", params.geos);
@@ -1531,9 +1548,12 @@ export async function GET(req: NextRequest) {
     const tokens = tokenizeQuery(q);
     const intent = detectSearchIntent(q);
     const supabase = getSupabaseAdmin();
+    const session = await getServerSession(authOptions as any);
+    const searchUserId = String((session as any)?.user?.id || "");
 
     const filteredRows = await fetchRows({
       supabase,
+      userId: searchUserId,
       tokens,
       sources,
       geos,
@@ -1547,6 +1567,7 @@ export async function GET(req: NextRequest) {
     if (filteredRows.length < Math.max(12, limit * 3)) {
       const broadRows = await fetchRows({
         supabase,
+        userId: searchUserId,
         tokens,
         sources,
         geos,
@@ -1627,10 +1648,10 @@ export async function GET(req: NextRequest) {
         epc: String(normalized.source || "").toLowerCase() === "cj" ? null : normalized.epc,
         commission: customerFacingProductCommission(),
       };
-    });
+    }).filter((item) =>
+      retainCustomerSearchItem(searchUserId, item.source, item.external_id)
+    );
 
-    const session = await getServerSession(authOptions as any);
-    const searchUserId = String((session as any)?.user?.id || "");
     const preparedCjSearch = prepareCjCustomerSearchItems(results, rawSearchContext);
     const visibleResults = preparedCjSearch.applyReviewGate
       ? await applyCjSearchGate(searchUserId, preparedCjSearch.items)

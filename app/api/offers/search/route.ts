@@ -5,8 +5,11 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { applyCjSearchGate } from "@/lib/affiliate/cj/applyCjSearchGate";
 import { prepareCjCustomerSearchItems } from "@/lib/affiliate/cj/searchGate";
 import {
+  controlledCjExternalIds,
+  customerAutomatedSources,
   customerFacingProductCommission,
   getBetaAutomatedSources,
+  retainCustomerSearchItem,
 } from "@/lib/affiliate/productSourceReadiness";
 
 export const runtime = "nodejs";
@@ -73,12 +76,13 @@ export async function GET(req: Request) {
       url.searchParams.get("source") || url.searchParams.get("sources")
     );
     const betaSources = getBetaAutomatedSources();
+    const sessionSources = customerAutomatedSources(userId, betaSources);
     const source =
-      requestedSource && betaSources.includes(requestedSource.toLowerCase())
+      requestedSource && sessionSources.includes(requestedSource.toLowerCase())
         ? requestedSource.toLowerCase()
         : null;
 
-    if (betaSources.length === 0) {
+    if (sessionSources.length === 0) {
       return jsonNoStore({
         ok: true,
         items: [],
@@ -154,8 +158,27 @@ export async function GET(req: Request) {
       )
       .eq("is_active", true)
       .eq("is_approved", true)
-      .in("source", source ? [source] : betaSources)
+      .in("source", source ? [source] : sessionSources)
       .limit(limit);
+
+    const queriedSources = source ? [source] : sessionSources;
+    const pinnedExternalIds = controlledCjExternalIds(userId);
+    if (queriedSources.includes("cj")) {
+      if (pinnedExternalIds.length === 0) {
+        return jsonNoStore({
+          ok: true,
+          items: [],
+          meta: { q, limit, context, reason: "source_not_beta_enabled" },
+        });
+      }
+      if (queriedSources.length === 1) {
+        qb = qb.in("external_id", pinnedExternalIds);
+      } else {
+        qb = qb.or(
+          `source.neq.cj,external_id.in.(${pinnedExternalIds.join(",")})`
+        );
+      }
+    }
 
     if (geo_scope) qb = qb.eq("geo_scope", geo_scope);
     if (category) qb = qb.ilike("category", `%${category}%`);
@@ -206,7 +229,9 @@ export async function GET(req: Request) {
         price_band: r.price_band ?? null,
         language: r.language ?? null,
       };
-    });
+    }).filter((item: { source?: string | null; external_id?: string | null }) =>
+      retainCustomerSearchItem(userId, item.source, item.external_id)
+    );
 
     const preparedCjSearch = prepareCjCustomerSearchItems(items, contextParam);
     const visibleItems = preparedCjSearch.applyReviewGate
