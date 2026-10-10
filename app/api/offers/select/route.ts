@@ -11,6 +11,7 @@ import {
   customerFacingProductCommission,
   isBetaAutomatedSource,
   isBetaManualSource,
+  isControlledCjCatalogItem,
   isHttpUrl,
   warriorPlusTrackingMatches,
 } from "@/lib/affiliate/productSourceReadiness";
@@ -177,11 +178,15 @@ export async function POST(req: Request) {
       externalId = productUrl;
       title = safeString(payload.title) || "Your affiliate link";
     } else if (!isBetaAutomatedSource(source)) {
-      return jsonNoStore(
-        { ok: false, error: "SOURCE_NOT_BETA_ENABLED" },
-        400
-      );
-    } else {
+      if (!isControlledCjCatalogItem(userId, source, resolveExternalId(payload))) {
+        return jsonNoStore(
+          { ok: false, error: "SOURCE_NOT_BETA_ENABLED" },
+          400
+        );
+      }
+    }
+
+    if (!manual) {
       externalId = resolveExternalId(payload);
       if (!externalId) {
         return jsonNoStore(
