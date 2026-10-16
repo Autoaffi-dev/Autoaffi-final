@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import {
   BETA_TRACKING_READY_AUTOMATED_SOURCES,
@@ -184,5 +186,165 @@ describe("WarriorPlus connector stage 1 passive adapter", () => {
         return true;
       }
     );
+  });
+});
+
+const routeRoot = path.resolve(import.meta.dirname, "../../..");
+
+function readRoute(rel: string) {
+  return fs.readFileSync(path.join(routeRoot, rel), "utf8");
+}
+
+function routeBuilderMeta(subid: string, context: string, campaign: string | null) {
+  return {
+    mode: "tokenized",
+    hop_sid: subid,
+    hop_tid: context || campaign || "affiliate_offers",
+  };
+}
+
+describe("WarriorPlus stage 2 tracking parity", () => {
+  it("matches the direct builder for posts and affiliate_offers", async () => {
+    for (const promotionContext of ["posts", "affiliate_offers"]) {
+      const routeSubId = buildStableSubId(userId, "warriorplus", externalId);
+      const direct = await buildWarriorPlusLink({
+        source: "warriorplus",
+        productUrl,
+        externalId,
+        userId,
+        subid: routeSubId,
+        context: promotionContext,
+      });
+      const result = await warriorPlusAdapter.createTrackingLink(
+        request({ promotionContext })
+      );
+
+      assert.equal(result.subid, routeSubId);
+      assert.equal(result.affiliateLink, direct.affiliateLink);
+      assert.equal(result.subid, direct.subid);
+      assert.equal(params(result.affiliateLink).get("hop_sid"), routeSubId);
+      assert.equal(params(result.affiliateLink).get("sid"), routeSubId);
+      assert.equal(params(result.affiliateLink).get("hop_tid"), promotionContext);
+      assert.equal(warriorPlusTrackingMatches(result.affiliateLink, routeSubId), true);
+      assert.deepEqual(
+        routeBuilderMeta(routeSubId, promotionContext, "campaign-present"),
+        direct.meta
+      );
+    }
+  });
+
+  it("keeps a matching hop_sid and sid and the stable SubID", async () => {
+    const routeSubId = buildStableSubId(userId, "warriorplus", externalId);
+    const tagged = `https://warriorplus.com/o2/offer-77?hop_sid=${routeSubId}&sid=${routeSubId}&ref=keep`;
+    const result = await createWarriorPlusTrackingLink(
+      request({ productUrl: tagged, promotionContext: "posts" })
+    );
+
+    assert.equal(result.subid, routeSubId);
+    assert.equal(params(result.affiliateLink).get("hop_sid"), routeSubId);
+    assert.equal(params(result.affiliateLink).get("sid"), routeSubId);
+    assert.equal(params(result.affiliateLink).get("ref"), "keep");
+    assert.equal(warriorPlusTrackingMatches(result.affiliateLink, routeSubId), true);
+  });
+
+  it("leaves conflicting hop_sid and sid in place, and the matcher rejects them", async () => {
+    const routeSubId = buildStableSubId(userId, "warriorplus", externalId);
+    const conflictingSid = await createWarriorPlusTrackingLink(
+      request({
+        productUrl: "https://warriorplus.com/o2/offer-77?hop_sid=other-sid&ref=keep",
+      })
+    );
+    const conflictingSub = await createWarriorPlusTrackingLink(
+      request({
+        productUrl: "https://warriorplus.com/o2/offer-77?sid=other-sid&color=blue",
+      })
+    );
+
+    assert.equal(conflictingSid.subid, routeSubId);
+    assert.equal(params(conflictingSid.affiliateLink).get("hop_sid"), "other-sid");
+    assert.equal(params(conflictingSid.affiliateLink).get("sid"), routeSubId);
+    assert.equal(
+      warriorPlusTrackingMatches(conflictingSid.affiliateLink, routeSubId),
+      false
+    );
+    assert.equal(params(conflictingSub.affiliateLink).get("sid"), "other-sid");
+    assert.equal(params(conflictingSub.affiliateLink).get("hop_sid"), routeSubId);
+    assert.equal(
+      warriorPlusTrackingMatches(conflictingSub.affiliateLink, routeSubId),
+      false
+    );
+  });
+
+  it("keeps builder metadata on the inputs when hop_tid is already present", async () => {
+    const tagged = "https://warriorplus.com/o2/offer-77?hop_tid=vendor-camp&vendor=1";
+    const routeSubId = buildStableSubId(userId, "warriorplus", externalId);
+
+    for (const promotionContext of ["posts", "affiliate_offers"]) {
+      const direct = await buildWarriorPlusLink({
+        source: "warriorplus",
+        productUrl: tagged,
+        externalId,
+        userId,
+        subid: routeSubId,
+        context: promotionContext,
+      });
+      const result = await createWarriorPlusTrackingLink(
+        request({ productUrl: tagged, promotionContext })
+      );
+
+      assert.equal(result.affiliateLink, direct.affiliateLink);
+      assert.equal(result.subid, direct.subid);
+      assert.equal(params(result.affiliateLink).get("hop_tid"), "vendor-camp");
+      assert.equal(params(result.affiliateLink).get("vendor"), "1");
+      assert.equal(direct.meta?.hop_tid, promotionContext);
+      assert.equal(direct.meta?.hop_sid, routeSubId);
+      assert.deepEqual(
+        routeBuilderMeta(routeSubId, promotionContext, "campaign-present"),
+        direct.meta
+      );
+    }
+  });
+});
+
+describe("WarriorPlus save-route source contract", () => {
+  it("records the SubID guard and call order without executing HTTP", () => {
+    const select = readRoute("app/api/offers/select/route.ts");
+    const stableSubId = select.indexOf(
+      "const subid = buildStableSubId(userId, source, externalId)"
+    );
+    const cjBranch = select.indexOf('if (source === "cj")');
+    const warriorBranch = select.indexOf('if (source === "warriorplus")');
+    const warriorCall = select.indexOf("await warriorPlusAdapter.createTrackingLink");
+    const warriorMismatch = select.indexOf("WARRIORPLUS_SID_MISMATCH");
+    const matcher = select.indexOf(
+      "warriorPlusTrackingMatches(finalAffiliateLink, finalSubId)"
+    );
+    const unavailable = select.indexOf("WARRIORPLUS_TRACKING_UNAVAILABLE");
+    const upsert = select.indexOf('.from("user_offers")');
+    const warriorBlock = select.slice(warriorBranch, select.indexOf("const built =", warriorBranch));
+
+    assert.ok(stableSubId >= 0 && stableSubId < cjBranch);
+    assert.ok(cjBranch < warriorBranch);
+    assert.match(select.slice(cjBranch, warriorBranch), /await cjAdapter\.createTrackingLink/);
+    assert.match(select.slice(cjBranch, warriorBranch), /CJ_SID_MISMATCH/);
+    assert.match(warriorBlock, /resolved\.subid !== subid/);
+    assert.match(warriorBlock, /WARRIORPLUS_SID_MISMATCH/);
+    assert.doesNotMatch(warriorBlock, /catch/);
+    assert.ok(
+      warriorBranch < warriorCall &&
+        warriorCall < warriorMismatch &&
+        warriorMismatch < matcher &&
+        matcher < unavailable &&
+        unavailable < upsert
+    );
+    assert.match(select, /source === "cj" \|\| source === "warriorplus"/);
+    assert.match(select, /buildAffiliateLink\(\{/);
+    assert.match(select, /BYO_URL_MUST_BE_HTTP/);
+    assert.match(select, /BYO_URL_REWRITTEN/);
+    assert.match(select, /return `\/go\/offer\/\$\{id\}`/);
+    assert.match(select, /mode: "tokenized"/);
+    assert.match(select, /hop_sid: subid/);
+    assert.match(select, /hop_tid: context \|\| campaign \|\| "affiliate_offers"/);
+    assert.doesNotMatch(select, /buildWarriorPlusLink/);
   });
 });

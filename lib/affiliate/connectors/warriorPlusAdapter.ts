@@ -7,11 +7,15 @@ import { buildStableSubId } from "../stableOfferSubId";
 import { buildWarriorPlusLink } from "../sources/warriorplus";
 
 /**
- * Passive WarriorPlus adapter. Stage 1 has no production caller.
+ * WarriorPlus adapter. POST /api/offers/select calls this for
+ * source === "warriorplus".
  *
  * createTrackingLink mints the stable SubID and delegates the URL edit to
  * buildWarriorPlusLink. It does not authenticate, read product_index, or
- * apply save-route validation. Those stay in /api/offers/select.
+ * apply save-route validation. The route still owns authentication, the
+ * product_index re-read, active/approved checks, its own buildStableSubId,
+ * SubID equality, warriorPlusTrackingMatches, HTTP validation, user_offers
+ * persistence, the customer /go URL, and builder_meta.
  *
  * The request has no caller-supplied SubID. promotionContext is the
  * production `context` value: body.from, or "affiliate_offers" when from

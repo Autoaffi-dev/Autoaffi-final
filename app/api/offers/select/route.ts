@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildAffiliateLink } from "@/lib/affiliate/buildAffiliateLink";
 import { toCustomerSavedOffer } from "@/lib/affiliate/cj/customerOffer";
 import { cjAdapter } from "@/lib/affiliate/connectors/cjAdapter";
+import { warriorPlusAdapter } from "@/lib/affiliate/connectors/warriorPlusAdapter";
 import { CjOfferDestinationError } from "@/lib/affiliate/cj/resolveCjOfferDestination";
 import { CjPropertyMappingError } from "@/lib/affiliate/cj/propertyMapping";
 import {
@@ -266,6 +267,7 @@ export async function POST(req: Request) {
 
     const subid = buildStableSubId(userId, source, externalId);
     let cjAffiliateLink = "";
+    let warriorPlusAffiliateLink = "";
 
     if (source === "cj") {
       void payload.merchant_id;
@@ -300,8 +302,26 @@ export async function POST(req: Request) {
       }
     }
 
+    if (source === "warriorplus") {
+      const resolved = await warriorPlusAdapter.createTrackingLink({
+        userId,
+        externalId,
+        indexRow: {
+          merchant_id: merchantId,
+          product_url: productUrl,
+          is_active: true,
+          is_approved: true,
+        },
+        promotionContext: context,
+      });
+      if (resolved.subid !== subid) {
+        return jsonNoStore({ ok: false, error: "WARRIORPLUS_SID_MISMATCH" }, 400);
+      }
+      warriorPlusAffiliateLink = resolved.affiliateLink;
+    }
+
     const built =
-      source === "cj"
+      source === "cj" || source === "warriorplus"
         ? null
         : await buildAffiliateLink({
             source,
@@ -316,9 +336,16 @@ export async function POST(req: Request) {
           });
 
     const finalAffiliateLink =
-      source === "cj" ? cjAffiliateLink : safeString(built?.affiliateLink);
+      source === "cj"
+        ? cjAffiliateLink
+        : source === "warriorplus"
+          ? warriorPlusAffiliateLink
+          : safeString(built?.affiliateLink);
     const finalProductUrl = manual ? productUrl : safeString(built?.productUrl) || productUrl;
-    const finalSubId = source === "cj" ? subid : safeString(built?.subid) || subid;
+    const finalSubId =
+      source === "cj" || source === "warriorplus"
+        ? subid
+        : safeString(built?.subid) || subid;
 
     if (manual && finalAffiliateLink !== productUrl) {
       return jsonNoStore({ ok: false, error: "BYO_URL_REWRITTEN" }, 400);
@@ -424,16 +451,29 @@ export async function POST(req: Request) {
               tracking_label: "CJ · Instagram",
               autoaffi_display_link: displayLink || null,
             }
-          : {
-              ...(built?.meta || {}),
-              source,
-              externalId,
-              context,
-              campaign,
-              network_affiliate_link: finalAffiliateLink,
-              autoaffi_display_link: displayLink || null,
-              subid: saved?.subid || finalSubId,
-            },
+          : source === "warriorplus"
+            ? {
+                mode: "tokenized",
+                hop_sid: subid,
+                hop_tid: context || campaign || "affiliate_offers",
+                source,
+                externalId,
+                context,
+                campaign,
+                network_affiliate_link: finalAffiliateLink,
+                autoaffi_display_link: displayLink || null,
+                subid: saved?.subid || finalSubId,
+              }
+            : {
+                ...(built?.meta || {}),
+                source,
+                externalId,
+                context,
+                campaign,
+                network_affiliate_link: finalAffiliateLink,
+                autoaffi_display_link: displayLink || null,
+                subid: saved?.subid || finalSubId,
+              },
     });
   } catch (e: any) {
     return jsonNoStore(
