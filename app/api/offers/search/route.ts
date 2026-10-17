@@ -111,7 +111,9 @@ export async function GET(req: Request) {
     const category = normalizeOptional(url.searchParams.get("category"));
     const niche = normalizeOptional(url.searchParams.get("niche"));
 
-    if (!q || q.length < 2) {
+    const warriorPlusBrowse = source === "warriorplus" && (!q || q.length < 2);
+
+    if ((!q || q.length < 2) && !warriorPlusBrowse) {
       await supabaseAdmin.from("user_search_events").insert({
         user_id: userId,
         context,
@@ -183,17 +185,19 @@ export async function GET(req: Request) {
     if (geo_scope) qb = qb.eq("geo_scope", geo_scope);
     if (category) qb = qb.ilike("category", `%${category}%`);
 
-    const like = `%${q}%`;
+    if (!warriorPlusBrowse) {
+      const like = `%${q}%`;
 
-    qb = qb.or(
-      [
-        `title.ilike.${like}`,
-        `description.ilike.${like}`,
-        `category.ilike.${like}`,
-        `merchant_name.ilike.${like}`,
-        `product_url.ilike.${like}`,
-      ].join(",")
-    );
+      qb = qb.or(
+        [
+          `title.ilike.${like}`,
+          `description.ilike.${like}`,
+          `category.ilike.${like}`,
+          `merchant_name.ilike.${like}`,
+          `product_url.ilike.${like}`,
+        ].join(",")
+      );
+    }
 
     qb = qb.order("score", { ascending: false, nullsFirst: false });
 

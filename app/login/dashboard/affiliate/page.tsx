@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { cjCustomerMessage } from "@/lib/affiliate/cj/customerErrors";
 
 type ProductSource =
@@ -143,7 +143,7 @@ function safeManualTitle(input: string, manualUrl: string) {
 }
 
 export default function AffiliatePage() {
-  const [keyword, setKeyword] = useState("phone case");
+  const [keyword, setKeyword] = useState("");
   const [source, setSource] = useState<ProductSource>("all");
   const [category, setCategory] = useState<CategoryKey>("all");
   const [recommendedMode, setRecommendedMode] =
@@ -162,6 +162,7 @@ export default function AffiliatePage() {
   const [manualUrl, setManualUrl] = useState("");
   const [manualSaving, setManualSaving] = useState(false);
   const [manualMsg, setManualMsg] = useState<string | null>(null);
+  const searchGen = useRef(0);
 
   const globalNeedle = useMemo(() => normalize(globalSearch), [globalSearch]);
 
@@ -248,14 +249,17 @@ export default function AffiliatePage() {
     fetchSavedOffers();
   }, []);
 
-  async function runSearch() {
+  async function runSearch(overrides?: { source?: ProductSource }) {
+    const gen = ++searchGen.current;
+    const sourceValue = overrides?.source ?? source;
+    const keywordValue = keyword.trim();
     try {
       setSearching(true);
       setSearchError(null);
 
       const qs = new URLSearchParams();
-      qs.set("keyword", keyword);
-      if (source !== "all") qs.set("source", source);
+      if (keywordValue.length >= 2) qs.set("keyword", keywordValue);
+      if (sourceValue !== "all") qs.set("source", sourceValue);
       if (category !== "all") qs.set("category", category);
       qs.set("context", "affiliate_offers");
       qs.set("limit", "20");
@@ -265,11 +269,12 @@ export default function AffiliatePage() {
       });
 
       const json = await res.json();
+      if (gen !== searchGen.current) return;
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Search failed");
       }
 
-      if (source === "cj" && json?.meta?.reason === "source_not_beta_enabled") {
+      if (sourceValue === "cj" && json?.meta?.reason === "source_not_beta_enabled") {
         setResults([]);
         setSearchError("CJ offers are not available yet.");
         return;
@@ -284,10 +289,11 @@ export default function AffiliatePage() {
         );
       }
     } catch (e: any) {
+      if (gen !== searchGen.current) return;
       setResults([]);
       setSearchError(e?.message || "Search failed. Try again.");
     } finally {
-      setSearching(false);
+      if (gen === searchGen.current) setSearching(false);
     }
   }
 
@@ -537,7 +543,18 @@ export default function AffiliatePage() {
             <Field label="Source">
               <select
                 value={source}
-                onChange={(e) => setSource(e.target.value as ProductSource)}
+                onChange={(e) => {
+                  const next = e.target.value as ProductSource;
+                  setSource(next);
+                  searchGen.current += 1;
+                  setResults([]);
+                  setSearchError(null);
+                  if (next === "warriorplus") {
+                    void runSearch({ source: next });
+                  } else {
+                    setSearching(false);
+                  }
+                }}
                 className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-[13px] text-slate-50 focus:outline-none focus:ring-2 focus:ring-yellow-400/60 focus:border-yellow-400/60"
               >
                 {SOURCES.map((s) => (
@@ -592,7 +609,7 @@ export default function AffiliatePage() {
             <div className="flex items-end">
               <button
                 type="button"
-                onClick={runSearch}
+                onClick={() => void runSearch()}
                 disabled={searching}
                 className="w-full rounded-full bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 px-5 py-2 text-[12px] font-semibold text-slate-900 shadow-md hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed transition"
               >

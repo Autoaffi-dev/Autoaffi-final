@@ -446,6 +446,11 @@ export async function runProductIndexer(args?: {
   limit?: number;
   cjAdvertiserIds?: string[];
   cjProductIds?: string[];
+  /**
+   * Off by default. The WarriorPlus cron passes true so this run does not
+   * execute the global winner-policy update.
+   */
+  skipWinnerPolicy?: boolean;
 }): Promise<ProductIndexerReport> {
   const started = Date.now();
   const triggeredAt = toIsoNow();
@@ -546,12 +551,14 @@ export async function runProductIndexer(args?: {
     }
   }
 
-  try {
-    const rpcRes = await applyWinnerPolicyIfEnabled();
-    (report as any).winnerPolicy = rpcRes;
-  } catch (e: any) {
-    report.ok = false;
-    (report as any).winnerPolicyError = e?.message ?? String(e);
+  if (!args?.skipWinnerPolicy) {
+    try {
+      const rpcRes = await applyWinnerPolicyIfEnabled();
+      (report as any).winnerPolicy = rpcRes;
+    } catch (e: any) {
+      report.ok = false;
+      (report as any).winnerPolicyError = e?.message ?? String(e);
+    }
   }
 
   report.tookMs = Date.now() - started;

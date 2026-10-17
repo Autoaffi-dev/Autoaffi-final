@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/autoaffi",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/warriorplus-index",
+      "schedule": "0 2 * * *"
     }
   ]
 }
