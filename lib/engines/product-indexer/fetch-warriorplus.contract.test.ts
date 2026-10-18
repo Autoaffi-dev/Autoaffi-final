@@ -601,7 +601,7 @@ describe("WarriorPlus index cron", () => {
   });
 });
 
-describe("WarriorPlus browse source text", () => {
+describe("Affiliate catalog browse source text", () => {
   it("checks search and UI source text and does not execute those HTTP paths", () => {
     const offers = read("app/api/offers/search/route.ts");
     const page = read("app/login/dashboard/affiliate/page.tsx");
@@ -611,21 +611,26 @@ describe("WarriorPlus browse source text", () => {
     const vercel = read("vercel.json");
 
     const unauthorized = offers.indexOf('error: "Unauthorized"');
-    const browse = offers.indexOf("const warriorPlusBrowse");
+    const noSources = offers.indexOf('reason: "no_beta_automated_sources"');
+    const disabled = offers.indexOf('reason: "source_not_beta_enabled"');
+    const browse = offers.indexOf("const affiliateCatalogBrowse");
     const active = offers.indexOf('.eq("is_active", true)');
     const approved = offers.indexOf('.eq("is_approved", true)');
-    assert.ok(unauthorized >= 0 && unauthorized < browse);
+    assert.ok(unauthorized >= 0 && unauthorized < noSources);
+    assert.ok(noSources < disabled && disabled < browse);
     assert.ok(browse < active && active < approved);
-    assert.match(offers, /source === "warriorplus" && \(!q \|\| q\.length < 2\)/);
-    assert.match(offers, /if \(\(!q \|\| q\.length < 2\) && !warriorPlusBrowse\)/);
+    assert.match(
+      offers,
+      /context === "affiliate_offers" && \(!q \|\| q\.length < 2\)/
+    );
+    assert.match(offers, /if \(\(!q \|\| q\.length < 2\) && !affiliateCatalogBrowse\)/);
     assert.match(offers, /reason: "missing_query"/);
-    assert.match(offers, /reason: "source_not_beta_enabled"/);
-    assert.match(offers, /if \(!warriorPlusBrowse\)/);
+    assert.match(offers, /if \(!affiliateCatalogBrowse\)/);
+    assert.match(offers, /\.in\("source", source \? \[source\] : sessionSources\)/);
 
     assert.match(page, /const \[keyword, setKeyword\] = useState\(""\)/);
     assert.match(page, /const searchGen = useRef\(0\)/);
     assert.match(page, /searchGen\.current \+= 1/);
-    assert.match(page, /if \(next === "warriorplus"\)/);
     assert.match(page, /void runSearch\(\{ source: next \}\)/);
     const sourceChange = page.slice(
       page.indexOf("const next = e.target.value as ProductSource;"),
@@ -633,13 +638,18 @@ describe("WarriorPlus browse source text", () => {
     );
     const clearResults = sourceChange.indexOf("setResults([])");
     const clearError = sourceChange.indexOf("setSearchError(null)");
-    const warriorBranch = sourceChange.indexOf('if (next === "warriorplus")');
+    const searchCall = sourceChange.indexOf("void runSearch({ source: next })");
     assert.ok(sourceChange.indexOf("searchGen.current += 1") >= 0);
-    assert.ok(clearResults > 0 && clearError > 0);
-    assert.ok(clearResults < warriorBranch && clearError < warriorBranch);
-    assert.ok(warriorBranch < sourceChange.indexOf("void runSearch({ source: next })"));
-    assert.ok(sourceChange.indexOf("setSearching(false)") > warriorBranch);
+    assert.ok(clearResults > 0 && clearError > 0 && searchCall > 0);
+    assert.ok(clearResults < searchCall && clearError < searchCall);
+    assert.equal(sourceChange.includes('next === "warriorplus"'), false);
+    assert.equal(sourceChange.includes("setSearching(false)"), false);
     assert.equal(sourceChange.includes("setSavedOffers"), false);
+    assert.match(page, /reason === "source_not_beta_enabled"/);
+    assert.match(page, /reason === "no_beta_automated_sources"/);
+    assert.match(page, /CJ offers are not available yet/);
+    assert.match(page, /This source is not available yet/);
+    assert.match(page, /No sources are available yet/);
     assert.match(
       page,
       /const filteredResults = useMemo\(\(\) => \{\s*if \(!globalNeedle\) return results;/

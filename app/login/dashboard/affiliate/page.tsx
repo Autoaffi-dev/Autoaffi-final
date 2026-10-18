@@ -274,9 +274,16 @@ export default function AffiliatePage() {
         throw new Error(json?.error || "Search failed");
       }
 
-      if (sourceValue === "cj" && json?.meta?.reason === "source_not_beta_enabled") {
+      const reason = json?.meta?.reason;
+      if (reason === "source_not_beta_enabled" || reason === "no_beta_automated_sources") {
         setResults([]);
-        setSearchError("CJ offers are not available yet.");
+        if (reason === "no_beta_automated_sources") {
+          setSearchError("No sources are available yet.");
+        } else if (sourceValue === "cj") {
+          setSearchError("CJ offers are not available yet.");
+        } else {
+          setSearchError("This source is not available yet.");
+        }
         return;
       }
 
@@ -549,11 +556,7 @@ export default function AffiliatePage() {
                   searchGen.current += 1;
                   setResults([]);
                   setSearchError(null);
-                  if (next === "warriorplus") {
-                    void runSearch({ source: next });
-                  } else {
-                    setSearching(false);
-                  }
+                  void runSearch({ source: next });
                 }}
                 className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-[13px] text-slate-50 focus:outline-none focus:ring-2 focus:ring-yellow-400/60 focus:border-yellow-400/60"
               >

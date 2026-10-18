@@ -111,9 +111,10 @@ export async function GET(req: Request) {
     const category = normalizeOptional(url.searchParams.get("category"));
     const niche = normalizeOptional(url.searchParams.get("niche"));
 
-    const warriorPlusBrowse = source === "warriorplus" && (!q || q.length < 2);
+    const affiliateCatalogBrowse =
+      context === "affiliate_offers" && (!q || q.length < 2);
 
-    if ((!q || q.length < 2) && !warriorPlusBrowse) {
+    if ((!q || q.length < 2) && !affiliateCatalogBrowse) {
       await supabaseAdmin.from("user_search_events").insert({
         user_id: userId,
         context,
@@ -185,7 +186,7 @@ export async function GET(req: Request) {
     if (geo_scope) qb = qb.eq("geo_scope", geo_scope);
     if (category) qb = qb.ilike("category", `%${category}%`);
 
-    if (!warriorPlusBrowse) {
+    if (!affiliateCatalogBrowse) {
       const like = `%${q}%`;
 
       qb = qb.or(
