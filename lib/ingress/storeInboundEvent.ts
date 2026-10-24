@@ -4,6 +4,7 @@ import {
   type EventContentSnapshot,
   type InboundEventWrite,
   type SyllabyInboundStore,
+  type SyllabyOfferRef,
   type TestIdentityRef,
 } from "./syllabyPostback";
 
@@ -33,7 +34,7 @@ export function toInboundEventRow(event: InboundEventWrite): Record<string, unkn
     reward_amount_minor: event.rewardAmountMinor,
     currency_code: event.currencyCode,
     currency_source: event.currencySource,
-    is_test: true,
+    is_test: event.isTest,
     match_status: event.matchStatus,
     match_reason: event.matchReason,
     matched_owner_id: event.matchedOwnerId,
@@ -81,6 +82,8 @@ export function snapshotFromRow(row: Record<string, unknown>): EventContentSnaps
   };
 }
 
+const OFFER_PAGE_SIZE = 1000;
+
 const EVENT_COLUMNS = [
   "provider",
   "account_scope",
@@ -125,6 +128,29 @@ export function createInboundStore(db: InboundDb): SyllabyInboundStore {
         programScope: args.programScope,
         environment: args.environment,
       }));
+    },
+    async findSyllabyOffers(args): Promise<SyllabyOfferRef[]> {
+      const collected: SyllabyOfferRef[] = [];
+      for (let offset = 0; ; offset += OFFER_PAGE_SIZE) {
+        const { data, error } = await db
+          .from("user_recurring_offers")
+          .select("user_id, tracking_code, platform, active")
+          .eq("platform", args.platform)
+          .eq("tracking_code", args.trackingCode)
+          .order("user_id", { ascending: true })
+          .range(offset, offset + OFFER_PAGE_SIZE - 1);
+        if (error) throw new Error("OFFER_LOOKUP_FAILED");
+        const batch = data ?? [];
+        for (const row of batch) {
+          collected.push({
+            userId: row.user_id == null ? "" : String(row.user_id),
+            trackingCode: row.tracking_code == null ? "" : String(row.tracking_code),
+            platform: row.platform == null ? "" : String(row.platform),
+            active: row.active === true,
+          });
+        }
+        if (batch.length < OFFER_PAGE_SIZE) return collected;
+      }
     },
     async insertEvent(event) {
       const row = toInboundEventRow(event);

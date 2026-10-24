@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
+  acceptSyllabyProductionPostback,
   acceptSyllabyTestPostback,
   decimalToMinor,
   eventContentSnapshot,
@@ -12,15 +13,19 @@ import {
   sameEventContent,
   syllabyTestSecretMatches,
   SYLLABY_CURRENCY_SOURCE,
+  SYLLABY_PRODUCTION_ENVIRONMENT,
   SYLLABY_TEST_ACCOUNT,
   SYLLABY_TEST_CURRENCY,
   SYLLABY_TEST_ENVIRONMENT,
+  SYLLABY_TEST_PLATFORM,
   SYLLABY_TEST_PROGRAM,
   SYLLABY_TEST_PROVIDER,
   type AcceptSyllabyResult,
   type IdentityLookup,
   type InboundEventWrite,
+  type OfferLookup,
   type SyllabyInboundStore,
+  type SyllabyOfferRef,
   type TestIdentityRef,
 } from "./syllabyPostback.ts";
 import {
@@ -33,6 +38,7 @@ import {
 
 const root = path.resolve(import.meta.dirname, "../..");
 const owner = "00000000-0000-4000-8000-000000000001";
+const otherOwner = "00000000-0000-4000-8000-000000000002";
 const identityId = "00000000-0000-4000-8000-000000000010";
 const knownCode = "aa12bc34";
 
@@ -86,6 +92,9 @@ function memoryStore(identities: TestIdentityRef[]): SyllabyInboundStore & {
           row.programScope === args.programScope &&
           row.environment === args.environment
       );
+    },
+    async findSyllabyOffers() {
+      throw new Error("TEST_PATH_READ_OFFERS");
     },
     async insertEvent(event) {
       const existing = rows.find(
@@ -587,7 +596,8 @@ describe("Syllaby ingress boundaries", () => {
       parser.split("\n").find((line) => line.startsWith("const DECIMAL_PATTERN")),
       "const DECIMAL_PATTERN = /^-?\\d+(\\.\\d{1,2})?$/;"
     );
-    assert.doesNotMatch(combined, /user_recurring_offers|user_offers|payouts/);
+    assert.doesNotMatch(route, /user_recurring_offers|SYLLABY_POSTBACK_PRODUCTION_SECRET/);
+    assert.doesNotMatch(combined, /user_offers|payouts/);
     assert.doesNotMatch(combined, /\.update\(|\.delete\(/);
     assert.match(store, /\.eq\("account_scope"/);
     assert.match(store, /\.eq\("environment"/);
@@ -633,9 +643,500 @@ describe("Syllaby ingress boundaries", () => {
     assert.match(sql, /where external_event_id is not null/);
   });
 
+  it("the production constraint migration keeps nulls out of the wrong environment", () => {
+    const sql = fs.readFileSync(
+      path.join(root, "supabase/migrations/20261023_syllaby_production_match_constraint.sql"),
+      "utf8"
+    );
+    assert.match(sql, /\nbegin;\n/);
+    assert.match(sql, /\ncommit;\n?$/);
+    assert.match(sql, /drop constraint affiliate_inbound_events_owner_check/);
+    assert.match(sql, /\) is true\)/);
+    assert.match(sql, /environment = 'production'/);
+    assert.match(sql, /is_test = false/);
+    assert.match(sql, /matched_identity_id is null/);
+    assert.match(sql, /environment = 'test'/);
+    assert.match(sql, /is_test = true/);
+    assert.match(sql, /matched_identity_id is not null/);
+    assert.match(sql, /matched_owner_id is null/);
+    assert.doesNotMatch(sql, /grant |revoke |row level security|insert into/i);
+  });
+
   it("the payout route stays disabled", () => {
     const payouts = fs.readFileSync(path.join(root, "app/api/dashboard/payouts/route.ts"), "utf8");
     assert.match(payouts, /PAYOUTS_DISABLED/);
     assert.match(payouts, /status: 503/);
+  });
+});
+
+function offer(userId: string, active: boolean, trackingCode = knownCode, platform = SYLLABY_TEST_PLATFORM): SyllabyOfferRef {
+  return { userId, trackingCode, platform, active };
+}
+
+function productionStore(offers: SyllabyOfferRef[]): SyllabyInboundStore & {
+  rows: InboundEventWrite[];
+  offerLookups: OfferLookup[];
+  identityLookups: IdentityLookup[];
+} {
+  const rows: InboundEventWrite[] = [];
+  const offerLookups: OfferLookup[] = [];
+  const identityLookups: IdentityLookup[] = [];
+  return {
+    rows,
+    offerLookups,
+    identityLookups,
+    async findTestIdentities(args) {
+      identityLookups.push(args);
+      return [];
+    },
+    async findSyllabyOffers(args) {
+      offerLookups.push(args);
+      return offers.filter(
+        (row) => row.platform === args.platform && row.trackingCode === args.trackingCode
+      );
+    },
+    async insertEvent(event) {
+      const existing = rows.find(
+        (row) =>
+          event.eventId != null &&
+          row.eventId === event.eventId &&
+          row.provider === event.provider &&
+          row.accountScope === event.accountScope &&
+          row.programScope === event.programScope &&
+          row.environment === event.environment
+      );
+      if (!existing) {
+        rows.push(event);
+        return { inserted: true, conflict: false };
+      }
+      const same = sameEventContent(eventContentSnapshot(existing), eventContentSnapshot(event));
+      return { inserted: false, conflict: !same };
+    },
+  };
+}
+
+type OfferQueryOp =
+  | { method: "select"; columns: string }
+  | { method: "eq"; column: string; value: unknown }
+  | { method: "order"; column: string; value: unknown }
+  | { method: "range"; start: number; end: number };
+
+function recordingOfferQuery(
+  ops: OfferQueryOp[],
+  onRange: (
+    start: number,
+    end: number
+  ) => { data: Record<string, unknown>[] | null; error: { code?: string } | null }
+) {
+  let pending: { data: Record<string, unknown>[] | null; error: { code?: string } | null } = {
+    data: null,
+    error: { code: "QUERY_NOT_EXECUTED" },
+  };
+  const builder = {
+    select(columns: string) {
+      ops.push({ method: "select", columns });
+      return builder;
+    },
+    eq(column: string, value: unknown) {
+      ops.push({ method: "eq", column, value });
+      return builder;
+    },
+    order(column: string, value: unknown) {
+      ops.push({ method: "order", column, value });
+      return builder;
+    },
+    range(start: number, end: number) {
+      ops.push({ method: "range", start, end });
+      pending = onRange(start, end);
+      return builder;
+    },
+    then(
+      onfulfilled: (value: {
+        data: Record<string, unknown>[] | null;
+        error: { code?: string } | null;
+      }) => unknown
+    ) {
+      return Promise.resolve(pending).then(onfulfilled);
+    },
+  };
+  return builder;
+}
+
+describe("Syllaby production offer matching", () => {
+  it("matches one active owner and one inactive owner without using promo_link", async () => {
+    for (const active of [true, false]) {
+      const offers = [
+        offer(owner, active),
+        offer(owner, !active, knownCode, "submagic"),
+      ];
+      const store = productionStore(offers);
+      const result = fresh(
+        await acceptSyllabyProductionPostback({
+          searchParams: params({
+            sub_id: knownCode,
+            event_id: `evt-${active ? "active" : "inactive"}`,
+            reward_amount: "1.00",
+            user_id: otherOwner,
+            environment: "test",
+            account_scope: "autoaffi31",
+            promo_link: "https://example.invalid",
+          }),
+          store,
+        })
+      );
+      assert.equal(result.matchStatus, MATCH_MATCHED);
+      assert.equal(result.matchedOwnerId, owner);
+      assert.equal(store.rows[0].matchedIdentityId, null);
+      assert.equal(store.rows[0].environment, SYLLABY_PRODUCTION_ENVIRONMENT);
+      assert.equal(store.rows[0].isTest, false);
+      assert.equal(store.rows[0].accountScope, SYLLABY_TEST_ACCOUNT);
+      assert.equal(store.identityLookups.length, 0);
+      assert.deepEqual(store.offerLookups[0], {
+        platform: SYLLABY_TEST_PLATFORM,
+        trackingCode: knownCode,
+      });
+    }
+  });
+
+  it("treats an active row and an inactive row with different owners as ambiguous", async () => {
+    const store = productionStore([offer(owner, true), offer(otherOwner, false)]);
+    const result = fresh(
+      await acceptSyllabyProductionPostback({
+        searchParams: params({ sub_id: knownCode, event_id: "evt-both" }),
+        store,
+      })
+    );
+    assert.equal(result.matchReason, "ambiguous_sub_id");
+    assert.equal(result.matchedOwnerId, null);
+    assert.equal(store.rows[0].matchedOwnerId, null);
+    assert.equal(store.rows[0].matchedIdentityId, null);
+  });
+
+  it("keeps an unknown code unresolved and does not turn a lookup failure into unknown", async () => {
+    const missing = productionStore([]);
+    const unknown = fresh(
+      await acceptSyllabyProductionPostback({
+        searchParams: params({ sub_id: knownCode, event_id: "evt-unknown-offer" }),
+        store: missing,
+      })
+    );
+    assert.equal(unknown.matchReason, "unknown_sub_id");
+    assert.equal(unknown.matchedOwnerId, null);
+
+    const failing = productionStore([]);
+    failing.findSyllabyOffers = async () => {
+      throw new Error("OFFER_LOOKUP_FAILED");
+    };
+    await assert.rejects(
+      () =>
+        acceptSyllabyProductionPostback({
+          searchParams: params({ sub_id: knownCode, event_id: "evt-db-down" }),
+          store: failing,
+        }),
+      /OFFER_LOOKUP_FAILED/
+    );
+  });
+
+  it("keeps the original owner when the same payload returns after active changes", async () => {
+    const offers = [offer(owner, false)];
+    const store = productionStore(offers);
+    const searchParams = params({
+      sub_id: knownCode,
+      event_id: "evt-status",
+      reward_amount: "1.00",
+    });
+    const first = fresh(await acceptSyllabyProductionPostback({ searchParams, store }));
+    offers[0].active = true;
+    const second = await acceptSyllabyProductionPostback({ searchParams, store });
+
+    assert.equal(first.matchedOwnerId, owner);
+    assert.equal(second.duplicate, true);
+    assert.equal(second.conflict, false);
+    assert.equal(store.rows.length, 1);
+    assert.equal(store.rows[0].matchedOwnerId, owner);
+    assert.equal(store.rows[0].matchStatus, MATCH_MATCHED);
+    assert.equal(store.rows[0].rewardAmountMinor, 100);
+    assert.equal(store.rows[0].isTest, false);
+  });
+
+  it("a changed payload conflicts and leaves the original production event unchanged", async () => {
+    const store = productionStore([offer(owner, true)]);
+    const first = fresh(
+      await acceptSyllabyProductionPostback({
+        searchParams: params({
+          sub_id: knownCode,
+          event_id: "evt-prod-conflict",
+          reward_amount: "1.00",
+        }),
+        store,
+      })
+    );
+    const changed = await acceptSyllabyProductionPostback({
+      searchParams: params({
+        sub_id: knownCode,
+        event_id: "evt-prod-conflict",
+        reward_amount: "9.00",
+      }),
+      store,
+    });
+    assert.equal(first.matchedOwnerId, owner);
+    assert.equal(changed.conflict, true);
+    assert.equal(changed.duplicate, false);
+    assert.equal(store.rows.length, 1);
+    assert.equal(store.rows[0].matchedOwnerId, owner);
+    assert.equal(store.rows[0].rewardAmountMinor, 100);
+  });
+
+  it("stores the same external event id once in test and once in production", async () => {
+    const rows: InboundEventWrite[] = [];
+    const identityLookups: IdentityLookup[] = [];
+    const offerLookups: OfferLookup[] = [];
+    const store: SyllabyInboundStore = {
+      async findTestIdentities(args) {
+        identityLookups.push(args);
+        return [identity(knownCode)];
+      },
+      async findSyllabyOffers(args) {
+        offerLookups.push(args);
+        return [offer(otherOwner, false)];
+      },
+      async insertEvent(event) {
+        const existing = rows.find(
+          (row) =>
+            row.eventId === event.eventId &&
+            row.provider === event.provider &&
+            row.accountScope === event.accountScope &&
+            row.programScope === event.programScope &&
+            row.environment === event.environment
+        );
+        if (existing) return { inserted: false, conflict: true };
+        rows.push(event);
+        return { inserted: true, conflict: false };
+      },
+    };
+    const searchParams = params({
+      sub_id: knownCode,
+      event_id: "evt-shared",
+      reward_amount: "1.00",
+    });
+    const testResult = fresh(await acceptSyllabyTestPostback({ searchParams, store }));
+    const productionResult = fresh(await acceptSyllabyProductionPostback({ searchParams, store }));
+
+    assert.equal(testResult.matchedOwnerId, owner);
+    assert.equal(productionResult.matchedOwnerId, otherOwner);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].environment, SYLLABY_TEST_ENVIRONMENT);
+    assert.equal(rows[0].isTest, true);
+    assert.equal(rows[0].matchedIdentityId, identityId);
+    assert.equal(rows[1].environment, SYLLABY_PRODUCTION_ENVIRONMENT);
+    assert.equal(rows[1].isTest, false);
+    assert.equal(rows[1].matchedIdentityId, null);
+    assert.equal(identityLookups.length, 1);
+    assert.equal(offerLookups.length, 1);
+    assert.equal(
+      toInboundEventRow(rows[0]).is_test,
+      true
+    );
+    assert.equal(toInboundEventRow(rows[1]).is_test, false);
+    assert.equal(toInboundEventRow(rows[1]).environment, "production");
+  });
+
+  it("records the offer query chain and treats the owner on the next synthetic page as ambiguous", async () => {
+    const firstPage = Array.from({ length: 1000 }, () => ({
+      user_id: owner,
+      tracking_code: knownCode,
+      platform: SYLLABY_TEST_PLATFORM,
+      active: true,
+    }));
+    const secondPage = [
+      {
+        user_id: otherOwner,
+        tracking_code: knownCode,
+        platform: SYLLABY_TEST_PLATFORM,
+        active: false,
+      },
+    ];
+    assert.equal(firstPage.length, 1000);
+    assert.equal(secondPage.length, 1);
+    const expectedOps: OfferQueryOp[] = [
+      { method: "select", columns: "user_id, tracking_code, platform, active" },
+      { method: "eq", column: "platform", value: SYLLABY_TEST_PLATFORM },
+      { method: "eq", column: "tracking_code", value: knownCode },
+      { method: "order", column: "user_id", value: { ascending: true } },
+      { method: "range", start: 0, end: 999 },
+      { method: "select", columns: "user_id, tracking_code, platform, active" },
+      { method: "eq", column: "platform", value: SYLLABY_TEST_PLATFORM },
+      { method: "eq", column: "tracking_code", value: knownCode },
+      { method: "order", column: "user_id", value: { ascending: true } },
+      { method: "range", start: 1000, end: 1999 },
+    ];
+
+    const ops: OfferQueryOp[] = [];
+    let inserted: Record<string, unknown> | null = null;
+    const db = {
+      from(table: string) {
+        if (table === "user_recurring_offers") {
+          return recordingOfferQuery(ops, (start, end) => {
+            if (start === 0 && end === 999) return { data: firstPage, error: null };
+            if (start === 1000 && end === 1999) return { data: secondPage, error: null };
+            return { data: null, error: { code: "UNEXPECTED_RANGE" } };
+          });
+        }
+        return {
+          async insert(row: Record<string, unknown>) {
+            inserted = row;
+            return { error: null };
+          },
+        };
+      },
+    } as unknown as InboundDb;
+    const result = fresh(
+      await acceptSyllabyProductionPostback({
+        searchParams: params({ sub_id: knownCode, event_id: "evt-page" }),
+        store: createInboundStore(db),
+      })
+    );
+    assert.deepEqual(ops, expectedOps);
+    assert.equal(result.matchReason, "ambiguous_sub_id");
+    assert.equal(result.matchedOwnerId, null);
+    assert.equal(inserted?.match_reason, "ambiguous_sub_id");
+    assert.equal(inserted?.matched_owner_id, null);
+    assert.equal(inserted?.matched_identity_id, null);
+
+    const failingOps: OfferQueryOp[] = [];
+    let failingInserts = 0;
+    const failingDb = {
+      from(table: string) {
+        if (table === "user_recurring_offers") {
+          return recordingOfferQuery(failingOps, (start, end) => {
+            if (start === 0 && end === 999) return { data: firstPage, error: null };
+            if (start === 1000 && end === 1999) return { data: null, error: { code: "08006" } };
+            return { data: null, error: { code: "UNEXPECTED_RANGE" } };
+          });
+        }
+        return {
+          async insert() {
+            failingInserts += 1;
+            throw new Error("INSERT_AFTER_LOOKUP_FAILURE");
+          },
+        };
+      },
+    } as unknown as InboundDb;
+    await assert.rejects(
+      () =>
+        acceptSyllabyProductionPostback({
+          searchParams: params({ sub_id: knownCode, event_id: "evt-offer-error" }),
+          store: createInboundStore(failingDb),
+        }),
+      /OFFER_LOOKUP_FAILED/
+    );
+    assert.deepEqual(failingOps, expectedOps);
+    assert.equal(failingInserts, 0);
+  });
+
+  it("rejects a valid owner when another row for the code has an invalid user id", async () => {
+    const store = productionStore([offer(owner, true), offer("not-a-uuid", false)]);
+    await assert.rejects(
+      () =>
+        acceptSyllabyProductionPostback({
+          searchParams: params({ sub_id: knownCode, event_id: "evt-invalid-sibling" }),
+          store,
+        }),
+      /OFFER_OWNER_INVALID/
+    );
+    assert.equal(store.rows.length, 0);
+  });
+
+  it("rejects a single invalid owner row without inserting", async () => {
+    const store = productionStore([offer("", true)]);
+    await assert.rejects(
+      () =>
+        acceptSyllabyProductionPostback({
+          searchParams: params({ sub_id: knownCode, event_id: "evt-invalid-only" }),
+          store,
+        }),
+      /OFFER_OWNER_INVALID/
+    );
+    assert.equal(store.rows.length, 0);
+  });
+
+  it("an empty offer lookup stays unknown_sub_id", async () => {
+    const store = productionStore([]);
+    const result = fresh(
+      await acceptSyllabyProductionPostback({
+        searchParams: params({ sub_id: knownCode, event_id: "evt-empty-offers" }),
+        store,
+      })
+    );
+    assert.equal(result.matchReason, "unknown_sub_id");
+    assert.equal(result.matchedOwnerId, null);
+    assert.equal(store.rows.length, 1);
+    assert.equal(store.rows[0].matchReason, "unknown_sub_id");
+    assert.equal(store.rows[0].matchedOwnerId, null);
+  });
+
+  it("one inactive owner stays matched", async () => {
+    const inactiveOwner = "abcdefab-cdef-4abc-8abc-000000000001";
+    const store = productionStore([
+      offer(inactiveOwner, false),
+      offer(inactiveOwner.toUpperCase(), false),
+    ]);
+    const result = fresh(
+      await acceptSyllabyProductionPostback({
+        searchParams: params({ sub_id: knownCode, event_id: "evt-inactive-only" }),
+        store,
+      })
+    );
+    assert.notEqual(inactiveOwner.toUpperCase(), inactiveOwner);
+    assert.equal(result.matchStatus, MATCH_MATCHED);
+    assert.equal(result.matchedOwnerId?.toLowerCase(), inactiveOwner);
+    assert.equal(store.rows.length, 1);
+    assert.equal(store.rows[0].matchedOwnerId?.toLowerCase(), inactiveOwner);
+    assert.equal(store.rows[0].matchedIdentityId, null);
+    assert.equal(store.rows[0].isTest, false);
+  });
+
+  it("rejects a missing or wrong production secret before any database write", async () => {
+    const route = fs.readFileSync(
+      path.join(root, "app/api/ingress/syllaby/[secret]/route.ts"),
+      "utf8"
+    );
+    const secretAt = route.indexOf(
+      "syllabyTestSecretMatches(secret, process.env.SYLLABY_POSTBACK_PRODUCTION_SECRET)"
+    );
+    const rejectAt = route.indexOf("return json({ ok: false }, 404)");
+    const storeAt = route.indexOf("const store = await createServiceRoleInboundStore()");
+    assert.ok(secretAt > 0);
+    assert.ok(rejectAt > secretAt);
+    assert.ok(storeAt > rejectAt);
+    assert.doesNotMatch(route, /matchedOwnerId|user_id|req\.json|req\.text|req\.formData/);
+    assert.match(route, /SYLLABY_POSTBACK_PRODUCTION_SECRET/);
+    assert.doesNotMatch(route, /SYLLABY_POSTBACK_TEST_SECRET/);
+    assert.doesNotMatch(route, /findTestIdentities|affiliate_test_identities/);
+
+    const previous = process.env.SYLLABY_POSTBACK_PRODUCTION_SECRET;
+    let writes = 0;
+    async function handle(secret: string) {
+      if (!syllabyTestSecretMatches(secret, process.env.SYLLABY_POSTBACK_PRODUCTION_SECRET)) {
+        return { status: 404, body: { ok: false } as Record<string, unknown> };
+      }
+      writes += 1;
+      return { status: 200, body: { ok: true } as Record<string, unknown> };
+    }
+    try {
+      delete process.env.SYLLABY_POSTBACK_PRODUCTION_SECRET;
+      let result = await handle("wrong-secret");
+      assert.equal(result.status, 404);
+      process.env.SYLLABY_POSTBACK_PRODUCTION_SECRET = "expected-secret";
+      result = await handle("wrong-secret");
+      assert.equal(result.status, 404);
+      assert.equal(result.body.ok, false);
+      assert.equal("matchedOwnerId" in result.body, false);
+      assert.equal("user_id" in result.body, false);
+      assert.equal(writes, 0);
+    } finally {
+      if (previous === undefined) delete process.env.SYLLABY_POSTBACK_PRODUCTION_SECRET;
+      else process.env.SYLLABY_POSTBACK_PRODUCTION_SECRET = previous;
+    }
   });
 });

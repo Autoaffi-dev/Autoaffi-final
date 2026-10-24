@@ -4,6 +4,7 @@ export const SYLLABY_TEST_PROVIDER = "firstpromoter";
 export const SYLLABY_TEST_ACCOUNT = "syllaby";
 export const SYLLABY_TEST_PROGRAM = "syllaby_affiliates";
 export const SYLLABY_TEST_ENVIRONMENT = "test";
+export const SYLLABY_PRODUCTION_ENVIRONMENT = "production";
 export const SYLLABY_TEST_PLATFORM = "syllaby";
 export const SYLLABY_TEST_CURRENCY = "USD";
 export const SYLLABY_CURRENCY_SOURCE = "provider_documentation";
@@ -15,6 +16,7 @@ const SUB_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const EVENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const EVENT_TYPE_PATTERN = /^[\x20-\x7E]{1,64}$/;
 const DECIMAL_PATTERN = /^-?\d+(\.\d{1,2})?$/;
+const USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_MINOR_DIGITS = "1000000000000";
 const QUERY_KEYS = [
   "sub_id",
@@ -43,13 +45,13 @@ export type SyllabyQueryPayload = {
   reward_amount: string | null;
 };
 
-export type SyllabyTestEvent = {
+export type SyllabyPostbackEvent = {
   provider: typeof SYLLABY_TEST_PROVIDER;
   accountScope: typeof SYLLABY_TEST_ACCOUNT;
   programScope: typeof SYLLABY_TEST_PROGRAM;
-  environment: typeof SYLLABY_TEST_ENVIRONMENT;
+  environment: typeof SYLLABY_TEST_ENVIRONMENT | typeof SYLLABY_PRODUCTION_ENVIRONMENT;
   platform: typeof SYLLABY_TEST_PLATFORM;
-  isTest: true;
+  isTest: boolean;
   currencyCode: typeof SYLLABY_TEST_CURRENCY;
   currencySource: typeof SYLLABY_CURRENCY_SOURCE;
   duplicateQuery: boolean;
@@ -63,6 +65,16 @@ export type SyllabyTestEvent = {
   conversionAmountMinor: number | null;
   rewardAmountMinor: number | null;
   payload: SyllabyQueryPayload;
+};
+
+export type SyllabyTestEvent = SyllabyPostbackEvent & {
+  environment: typeof SYLLABY_TEST_ENVIRONMENT;
+  isTest: true;
+};
+
+export type SyllabyProductionEvent = SyllabyPostbackEvent & {
+  environment: typeof SYLLABY_PRODUCTION_ENVIRONMENT;
+  isTest: false;
 };
 
 export type TestIdentityRef = {
@@ -82,7 +94,14 @@ export type MatchDecision = {
   matchedIdentityId: string | null;
 };
 
-export type InboundEventWrite = SyllabyTestEvent & MatchDecision;
+export type SyllabyOfferRef = {
+  userId: string;
+  trackingCode: string;
+  platform: string;
+  active: boolean;
+};
+
+export type InboundEventWrite = (SyllabyTestEvent | SyllabyProductionEvent) & MatchDecision;
 
 export type EventContentSnapshot = {
   provider: string;
@@ -111,8 +130,14 @@ export type IdentityLookup = {
   trackingCode: string;
 };
 
+export type OfferLookup = {
+  platform: string;
+  trackingCode: string;
+};
+
 export type SyllabyInboundStore = {
   findTestIdentities(args: IdentityLookup): Promise<TestIdentityRef[]>;
+  findSyllabyOffers(args: OfferLookup): Promise<SyllabyOfferRef[]>;
   insertEvent(event: InboundEventWrite): Promise<{ inserted: boolean; conflict: boolean }>;
 };
 
@@ -200,7 +225,13 @@ export function syllabyTestSecretMatches(
   return timingSafeStringEqual(String(provided || ""), wanted);
 }
 
-export function parseSyllabyTestQuery(params: URLSearchParams): SyllabyTestEvent {
+function parseScopedQuery(
+  params: URLSearchParams,
+  scope: {
+    environment: SyllabyPostbackEvent["environment"];
+    isTest: boolean;
+  }
+): SyllabyPostbackEvent {
   const fields = {
     sub_id: readField(params, QUERY_KEYS[0]),
     event_id: readField(params, QUERY_KEYS[1]),
@@ -223,9 +254,9 @@ export function parseSyllabyTestQuery(params: URLSearchParams): SyllabyTestEvent
     provider: SYLLABY_TEST_PROVIDER,
     accountScope: SYLLABY_TEST_ACCOUNT,
     programScope: SYLLABY_TEST_PROGRAM,
-    environment: SYLLABY_TEST_ENVIRONMENT,
+    environment: scope.environment,
     platform: SYLLABY_TEST_PLATFORM,
-    isTest: true,
+    isTest: scope.isTest,
     currencyCode: SYLLABY_TEST_CURRENCY,
     currencySource: SYLLABY_CURRENCY_SOURCE,
     duplicateQuery,
@@ -246,6 +277,20 @@ export function parseSyllabyTestQuery(params: URLSearchParams): SyllabyTestEvent
       reward_amount: reward.valid ? reward.text : null,
     },
   };
+}
+
+export function parseSyllabyTestQuery(params: URLSearchParams): SyllabyTestEvent {
+  return parseScopedQuery(params, {
+    environment: SYLLABY_TEST_ENVIRONMENT,
+    isTest: true,
+  }) as SyllabyTestEvent;
+}
+
+export function parseSyllabyProductionQuery(params: URLSearchParams): SyllabyProductionEvent {
+  return parseScopedQuery(params, {
+    environment: SYLLABY_PRODUCTION_ENVIRONMENT,
+    isTest: false,
+  }) as SyllabyProductionEvent;
 }
 
 export function decideSyllabyTestMatch(
@@ -274,6 +319,36 @@ export function decideSyllabyTestMatch(
     };
   }
   if (hits.length === 0) return unresolved("unknown_sub_id");
+  return unresolved("ambiguous_sub_id");
+}
+
+export function decideSyllabyProductionMatch(
+  event: SyllabyProductionEvent,
+  offers: SyllabyOfferRef[]
+): MatchDecision {
+  if (event.duplicateQuery) return unresolved("duplicate_query_param");
+  if (!event.eventId) return unresolved("missing_event_id");
+  if (!event.amountValid) return unresolved("invalid_amount");
+  if (!event.subIdValid || !event.subId) return unresolved("missing_or_invalid_sub_id");
+
+  const owners = new Map<string, string>();
+  for (const row of offers) {
+    if (row.platform !== event.platform) continue;
+    if (row.trackingCode !== event.subId) continue;
+    const userId = row.userId.trim();
+    if (!USER_ID_PATTERN.test(userId)) throw new Error("OFFER_OWNER_INVALID");
+    const key = userId.toLowerCase();
+    if (!owners.has(key)) owners.set(key, userId);
+  }
+  if (owners.size === 1) {
+    return {
+      matchStatus: MATCH_MATCHED,
+      matchReason: "matched",
+      matchedOwnerId: [...owners.values()][0],
+      matchedIdentityId: null,
+    };
+  }
+  if (owners.size === 0) return unresolved("unknown_sub_id");
   return unresolved("ambiguous_sub_id");
 }
 
@@ -318,6 +393,32 @@ export async function acceptSyllabyTestPostback(args: {
         })
       : [];
   const decision = decideSyllabyTestMatch(event, identities);
+  const stored = await args.store.insertEvent({ ...event, ...decision });
+  if (stored.conflict) return { ok: true, duplicate: false, conflict: true };
+  if (!stored.inserted) return { ok: true, duplicate: true, conflict: false };
+  return {
+    ok: true,
+    duplicate: false,
+    conflict: false,
+    matchStatus: decision.matchStatus,
+    matchReason: decision.matchReason,
+    matchedOwnerId: decision.matchedOwnerId,
+  };
+}
+
+export async function acceptSyllabyProductionPostback(args: {
+  searchParams: URLSearchParams;
+  store: SyllabyInboundStore;
+}): Promise<AcceptSyllabyResult> {
+  const event = parseSyllabyProductionQuery(args.searchParams);
+  const offers =
+    event.eventId && event.amountValid && event.subIdValid && event.subId && !event.duplicateQuery
+      ? await args.store.findSyllabyOffers({
+          platform: event.platform,
+          trackingCode: event.subId,
+        })
+      : [];
+  const decision = decideSyllabyProductionMatch(event, offers);
   const stored = await args.store.insertEvent({ ...event, ...decision });
   if (stored.conflict) return { ok: true, duplicate: false, conflict: true };
   if (!stored.inserted) return { ok: true, duplicate: true, conflict: false };
