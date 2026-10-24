@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 const root = path.resolve(import.meta.dirname, "../..");
 
 function read(rel: string) {
-  return fs.readFileSync(path.join(root, rel), "utf8");
+  return fs.readFileSync(path.join(root, rel), "utf8").replace(/\r\n/g, "\n");
 }
 
 describe("Posts offer vault loads through NextAuth", () => {

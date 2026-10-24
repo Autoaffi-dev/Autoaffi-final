@@ -37,6 +37,10 @@ import {
 } from "./storeInboundEvent.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
+
+function readSource(rel: string) {
+  return fs.readFileSync(path.join(root, rel), "utf8").replace(/\r\n/g, "\n");
+}
 const owner = "00000000-0000-4000-8000-000000000001";
 const otherOwner = "00000000-0000-4000-8000-000000000002";
 const identityId = "00000000-0000-4000-8000-000000000010";
@@ -578,12 +582,9 @@ describe("Syllaby test postback fixtures", () => {
 
 describe("Syllaby ingress boundaries", () => {
   it("the route is the test endpoint, ignores the body, and does not read production offer tables", () => {
-    const route = fs.readFileSync(
-      path.join(root, "app/api/ingress/syllaby/test/[secret]/route.ts"),
-      "utf8"
-    );
-    const parser = fs.readFileSync(path.join(root, "lib/ingress/syllabyPostback.ts"), "utf8");
-    const store = fs.readFileSync(path.join(root, "lib/ingress/storeInboundEvent.ts"), "utf8");
+    const route = readSource("app/api/ingress/syllaby/test/[secret]/route.ts");
+    const parser = readSource("lib/ingress/syllabyPostback.ts");
+    const store = readSource("lib/ingress/storeInboundEvent.ts");
     const combined = `${route}\n${parser}\n${store}`;
 
     assert.match(route, /export function GET/);
@@ -606,10 +607,7 @@ describe("Syllaby ingress boundaries", () => {
   });
 
   it("the migration isolates the test path and clears default grants before the narrow grant", () => {
-    const sql = fs.readFileSync(
-      path.join(root, "supabase/migrations/20261021_affiliate_inbound_events.sql"),
-      "utf8"
-    );
+    const sql = readSource("supabase/migrations/20261021_affiliate_inbound_events.sql");
     assert.match(sql, /enable row level security/);
     assert.doesNotMatch(sql, /create policy/i);
     assert.match(sql, /constraint affiliate_test_identities_environment_check/);
@@ -644,10 +642,7 @@ describe("Syllaby ingress boundaries", () => {
   });
 
   it("the production constraint migration keeps nulls out of the wrong environment", () => {
-    const sql = fs.readFileSync(
-      path.join(root, "supabase/migrations/20261023_syllaby_production_match_constraint.sql"),
-      "utf8"
-    );
+    const sql = readSource("supabase/migrations/20261023_syllaby_production_match_constraint.sql");
     assert.match(sql, /\nbegin;\n/);
     assert.match(sql, /\ncommit;\n?$/);
     assert.match(sql, /drop constraint affiliate_inbound_events_owner_check/);
@@ -663,7 +658,7 @@ describe("Syllaby ingress boundaries", () => {
   });
 
   it("the payout route stays disabled", () => {
-    const payouts = fs.readFileSync(path.join(root, "app/api/dashboard/payouts/route.ts"), "utf8");
+    const payouts = readSource("app/api/dashboard/payouts/route.ts");
     assert.match(payouts, /PAYOUTS_DISABLED/);
     assert.match(payouts, /status: 503/);
   });
@@ -1097,10 +1092,7 @@ describe("Syllaby production offer matching", () => {
   });
 
   it("rejects a missing or wrong production secret before any database write", async () => {
-    const route = fs.readFileSync(
-      path.join(root, "app/api/ingress/syllaby/[secret]/route.ts"),
-      "utf8"
-    );
+    const route = readSource("app/api/ingress/syllaby/[secret]/route.ts");
     const secretAt = route.indexOf(
       "syllabyTestSecretMatches(secret, process.env.SYLLABY_POSTBACK_PRODUCTION_SECRET)"
     );
