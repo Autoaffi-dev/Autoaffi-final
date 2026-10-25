@@ -1,13 +1,30 @@
 import { timingSafeStringEqual } from "../auth/cronAuth";
+import {
+  AMOUNT_UNIT_MINOR_HUNDREDTHS,
+  isVerifiedProductionConfig,
+  SYLLABY_CURRENCY_SOURCE,
+  SYLLABY_PRODUCTION_ENVIRONMENT,
+  SYLLABY_TEST_ACCOUNT,
+  SYLLABY_TEST_CURRENCY,
+  SYLLABY_TEST_ENVIRONMENT,
+  SYLLABY_TEST_PLATFORM,
+  SYLLABY_TEST_PROGRAM,
+  SYLLABY_TEST_PROVIDER,
+  syllabyProductionConfig,
+  syllabyTestConfig,
+  type FirstPromoterProgramConfig,
+} from "./firstPromoterProgram";
 
-export const SYLLABY_TEST_PROVIDER = "firstpromoter";
-export const SYLLABY_TEST_ACCOUNT = "syllaby";
-export const SYLLABY_TEST_PROGRAM = "syllaby_affiliates";
-export const SYLLABY_TEST_ENVIRONMENT = "test";
-export const SYLLABY_PRODUCTION_ENVIRONMENT = "production";
-export const SYLLABY_TEST_PLATFORM = "syllaby";
-export const SYLLABY_TEST_CURRENCY = "USD";
-export const SYLLABY_CURRENCY_SOURCE = "provider_documentation";
+export {
+  SYLLABY_CURRENCY_SOURCE,
+  SYLLABY_PRODUCTION_ENVIRONMENT,
+  SYLLABY_TEST_ACCOUNT,
+  SYLLABY_TEST_CURRENCY,
+  SYLLABY_TEST_ENVIRONMENT,
+  SYLLABY_TEST_PLATFORM,
+  SYLLABY_TEST_PROGRAM,
+  SYLLABY_TEST_PROVIDER,
+};
 
 export const MATCH_MATCHED = "matched";
 export const MATCH_UNRESOLVED = "unresolved_review";
@@ -45,15 +62,15 @@ export type SyllabyQueryPayload = {
   reward_amount: string | null;
 };
 
-export type SyllabyPostbackEvent = {
-  provider: typeof SYLLABY_TEST_PROVIDER;
-  accountScope: typeof SYLLABY_TEST_ACCOUNT;
-  programScope: typeof SYLLABY_TEST_PROGRAM;
-  environment: typeof SYLLABY_TEST_ENVIRONMENT | typeof SYLLABY_PRODUCTION_ENVIRONMENT;
-  platform: typeof SYLLABY_TEST_PLATFORM;
+export type ScopedPostbackEvent = {
+  provider: string;
+  accountScope: string;
+  programScope: string;
+  environment: "test" | "production";
+  platform: string;
   isTest: boolean;
-  currencyCode: typeof SYLLABY_TEST_CURRENCY;
-  currencySource: typeof SYLLABY_CURRENCY_SOURCE;
+  currencyCode: string;
+  currencySource: string;
   duplicateQuery: boolean;
   amountValid: boolean;
   subId: string | null;
@@ -65,6 +82,15 @@ export type SyllabyPostbackEvent = {
   conversionAmountMinor: number | null;
   rewardAmountMinor: number | null;
   payload: SyllabyQueryPayload;
+};
+
+export type SyllabyPostbackEvent = ScopedPostbackEvent & {
+  provider: "firstpromoter";
+  accountScope: "syllaby";
+  programScope: "syllaby_affiliates";
+  platform: "syllaby";
+  currencyCode: "USD";
+  currencySource: "provider_documentation";
 };
 
 export type SyllabyTestEvent = SyllabyPostbackEvent & {
@@ -101,7 +127,7 @@ export type SyllabyOfferRef = {
   active: boolean;
 };
 
-export type InboundEventWrite = (SyllabyTestEvent | SyllabyProductionEvent) & MatchDecision;
+export type InboundEventWrite = ScopedPostbackEvent & MatchDecision;
 
 export type EventContentSnapshot = {
   provider: string;
@@ -176,6 +202,10 @@ function readField(params: URLSearchParams, key: string): FieldRead {
   return { state: "value", value: trimmed };
 }
 
+/**
+ * The payload amount is a decimal in the major currency, such as "1.25".
+ * The parser converts that text to hundredths. Do not divide the stored minor amount again.
+ */
 export function decimalToMinor(raw: string): number | null {
   const parsed = parseMinor(raw);
   return parsed.ok ? parsed.minor : null;
@@ -227,11 +257,8 @@ export function syllabyTestSecretMatches(
 
 function parseScopedQuery(
   params: URLSearchParams,
-  scope: {
-    environment: SyllabyPostbackEvent["environment"];
-    isTest: boolean;
-  }
-): SyllabyPostbackEvent {
+  config: FirstPromoterProgramConfig
+): ScopedPostbackEvent {
   const fields = {
     sub_id: readField(params, QUERY_KEYS[0]),
     event_id: readField(params, QUERY_KEYS[1]),
@@ -251,14 +278,14 @@ function parseScopedQuery(
   const amountValid = conversion.valid && reward.valid && !duplicateQuery;
 
   return {
-    provider: SYLLABY_TEST_PROVIDER,
-    accountScope: SYLLABY_TEST_ACCOUNT,
-    programScope: SYLLABY_TEST_PROGRAM,
-    environment: scope.environment,
-    platform: SYLLABY_TEST_PLATFORM,
-    isTest: scope.isTest,
-    currencyCode: SYLLABY_TEST_CURRENCY,
-    currencySource: SYLLABY_CURRENCY_SOURCE,
+    provider: config.provider,
+    accountScope: config.accountScope,
+    programScope: config.programScope,
+    environment: config.environment,
+    platform: config.platform,
+    isTest: config.isTest,
+    currencyCode: config.currencyCode,
+    currencySource: config.currencySource,
     duplicateQuery,
     amountValid,
     subId: subIdValid ? subValue : null,
@@ -280,21 +307,15 @@ function parseScopedQuery(
 }
 
 export function parseSyllabyTestQuery(params: URLSearchParams): SyllabyTestEvent {
-  return parseScopedQuery(params, {
-    environment: SYLLABY_TEST_ENVIRONMENT,
-    isTest: true,
-  }) as SyllabyTestEvent;
+  return parseScopedQuery(params, syllabyTestConfig) as SyllabyTestEvent;
 }
 
 export function parseSyllabyProductionQuery(params: URLSearchParams): SyllabyProductionEvent {
-  return parseScopedQuery(params, {
-    environment: SYLLABY_PRODUCTION_ENVIRONMENT,
-    isTest: false,
-  }) as SyllabyProductionEvent;
+  return parseScopedQuery(params, syllabyProductionConfig) as SyllabyProductionEvent;
 }
 
-export function decideSyllabyTestMatch(
-  event: SyllabyTestEvent,
+function decideScopedTestMatch(
+  event: ScopedPostbackEvent,
   identities: TestIdentityRef[]
 ): MatchDecision {
   if (event.duplicateQuery) return unresolved("duplicate_query_param");
@@ -322,8 +343,15 @@ export function decideSyllabyTestMatch(
   return unresolved("ambiguous_sub_id");
 }
 
-export function decideSyllabyProductionMatch(
-  event: SyllabyProductionEvent,
+export function decideSyllabyTestMatch(
+  event: SyllabyTestEvent,
+  identities: TestIdentityRef[]
+): MatchDecision {
+  return decideScopedTestMatch(event, identities);
+}
+
+function decideScopedProductionMatch(
+  event: ScopedPostbackEvent,
   offers: SyllabyOfferRef[]
 ): MatchDecision {
   if (event.duplicateQuery) return unresolved("duplicate_query_param");
@@ -352,6 +380,13 @@ export function decideSyllabyProductionMatch(
   return unresolved("ambiguous_sub_id");
 }
 
+export function decideSyllabyProductionMatch(
+  event: SyllabyProductionEvent,
+  offers: SyllabyOfferRef[]
+): MatchDecision {
+  return decideScopedProductionMatch(event, offers);
+}
+
 export function eventContentSnapshot(event: InboundEventWrite): EventContentSnapshot {
   return {
     provider: event.provider,
@@ -377,23 +412,21 @@ export function sameEventContent(left: EventContentSnapshot, right: EventContent
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export async function acceptSyllabyTestPostback(args: {
-  searchParams: URLSearchParams;
-  store: SyllabyInboundStore;
-}): Promise<AcceptSyllabyResult> {
-  const event = parseSyllabyTestQuery(args.searchParams);
-  const identities =
+function canResolveOwner(event: ScopedPostbackEvent): event is ScopedPostbackEvent & {
+  eventId: string;
+  subId: string;
+} {
+  return Boolean(
     event.eventId && event.amountValid && event.subIdValid && event.subId && !event.duplicateQuery
-      ? await args.store.findTestIdentities({
-          provider: event.provider,
-          accountScope: event.accountScope,
-          programScope: event.programScope,
-          environment: event.environment,
-          trackingCode: event.subId,
-        })
-      : [];
-  const decision = decideSyllabyTestMatch(event, identities);
-  const stored = await args.store.insertEvent({ ...event, ...decision });
+  );
+}
+
+async function storeDecision(
+  store: SyllabyInboundStore,
+  event: ScopedPostbackEvent,
+  decision: MatchDecision
+): Promise<AcceptSyllabyResult> {
+  const stored = await store.insertEvent({ ...event, ...decision });
   if (stored.conflict) return { ok: true, duplicate: false, conflict: true };
   if (!stored.inserted) return { ok: true, duplicate: true, conflict: false };
   return {
@@ -406,28 +439,62 @@ export async function acceptSyllabyTestPostback(args: {
   };
 }
 
+export async function acceptScopedPostback(args: {
+  searchParams: URLSearchParams;
+  store: SyllabyInboundStore;
+  config: FirstPromoterProgramConfig;
+}): Promise<AcceptSyllabyResult> {
+  if (args.config.isTest !== (args.config.environment === "test")) {
+    throw new Error("ENVIRONMENT_MISMATCH");
+  }
+  if (!args.config.isTest && !isVerifiedProductionConfig(args.config)) {
+    throw new Error("PRODUCTION_NOT_CONFIGURED");
+  }
+  if (args.config.amountUnit !== AMOUNT_UNIT_MINOR_HUNDREDTHS) {
+    throw new Error("AMOUNT_UNIT_UNVERIFIED");
+  }
+
+  const event = parseScopedQuery(args.searchParams, args.config);
+  if (event.isTest) {
+    const identities = canResolveOwner(event)
+      ? await args.store.findTestIdentities({
+          provider: event.provider,
+          accountScope: event.accountScope,
+          programScope: event.programScope,
+          environment: event.environment,
+          trackingCode: event.subId,
+        })
+      : [];
+    return storeDecision(args.store, event, decideScopedTestMatch(event, identities));
+  }
+
+  const offers = canResolveOwner(event)
+    ? await args.store.findSyllabyOffers({
+        platform: event.platform,
+        trackingCode: event.subId,
+      })
+    : [];
+  return storeDecision(args.store, event, decideScopedProductionMatch(event, offers));
+}
+
+export async function acceptSyllabyTestPostback(args: {
+  searchParams: URLSearchParams;
+  store: SyllabyInboundStore;
+}): Promise<AcceptSyllabyResult> {
+  return acceptScopedPostback({
+    searchParams: args.searchParams,
+    store: args.store,
+    config: syllabyTestConfig,
+  });
+}
+
 export async function acceptSyllabyProductionPostback(args: {
   searchParams: URLSearchParams;
   store: SyllabyInboundStore;
 }): Promise<AcceptSyllabyResult> {
-  const event = parseSyllabyProductionQuery(args.searchParams);
-  const offers =
-    event.eventId && event.amountValid && event.subIdValid && event.subId && !event.duplicateQuery
-      ? await args.store.findSyllabyOffers({
-          platform: event.platform,
-          trackingCode: event.subId,
-        })
-      : [];
-  const decision = decideSyllabyProductionMatch(event, offers);
-  const stored = await args.store.insertEvent({ ...event, ...decision });
-  if (stored.conflict) return { ok: true, duplicate: false, conflict: true };
-  if (!stored.inserted) return { ok: true, duplicate: true, conflict: false };
-  return {
-    ok: true,
-    duplicate: false,
-    conflict: false,
-    matchStatus: decision.matchStatus,
-    matchReason: decision.matchReason,
-    matchedOwnerId: decision.matchedOwnerId,
-  };
+  return acceptScopedPostback({
+    searchParams: args.searchParams,
+    store: args.store,
+    config: syllabyProductionConfig,
+  });
 }
