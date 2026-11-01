@@ -17,7 +17,7 @@ export type SubscriptionReadClient = {
         column: string,
         value: string
       ): {
-        maybeSingle(): Promise<{
+        maybeSingle(): PromiseLike<{
           data: PaidSubscriptionSnapshot | null;
           error: { message?: string } | null;
         }>;
@@ -30,18 +30,28 @@ export async function loadPaidSubscription(
   userId: string,
   db?: SubscriptionReadClient
 ): Promise<PaidSubscriptionSnapshot | null> {
-  const client = db ?? (await defaultAdmin());
-  const result = await client
+  if (db) {
+    const result = await db
+      .from("billing_subscriptions")
+      .select(PAID_SUBSCRIPTION_COLUMNS)
+      .eq("user_id", userId)
+      .maybeSingle();
+    return paidPlanFromResult(result.data, result.error);
+  }
+
+  const { supabaseAdmin } = await import("../supabaseAdmin");
+  const result = await supabaseAdmin
     .from("billing_subscriptions")
     .select(PAID_SUBSCRIPTION_COLUMNS)
     .eq("user_id", userId)
     .maybeSingle();
-
-  if (result.error) throw new EntitlementReadError();
-  return result.data ?? null;
+  return paidPlanFromResult(result.data, result.error);
 }
 
-async function defaultAdmin(): Promise<SubscriptionReadClient> {
-  const mod = await import("../supabaseAdmin");
-  return mod.supabaseAdmin as SubscriptionReadClient;
+function paidPlanFromResult(
+  data: PaidSubscriptionSnapshot | null,
+  error: { message?: string } | null
+): PaidSubscriptionSnapshot | null {
+  if (error) throw new EntitlementReadError();
+  return data ?? null;
 }
