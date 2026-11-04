@@ -403,7 +403,8 @@ describe("customer binding stays out of the ordinary test command", () => {
     const sql = readFileSync("supabase/migrations/20261102_billing_stripe_customers.sql", "utf8");
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
     const ordinary = readFileSync("lib/billing/billingCustomer.test.ts", "utf8");
-    const runner = readFileSync("scripts/test-billing-customer-postgres.mjs", "utf8");
+    const runner = readFileSync("scripts/isolatedBillingPostgres.ts", "utf8");
+    const postgresRunner = readFileSync("scripts/test-billing-customer-postgres.ts", "utf8");
     assert.equal(source.includes("billing_subscriptions"), false);
     assert.equal(store.includes("billing_subscriptions"), false);
     assert.equal(store.includes("customer_id_key"), false);
@@ -413,11 +414,19 @@ describe("customer binding stays out of the ordinary test command", () => {
     assert.equal(readFileSync("app/api/billing/entitlement/route.ts", "utf8").includes("billing_stripe_customers"), false);
     assert.equal(pkg.scripts["test:auth"].includes("lib/billing/billingCustomer.test.ts"), true);
     assert.equal(pkg.scripts["test:auth"].includes("billingCustomer.postgres.test.ts"), false);
-    assert.equal(pkg.scripts["test:billing-customer-postgres"], "node scripts/test-billing-customer-postgres.mjs");
+    assert.equal(pkg.scripts["test:billing-customer-postgres"], "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs scripts/test-billing-customer-postgres.ts");
+    assert.equal(pkg.scripts["test:auth"].includes("billingCustomer.stripeSandbox.test.ts"), false);
+    assert.equal(pkg.scripts["test:auth"].includes("billingCustomer.stripeSandbox.guards.test.ts"), true);
+    assert.equal(pkg.scripts["test:auth"].includes("billingCustomer.stripeSandbox.posix.test.ts"), false);
+    assert.equal(pkg.scripts["test:auth"].includes("isolatedPostgres.lifecycle.test.ts"), false);
+    assert.equal(pkg.scripts["test:auth"].includes("isolatedPostgres.hang.test.ts"), false);
+    assert.equal(pkg.scripts["test:billing-customer-linux"], "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs --test --test-concurrency=1 lib/billing/billingCustomer.stripeSandbox.posix.test.ts lib/billing/isolatedPostgres.lifecycle.test.ts");
     for (const word of ["su" + "do", "ps" + "ql", "drop " + "database", "drop " + "role", "pg_" + "ctl", "init" + "db"]) {
       assert.equal(ordinary.includes(word), false, word);
     }
     assert.equal(runner.includes("su" + "do"), false);
+    assert.equal(runner.includes("...process.env"), false);
     assert.equal(runner.includes("billing-customer-pg-"), true);
+    assert.equal(postgresRunner.includes("su" + "do"), false);
   });
 });

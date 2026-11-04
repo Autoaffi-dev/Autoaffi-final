@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { limitedProcessEnv } from "./limitedProcessEnv.ts";
 import {
   BillingCustomerNotBoundError,
   BillingCustomerOwnerConflictError,
@@ -39,13 +40,11 @@ if (
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
 
-const isolatedEnv = {
-  ...process.env,
-  PGHOST: host,
-  PGPORT: port,
-  PGUSER: user,
-  PGDATABASE: database,
-};
+function psqlProcessEnv(applicationName?: string): NodeJS.ProcessEnv {
+  const env = limitedProcessEnv(process.env);
+  if (applicationName) env.PGAPPNAME = applicationName;
+  return env;
+}
 
 function quoteLiteral(value: string): string {
   if (!/^[0-9a-zA-Z_-]+$/.test(value)) throw new Error("refusing to interpolate an unexpected test literal");
@@ -56,7 +55,7 @@ function psql(dbName: string, sql: string): string {
   return execFileSync(
     "psql",
     ["-h", host, "-p", port, "-U", user, "-d", dbName, "-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql],
-    { encoding: "utf8", env: isolatedEnv }
+    { encoding: "utf8", env: psqlProcessEnv() }
   ).trim();
 }
 
@@ -64,7 +63,7 @@ function psqlFile(dbName: string, file: string) {
   execFileSync(
     "psql",
     ["-h", host, "-p", port, "-U", user, "-d", dbName, "-X", "-v", "ON_ERROR_STOP=1", "-f", file],
-    { stdio: "pipe", env: isolatedEnv }
+    { stdio: "pipe", env: psqlProcessEnv() }
   );
 }
 
@@ -83,7 +82,7 @@ class PsqlSession {
       ["-oL", "-eL", "psql", "-h", host, "-p", port, "-U", user, "-d", database, "-X", "-q", "-A", "-t", "-v", "VERBOSITY=verbose"],
       {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...isolatedEnv, PGAPPNAME: applicationName },
+        env: psqlProcessEnv(applicationName),
       }
     );
     this.child.stdout.setEncoding("utf8");
