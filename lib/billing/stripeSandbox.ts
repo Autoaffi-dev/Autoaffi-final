@@ -254,6 +254,220 @@ export async function withCapturedCustomers<T>(input: {
   return result as T;
 }
 
+export type CleanupSession = {
+  id: string;
+  customerId: string | null;
+  livemode: boolean;
+  status: string;
+  clientReferenceId: string | null;
+  attemptId: string | null;
+};
+
+export function sessionCleanupDecision(
+  session: CleanupSession,
+  expected: { id: string; customerId: string; attemptId: string }
+): "expire" | "already_expired" {
+  if (session.id !== expected.id) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_ID_MISMATCH", { operation: "checkout.sessions.retrieve" });
+  }
+  if (session.livemode !== false) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_LIVEMODE", { operation: "checkout.sessions.expire" });
+  }
+  if (session.customerId !== expected.customerId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_CUSTOMER_MISMATCH", { operation: "checkout.sessions.expire" });
+  }
+  if (session.clientReferenceId && session.clientReferenceId !== expected.attemptId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_ATTEMPT_MISMATCH", { operation: "checkout.sessions.expire" });
+  }
+  if (session.attemptId && session.attemptId !== expected.attemptId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_ATTEMPT_MISMATCH", { operation: "checkout.sessions.expire" });
+  }
+  if (session.clientReferenceId !== expected.attemptId && session.attemptId !== expected.attemptId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_ATTEMPT_MISMATCH", { operation: "checkout.sessions.expire" });
+  }
+  if (session.status === "complete") {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_FAILED", { operation: "checkout.sessions.expire" });
+  }
+  if (session.status === "expired") return "already_expired";
+  if (session.status !== "open") {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_FAILED", { operation: "checkout.sessions.expire" });
+  }
+  return "expire";
+}
+
+// Create waits and session cleanup share one deadline: graceMs after entry.
+// The remaining budget is checked before every cleanup, and that cleanup is
+// only awaited for the time still left. When the budget is gone, no further
+// cleanup starts.
+// A timeout ends the wait. It does not abort a network call that has already
+// started. This function does not continue cleanup after it returns, and
+// nothing here continues cleanup after the process exits.
+export async function finishCapturedSessions(input: {
+  capture: CaptureBag;
+  graceMs?: number;
+  cleanup: (sessionId: string) => Promise<void>;
+}): Promise<void> {
+  const graceMs = input.graceMs ?? 15_000;
+  const deadline = Date.now() + graceMs;
+  const remaining = () => deadline - Date.now();
+  const attempted = new Set<string>();
+  const failures: unknown[] = [];
+  let closed = false;
+  let timedOut = false;
+  let lateTail: Promise<void> = Promise.resolve();
+  const previousReady = input.capture.onReady;
+
+  const boundedWait = (timeoutMs: number) => Math.min(60_000, Math.max(1, Math.ceil(timeoutMs)));
+
+  // The timer ends the wait only. The original promise stays attached so a
+  // late resolution or rejection cannot surface as an unhandled rejection,
+  // and it is not used to start more work.
+  const waitForCleanup = (work: Promise<void>, timeoutMs: number): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new SandboxError("STRIPE_SANDBOX_TIMEOUT", { operation: "checkout.sessions.expire", timeoutMs }));
+      }, timeoutMs);
+      work.then(
+        () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        },
+        (err: unknown) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  };
+
+  const cleanOne = async (id: string) => {
+    if (attempted.has(id) || timedOut) return;
+    const left = remaining();
+    if (left <= 0) {
+      timedOut = true;
+      return;
+    }
+    attempted.add(id);
+    try {
+      await waitForCleanup(Promise.resolve(input.cleanup(id)), boundedWait(left));
+    } catch (err) {
+      failures.push(err);
+      if (err instanceof SandboxError && err.code === "STRIPE_SANDBOX_TIMEOUT") timedOut = true;
+    }
+  };
+
+  const drain = async () => {
+    for (;;) {
+      if (timedOut) return;
+      const next = input.capture.ids.filter((id) => !attempted.has(id));
+      if (next.length === 0) return;
+      if (remaining() <= 0) {
+        timedOut = true;
+        return;
+      }
+      await cleanOne(next[0]);
+    }
+  };
+
+  const throwFailure = (err: unknown): never => {
+    if (err instanceof SandboxError) throw err;
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_FAILED", { operation: "checkout.sessions.expire" });
+  };
+
+  input.capture.onReady = (id: string) => {
+    previousReady?.(id);
+    if (!closed || timedOut) return;
+    lateTail = lateTail.then(() => cleanOne(id));
+  };
+
+  try {
+    if (input.capture.pending > 0) {
+      const left = remaining();
+      if (left > 0) {
+        await withTimeout(Promise.all(input.capture.inflight), boundedWait(left), "checkout.sessions.create").catch(() => undefined);
+      }
+    }
+    if (input.capture.pending > 0) {
+      throw new SandboxError("STRIPE_SANDBOX_SESSION_UNSEEN", { operation: "checkout.sessions.create" });
+    }
+    await drain();
+    closed = true;
+    if (!timedOut) await drain();
+    if (!timedOut && remaining() > 0) {
+      for (;;) {
+        const current = lateTail;
+        await current;
+        if (current === lateTail && !timedOut && remaining() > 0) break;
+        if (timedOut || remaining() <= 0) {
+          if (current !== lateTail || input.capture.ids.some((id) => !attempted.has(id))) timedOut = true;
+          break;
+        }
+      }
+    } else if (!timedOut && input.capture.ids.some((id) => !attempted.has(id))) {
+      timedOut = true;
+    }
+    // Same turn as the stability decision. Later onReady calls must not queue a
+    // cleanup, so the drain below cannot leave an observed cleanup running or
+    // queued on the success path. A call that has already started is not aborted.
+    closed = false;
+    if (!timedOut) await drain();
+    if (timedOut) {
+      if (failures.length > 0) throwFailure(failures[0]);
+      throw new SandboxError("STRIPE_SANDBOX_TIMEOUT", { operation: "checkout.sessions.expire", timeoutMs: boundedWait(graceMs) });
+    }
+    if (input.capture.pending > 0 || input.capture.ids.some((id) => !attempted.has(id))) {
+      throw new SandboxError("STRIPE_SANDBOX_SESSION_UNSEEN", { operation: "checkout.sessions.create" });
+    }
+    if (failures.length > 0) throwFailure(failures[0]);
+  } finally {
+    input.capture.onReady = previousReady;
+    void lateTail.then(() => undefined, () => undefined);
+  }
+}
+
+// Session cleanup runs to completion before the customer delete. A session
+// failure, including a cleanup wait that reached the shared deadline, reports
+// every session id whose cleanup was not confirmed and the customer id, then
+// throws without calling deleteCustomer. The timeout does not cancel a request
+// that has already been sent, and nothing continues cleanup after this process exits.
+export async function cleanupSessionsThenCustomer(input: {
+  customerId: string;
+  sessions: CaptureBag;
+  graceMs?: number;
+  cleanupSession: (sessionId: string) => Promise<void>;
+  deleteCustomer: (customerId: string) => Promise<void>;
+  report?: (line: string) => void;
+}): Promise<void> {
+  const report = input.report ?? ((line: string) => {
+    console.error(line);
+  });
+  const cleaned = new Set<string>();
+  try {
+    await finishCapturedSessions({
+      capture: input.sessions,
+      graceMs: input.graceMs,
+      cleanup: async (sessionId) => {
+        await input.cleanupSession(sessionId);
+        cleaned.add(sessionId);
+      },
+    });
+  } catch (err) {
+    for (const sessionId of input.sessions.ids) {
+      if (!cleaned.has(sessionId)) report(`leftover_checkout_session=${sessionId}`);
+    }
+    report(`leftover_stripe_customer=${input.customerId}`);
+    throw err;
+  }
+  await input.deleteCustomer(input.customerId);
+}
+
 function isInside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));

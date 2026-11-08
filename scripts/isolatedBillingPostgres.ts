@@ -16,7 +16,12 @@ const groupPollMs = 20;
 // SIGKILL and a power loss skip the process; nothing here runs after those.
 
 export type IsolatedPostgresOptions = {
-  extraEnv?: { STRIPE_SANDBOX_SECRET_KEY?: string };
+  extraEnv?: {
+    STRIPE_SANDBOX_SECRET_KEY?: string;
+    STRIPE_SANDBOX_PRICE_BASIC?: string;
+    STRIPE_SANDBOX_PRICE_PRO?: string;
+    STRIPE_SANDBOX_PRICE_ELITE?: string;
+  };
   timeoutMs?: number;
   stopCommand?: string;
   stopArgs?: string[];
@@ -221,12 +226,22 @@ export async function runIsolatedPostgres(
   }
 
   let stripeKey = "";
+  const sandboxPrices: Record<string, string> = {};
   if (options.extraEnv?.STRIPE_SANDBOX_SECRET_KEY !== undefined) {
     if (!/^sk_test_[A-Za-z0-9]+$/.test(options.extraEnv.STRIPE_SANDBOX_SECRET_KEY)) {
       console.error("STRIPE_SANDBOX_KEY_REJECTED");
       return empty();
     }
     stripeKey = options.extraEnv.STRIPE_SANDBOX_SECRET_KEY;
+  }
+  for (const name of ["STRIPE_SANDBOX_PRICE_BASIC", "STRIPE_SANDBOX_PRICE_PRO", "STRIPE_SANDBOX_PRICE_ELITE"] as const) {
+    const value = options.extraEnv?.[name];
+    if (value === undefined) continue;
+    if (!/^price_[A-Za-z0-9]+$/.test(value)) {
+      console.error("STRIPE_SANDBOX_PRICE_REJECTED");
+      return empty();
+    }
+    sandboxPrices[name] = value;
   }
 
   const timeoutMs = options.timeoutMs ?? (stripeKey ? 120_000 : undefined);
@@ -396,6 +411,7 @@ export async function runIsolatedPostgres(
                 BILLING_CUSTOMER_PGDATA: data,
               };
               if (stripeKey) childEnv.STRIPE_SANDBOX_SECRET_KEY = stripeKey;
+              for (const [name, value] of Object.entries(sandboxPrices)) childEnv[name] = value;
               if (pidFile) childEnv.ISOLATED_POSTGRES_PID_FILE = pidFile;
               const child = spawn(
                 process.execPath,
