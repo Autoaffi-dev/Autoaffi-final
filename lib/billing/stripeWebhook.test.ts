@@ -1,0 +1,658 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { describe, it } from "node:test";
+import Stripe from "stripe";
+import { CHECKOUT_PRICE_CENTS } from "./checkoutConfig.ts";
+import {
+  STRIPE_WEBHOOK_API_VERSION,
+  commandFromEvent,
+  handleStripeWebhook,
+  readWebhookTestConfig,
+  type WebhookCommand,
+  type WebhookPrices,
+} from "./stripeWebhook.ts";
+
+const PRICES: WebhookPrices = {
+  basic: "price_basic",
+  pro: "price_pro",
+  elite: "price_elite",
+};
+const SECRET = "whsec_testsecret123";
+const ENV = {
+  STRIPE_WEBHOOK_SECRET_TEST: SECRET,
+  STRIPE_PRICE_BASIC_TEST: PRICES.basic,
+  STRIPE_PRICE_PRO_TEST: PRICES.pro,
+  STRIPE_PRICE_ELITE_TEST: PRICES.elite,
+  STRIPE_SECRET_KEY: "sk_live_should_not_be_read",
+  STRIPE_WEBHOOK_SECRET: "whsec_live_should_not_be_read",
+};
+
+type PaidLineFixture = Pick<
+  Stripe.InvoiceLineItem,
+  | "id"
+  | "object"
+  | "amount"
+  | "currency"
+  | "quantity"
+  | "discount_amounts"
+  | "discounts"
+  | "pretax_credit_amounts"
+  | "taxes"
+  | "subscription"
+  | "period"
+  | "pricing"
+  | "parent"
+>;
+
+type PaidPaymentFixture = Pick<
+  Stripe.InvoicePayment,
+  | "id"
+  | "object"
+  | "amount_paid"
+  | "amount_requested"
+  | "currency"
+  | "status"
+  | "is_default"
+  | "invoice"
+  | "payment"
+>;
+
+type PaidListFixture<T> = Pick<Stripe.ApiList<T>, "object" | "data" | "has_more" | "url">;
+
+type PaidInvoiceFixture = Pick<
+  Stripe.Invoice,
+  | "id"
+  | "object"
+  | "status"
+  | "currency"
+  | "billing_reason"
+  | "customer"
+  | "livemode"
+  | "parent"
+  | "amount_due"
+  | "amount_paid"
+  | "amount_remaining"
+  | "amount_overpaid"
+  | "amount_shipping"
+  | "subtotal"
+  | "total"
+  | "subtotal_excluding_tax"
+  | "total_excluding_tax"
+  | "starting_balance"
+  | "ending_balance"
+  | "pre_payment_credit_notes_amount"
+  | "post_payment_credit_notes_amount"
+  | "total_discount_amounts"
+  | "total_pretax_credit_amounts"
+  | "total_taxes"
+  | "discounts"
+  | "automatic_tax"
+  | "metadata"
+> & {
+  lines: PaidListFixture<PaidLineFixture>;
+  payments: PaidListFixture<PaidPaymentFixture>;
+};
+
+type LineDistortion = {
+  [K in keyof PaidLineFixture]?: PaidLineFixture[K];
+} & {
+  price?: { id: string };
+};
+
+type PaymentDistortion = Omit<
+  { [K in keyof PaidPaymentFixture]?: PaidPaymentFixture[K] },
+  "invoice" | "payment"
+> & {
+  invoice?: unknown;
+  payment?: {
+    type?: string;
+    payment_intent?: unknown;
+  };
+};
+
+type InvoiceDistortion = Omit<
+  { [K in keyof PaidInvoiceFixture]?: PaidInvoiceFixture[K] },
+  "lines" | "payments" | "total_taxes"
+> & {
+  lines?: PaidListFixture<LineDistortion>;
+  payments?: PaidListFixture<PaymentDistortion>;
+  total_taxes?: Array<{ amount: number }> | null;
+  subscription?: string;
+};
+
+function validPaidInvoice(): PaidInvoiceFixture {
+  const amount = CHECKOUT_PRICE_CENTS.pro;
+  const line = {
+    id: "il_pro",
+    object: "line_item",
+    amount,
+    currency: "usd",
+    quantity: 1,
+    discount_amounts: [],
+    discounts: [],
+    pretax_credit_amounts: [],
+    taxes: [],
+    subscription: "sub_B",
+    period: { start: 1767225600, end: 1798761600 },
+    pricing: {
+      type: "price_details",
+      unit_amount_decimal: String(amount),
+      price_details: { price: PRICES.pro, product: "prod_pro" },
+    },
+    parent: {
+      type: "subscription_item_details",
+      invoice_item_details: null,
+      subscription_item_details: {
+        invoice_item: null,
+        proration: false,
+        proration_details: null,
+        subscription: "sub_B",
+        subscription_item: "si_B",
+      },
+    },
+  } satisfies PaidLineFixture;
+  return {
+    id: "in_pro",
+    object: "invoice",
+    status: "paid",
+    currency: "usd",
+    billing_reason: "subscription_cycle",
+    customer: "cus_B",
+    livemode: false,
+    parent: {
+      type: "subscription_details",
+      quote_details: null,
+      subscription_details: { metadata: null, subscription: "sub_B" },
+    },
+    amount_due: amount,
+    amount_paid: amount,
+    amount_remaining: 0,
+    amount_overpaid: 0,
+    amount_shipping: 0,
+    subtotal: amount,
+    total: amount,
+    subtotal_excluding_tax: amount,
+    total_excluding_tax: amount,
+    starting_balance: 0,
+    ending_balance: 0,
+    pre_payment_credit_notes_amount: 0,
+    post_payment_credit_notes_amount: 0,
+    total_discount_amounts: [],
+    total_pretax_credit_amounts: [],
+    total_taxes: [],
+    discounts: [],
+    automatic_tax: { enabled: false, disabled_reason: null, liability: null, provider: null, status: null },
+    metadata: { user_id: "22222222-2222-4222-8222-222222222222" },
+    lines: {
+      object: "list",
+      has_more: false,
+      url: "/v1/invoices/in_pro/lines",
+      data: [line],
+    },
+    payments: {
+      object: "list",
+      has_more: false,
+      url: "/v1/invoices/in_pro/payments",
+      data: [
+        {
+          id: "inpay_pro",
+          object: "invoice_payment",
+          amount_paid: amount,
+          amount_requested: amount,
+          currency: "usd",
+          status: "paid",
+          is_default: true,
+          invoice: "in_pro",
+          payment: { type: "payment_intent", payment_intent: "pi_pro" },
+        },
+      ],
+    },
+  } satisfies PaidInvoiceFixture;
+}
+
+// The fixture picks the invoice and line fields this receiver reads, including
+// their nested parent, pricing, and payment objects. It is not a complete
+// Stripe.Invoice. The assertion only lets commandFromEvent accept that partial
+// value; it does not validate a complete Stripe.Event.
+function invoicePaidEvent(invoice: PaidInvoiceFixture | InvoiceDistortion): Stripe.Event {
+  return {
+    id: "evt_invoice",
+    object: "event",
+    api_version: STRIPE_WEBHOOK_API_VERSION,
+    created: 1763000000,
+    livemode: false,
+    pending_webhooks: 1,
+    request: { id: null, idempotency_key: null },
+    type: "invoice.paid",
+    data: { object: invoice },
+  } as Stripe.Event;
+}
+
+function paidInvoice(): Stripe.Event {
+  return invoicePaidEvent(validPaidInvoice());
+}
+
+function distortedPaidInvoice(
+  mutate: (invoice: InvoiceDistortion, line: LineDistortion) => void,
+): Stripe.Event {
+  const invoice: InvoiceDistortion = structuredClone(validPaidInvoice());
+  const line = invoice.lines?.data[0];
+  if (!line) throw new Error("PAID_INVOICE_FIXTURE");
+  mutate(invoice, line);
+  return invoicePaidEvent(invoice);
+}
+
+function statusEvent(status: string, cancel = false): Stripe.Event {
+  return {
+    id: "evt_status",
+    object: "event",
+    api_version: STRIPE_WEBHOOK_API_VERSION,
+    created: 1763000000,
+    livemode: false,
+    pending_webhooks: 1,
+    request: { id: null, idempotency_key: null },
+    type: "customer.subscription.updated",
+    data: {
+      object: {
+        id: "sub_B",
+        object: "subscription",
+        customer: "cus_B",
+        status,
+        cancel_at_period_end: cancel,
+        metadata: {},
+        items: {
+          object: "list",
+          has_more: false,
+          data: [
+            {
+              id: "si_B",
+              object: "subscription_item",
+              current_period_start: 1767225600,
+              current_period_end: 1900000000,
+            },
+          ],
+        },
+      },
+    },
+  } as Stripe.Event;
+}
+
+async function posted(payload: string, header: string | null, enabled = true) {
+  const applied: WebhookCommand[] = [];
+  const headers = new Headers();
+  if (header) headers.set("stripe-signature", header);
+  const response = await handleStripeWebhook({
+    request: new Request("https://app.example/api/billing/webhook", { method: "POST", headers, body: payload }),
+    enabled,
+    env: ENV,
+    constructEvent: (body, signature, secret) => Stripe.webhooks.constructEvent(body, signature, secret),
+    openStore: async () => ({
+      async apply(command) {
+        applied.push(command);
+        return { outcome: command.outcome ?? "invoice_applied" };
+      },
+    }),
+  });
+  return { response, applied, body: await response.json() };
+}
+
+describe("stripe webhook parser", () => {
+  it("reads only the test webhook secret and the test price ids", () => {
+    assert.deepEqual(readWebhookTestConfig(ENV), { secret: SECRET, prices: PRICES });
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_WEBHOOK_SECRET_TEST: "sk_test_secret" }), null);
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_PRO_TEST: PRICES.basic }), null);
+    assert.equal(readWebhookTestConfig({ STRIPE_SECRET_KEY: "sk_live_secret" }), null);
+  });
+
+  it("accepts a signed raw clover invoice and keeps the exact body", async () => {
+    const event = paidInvoice();
+    const payload = ` ${JSON.stringify(event)} `;
+    const header = Stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    const { response, applied, body } = await posted(payload, header);
+    assert.equal(response.status, 200);
+    assert.equal(body.outcome, "invoice_applied");
+    assert.equal(applied.length, 1);
+    assert.equal(applied[0].action, "invoice");
+    assert.equal(applied[0].plan, "pro");
+    assert.equal(applied[0].amount, 1900);
+    assert.equal(applied[0].priceId, PRICES.pro);
+    assert.equal(applied[0].subscriptionId, "sub_B");
+    assert.equal(applied[0].periodEnd, new Date(1798761600 * 1000).toISOString());
+    assert.equal(applied[0].livemode, false);
+  });
+
+  it("rejects a bad signature without opening the store", async () => {
+    const payload = JSON.stringify(paidInvoice());
+    const { response, applied, body } = await posted(payload, "t=1,v1=bad");
+    assert.equal(response.status, 400);
+    assert.equal(body.error, "WEBHOOK_SIGNATURE_INVALID");
+    assert.equal(applied.length, 0);
+  });
+
+  it("stays closed unless the webhook flag is exactly true", async () => {
+    const payload = JSON.stringify(paidInvoice());
+    const header = Stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    const { response, applied, body } = await posted(payload, header, false);
+    assert.equal(response.status, 503);
+    assert.equal(body.error, "WEBHOOK_DISABLED");
+    assert.equal(applied.length, 0);
+  });
+
+  it("does not treat a positive amount_paid as the full monthly price", () => {
+    const command = commandFromEvent(
+      distortedPaidInvoice((invoice) => {
+        invoice.amount_paid = 100;
+      }),
+      PRICES
+    );
+    assert.equal(command?.action, "reject");
+    assert.equal(command?.outcome, "amount_mismatch");
+  });
+
+  it("rejects discounts, credits, taxes, prorations, and out-of-band payments", () => {
+    const cases: Array<[string, (invoice: InvoiceDistortion, line: LineDistortion) => void]> = [
+      ["discount_not_in_scope", (invoice) => { invoice.total_discount_amounts = [{ amount: 100, discount: "di_1" }]; }],
+      ["credit_not_in_scope", (invoice) => { invoice.starting_balance = -500; }],
+      ["credit_not_in_scope", (invoice) => { invoice.pre_payment_credit_notes_amount = 100; }],
+      ["tax_not_in_scope", (invoice) => { invoice.total_taxes = [{ amount: 20 }]; }],
+      ["proration_not_in_scope", (_invoice, line) => {
+        const details = line.parent?.subscription_item_details;
+        if (!details) throw new Error("PAID_INVOICE_FIXTURE");
+        details.proration = true;
+      }],
+      ["paid_out_of_band", (invoice) => {
+        const payment = invoice.payments?.data[0]?.payment;
+        if (!payment) throw new Error("PAID_INVOICE_FIXTURE");
+        payment.type = "payment_record";
+      }],
+      ["payment_not_in_stripe", (invoice) => { delete invoice.payments; }],
+    ];
+    for (const [outcome, mutate] of cases) {
+      const command = commandFromEvent(distortedPaidInvoice(mutate), PRICES);
+      assert.equal(command?.action, "reject", outcome);
+      assert.equal(command?.outcome, outcome);
+    }
+  });
+
+  it("rejects a legacy invoice shape that is not the locked API version", () => {
+    const legacy = distortedPaidInvoice((invoice, line) => {
+      delete invoice.parent;
+      invoice.subscription = "sub_B";
+      delete line.parent;
+      delete line.pricing;
+      line.price = { id: PRICES.pro };
+    });
+    const command = commandFromEvent(legacy, PRICES);
+    assert.equal(command?.action, "reject");
+    assert.notEqual(command?.outcome, null);
+    assert.notEqual(command?.action, "invoice");
+  });
+
+  it("rejects a payment linked to another invoice or missing a PaymentIntent id", () => {
+    const paymentOf = (invoice: InvoiceDistortion) => {
+      const payment = invoice.payments?.data[0];
+      if (!payment) throw new Error("PAID_INVOICE_FIXTURE");
+      return payment;
+    };
+
+    const wrongInvoice = commandFromEvent(
+      distortedPaidInvoice((invoice) => {
+        paymentOf(invoice).invoice = "in_other";
+      }),
+      PRICES
+    );
+    assert.equal(wrongInvoice?.action, "reject");
+    assert.equal(wrongInvoice?.outcome, "payment_not_in_stripe");
+
+    const expandedWrong = commandFromEvent(
+      distortedPaidInvoice((invoice) => {
+        paymentOf(invoice).invoice = { id: "in_other", object: "invoice" };
+      }),
+      PRICES
+    );
+    assert.equal(expandedWrong?.outcome, "payment_not_in_stripe");
+
+    const missingIntent = commandFromEvent(
+      distortedPaidInvoice((invoice) => {
+        paymentOf(invoice).payment = { type: "payment_intent" };
+      }),
+      PRICES
+    );
+    assert.equal(missingIntent?.outcome, "payment_not_in_stripe");
+
+    const invalidIntent = commandFromEvent(
+      distortedPaidInvoice((invoice) => {
+        paymentOf(invoice).payment = { type: "payment_intent", payment_intent: "ch_not_a_payment_intent" };
+      }),
+      PRICES
+    );
+    assert.equal(invalidIntent?.outcome, "payment_not_in_stripe");
+
+    const expandedInvalid = commandFromEvent(
+      distortedPaidInvoice((invoice) => {
+        paymentOf(invoice).payment = { type: "payment_intent", payment_intent: { id: "py_bad", object: "payment_intent" } };
+      }),
+      PRICES
+    );
+    assert.equal(expandedInvalid?.outcome, "payment_not_in_stripe");
+  });
+
+  it("accepts an expanded invoice and PaymentIntent id without calling Stripe", () => {
+    const command = commandFromEvent(
+      distortedPaidInvoice((invoice) => {
+        const payment = invoice.payments?.data[0];
+        if (!payment) throw new Error("PAID_INVOICE_FIXTURE");
+        payment.invoice = { id: "in_pro", object: "invoice" };
+        payment.payment = { type: "payment_intent", payment_intent: { id: "pi_pro", object: "payment_intent" } };
+      }),
+      PRICES
+    );
+    assert.equal(command?.action, "invoice");
+    assert.equal(command?.invoiceId, "in_pro");
+    assert.equal(command?.amount, 1900);
+  });
+
+  it("classifies live mode, the wrong API version, checkout, and refunds without payment proof", () => {
+    const live = paidInvoice();
+    live.livemode = true;
+    assert.equal(commandFromEvent(live, PRICES)?.outcome, "livemode_rejected");
+
+    const oldApi = paidInvoice();
+    oldApi.api_version = "2024-06-20";
+    assert.equal(commandFromEvent(oldApi, PRICES)?.outcome, "api_version_mismatch");
+
+    const checkout = {
+      id: "evt_checkout",
+      object: "event",
+      api_version: STRIPE_WEBHOOK_API_VERSION,
+      created: 1763000000,
+      livemode: false,
+      type: "checkout.session.completed",
+      data: { object: { object: "checkout.session", payment_status: "paid", id: "cs_123" } },
+    } as Stripe.Event;
+    assert.equal(commandFromEvent(checkout, PRICES)?.outcome, "not_payment_proof");
+
+    const refund = { ...checkout, id: "evt_refund", type: "charge.refunded" } as Stripe.Event;
+    assert.equal(commandFromEvent(refund, PRICES)?.outcome, "refund_not_applied");
+  });
+
+  it("reads subscription status without using the item period as paid time", () => {
+    const command = commandFromEvent(statusEvent("trialing", true), PRICES);
+    assert.equal(command?.action, "status");
+    assert.equal(command?.status, "trialing");
+    assert.equal(command?.cancelAtPeriodEnd, true);
+    assert.equal(command?.periodEnd, null);
+    assert.equal(command?.amount, null);
+  });
+
+  it("rejects a missing data object and timestamps outside the date range before the store", async () => {
+    const missing = paidInvoice();
+    delete (missing as { data?: unknown }).data;
+    assert.equal(commandFromEvent(missing, PRICES), null);
+    const missingPayload = JSON.stringify(missing);
+    const missingHeader = Stripe.webhooks.generateTestHeaderString({ payload: missingPayload, secret: SECRET });
+    const missingPosted = await posted(missingPayload, missingHeader);
+    assert.equal(missingPosted.response.status, 400);
+    assert.equal(missingPosted.body.error, "WEBHOOK_PAYLOAD_INVALID");
+    assert.equal(missingPosted.applied.length, 0);
+
+    const bareObject = paidInvoice();
+    bareObject.data = {} as Stripe.Event["data"];
+    assert.equal(commandFromEvent(bareObject, PRICES), null);
+
+    const status = statusEvent("active");
+    delete (status as { data?: unknown }).data;
+    assert.equal(commandFromEvent(status, PRICES), null);
+
+    const created = paidInvoice();
+    created.created = 8_640_000_000_001;
+    assert.equal(commandFromEvent(created, PRICES), null);
+    const createdPayload = JSON.stringify(created);
+    const createdHeader = Stripe.webhooks.generateTestHeaderString({ payload: createdPayload, secret: SECRET });
+    const createdPosted = await posted(createdPayload, createdHeader);
+    assert.equal(createdPosted.response.status, 400);
+    assert.equal(createdPosted.body.error, "WEBHOOK_PAYLOAD_INVALID");
+    assert.equal(createdPosted.applied.length, 0);
+
+    const period = distortedPaidInvoice((_invoice, line) => {
+      line.period = { start: 1767225600, end: 8_640_000_000_001 };
+    });
+    assert.equal(commandFromEvent(period, PRICES), null);
+    const periodPayload = JSON.stringify(period);
+    const periodHeader = Stripe.webhooks.generateTestHeaderString({ payload: periodPayload, secret: SECRET });
+    const periodPosted = await posted(periodPayload, periodHeader);
+    assert.equal(periodPosted.response.status, 400);
+    assert.equal(periodPosted.body.error, "WEBHOOK_PAYLOAD_INVALID");
+    assert.equal(periodPosted.applied.length, 0);
+  });
+
+  it("turns a parser exception into 400 and keeps a database failure at 500", async () => {
+    const event = paidInvoice();
+    const explosive = new Proxy(event, {
+      get(target, prop, receiver) {
+        if (prop === "data") throw new TypeError("data");
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    let opened = false;
+    const parsed = await handleStripeWebhook({
+      request: new Request("https://app.example/api/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "signed" },
+        body: "{}",
+      }),
+      enabled: true,
+      env: ENV,
+      constructEvent: () => explosive,
+      openStore: async () => {
+        opened = true;
+        return { async apply() { return { outcome: "invoice_applied" }; } };
+      },
+    });
+    assert.equal(parsed.status, 400);
+    assert.deepEqual(await parsed.json(), { error: "WEBHOOK_PAYLOAD_INVALID" });
+    assert.equal(opened, false);
+
+    const payload = JSON.stringify(paidInvoice());
+    const header = Stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    const failed = await handleStripeWebhook({
+      request: new Request("https://app.example/api/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": header },
+        body: payload,
+      }),
+      enabled: true,
+      env: ENV,
+      constructEvent: (body, signature, secret) => Stripe.webhooks.constructEvent(body, signature, secret),
+      openStore: async () => {
+        throw new Error("database");
+      },
+    });
+    assert.equal(failed.status, 500);
+    assert.deepEqual(await failed.json(), { error: "WEBHOOK_RETRY" });
+  });
+
+  it("blocks this test receiver in production and does not store a signed live event", async () => {
+    const payload = JSON.stringify(paidInvoice());
+    const header = Stripe.webhooks.generateTestHeaderString({ payload, secret: SECRET });
+    for (const extra of [
+      { NODE_ENV: "production", VERCEL_ENV: "preview" },
+      { NODE_ENV: "development", VERCEL_ENV: "production" },
+    ]) {
+      let opened = false;
+      const response = await handleStripeWebhook({
+        request: new Request("https://app.example/api/billing/webhook", {
+          method: "POST",
+          headers: { "stripe-signature": header },
+          body: payload,
+        }),
+        enabled: true,
+        env: { ...ENV, ...extra },
+        constructEvent: () => {
+          throw new Error("signature should not run");
+        },
+        openStore: async () => {
+          opened = true;
+          return { async apply() { return { outcome: "invoice_applied" }; } };
+        },
+      });
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), { error: "WEBHOOK_PRODUCTION_BLOCKED" });
+      assert.equal(opened, false);
+    }
+
+    const live = paidInvoice();
+    live.livemode = true;
+    const livePayload = JSON.stringify(live);
+    const liveHeader = Stripe.webhooks.generateTestHeaderString({ payload: livePayload, secret: SECRET });
+    let liveOpened = false;
+    const liveResponse = await handleStripeWebhook({
+      request: new Request("https://app.example/api/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": liveHeader },
+        body: livePayload,
+      }),
+      enabled: true,
+      env: ENV,
+      constructEvent: (body, signature, secret) => Stripe.webhooks.constructEvent(body, signature, secret),
+      openStore: async () => {
+        liveOpened = true;
+        return { async apply() { return { outcome: "invoice_applied" }; } };
+      },
+    });
+    assert.equal(liveResponse.status, 400);
+    assert.deepEqual(await liveResponse.json(), { error: "WEBHOOK_LIVEMODE_REJECTED" });
+    assert.equal(liveOpened, false);
+  });
+
+  it("does not accept a deleted subscription whose status is still active", () => {
+    const event = statusEvent("active");
+    event.type = "customer.subscription.deleted";
+    assert.equal(commandFromEvent(event, PRICES)?.outcome, "deleted_status_unexpected");
+  });
+
+  it("keeps the handler and migration on the documented boundaries", () => {
+    const source = readFileSync("lib/billing/stripeWebhook.ts", "utf8");
+    const route = readFileSync("app/api/billing/webhook/route.ts", "utf8");
+    const sql = readFileSync("supabase/migrations/20261112_billing_stripe_events.sql", "utf8");
+    assert.match(source, /request\.text\(\)/);
+    assert.doesNotMatch(source, /request\.json\(|api\.stripe\.com|customers\.create|\.paid_out_of_band/);
+    assert.match(route, /process\.env\.BILLING_WEBHOOK_ENABLED === "true"/);
+    assert.match(route, /constructEvent/);
+    assert.doesNotMatch(route, /process\.env\.BILLING_WEBHOOK_ENABLED\s*=\s*"true"/);
+    assert.match(source, /VERCEL_ENV === "production"/);
+    assert.match(source, /NODE_ENV === "production"/);
+    assert.match(source, /livemode=false does not by itself isolate the database/);
+    assert.match(source, /does not retrieve a PaymentIntent/);
+    assert.doesNotMatch(source, /paymentIntents/);
+    assert.match(sql, /when 'trialing' then 30/);
+    assert.match(sql, /when 'past_due' then 20/);
+    assert.match(sql, /when 'active' then 10/);
+    assert.match(sql, /for update/);
+    assert.match(sql, /grant select, insert on table public\.billing_stripe_events to service_role/);
+    assert.match(sql, /grant select, insert on table public\.billing_stripe_invoices to service_role/);
+    assert.doesNotMatch(sql, /grant (update|delete) on table public\.billing_stripe_events/i);
+    assert.doesNotMatch(sql, /grant update on table public\.billing_stripe_customers/i);
+    assert.doesNotMatch(sql, /grant delete/i);
+  });
+});
