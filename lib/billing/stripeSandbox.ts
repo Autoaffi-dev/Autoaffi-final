@@ -518,3 +518,225 @@ export function findLiveEnvName(env: { readonly [key: string]: string | undefine
   }
   return null;
 }
+
+const WEBHOOK_SECRET = /^whsec_[A-Za-z0-9]+$/;
+const SESSION_ID = /^cs_(?:test_)?[A-Za-z0-9]+$/;
+const CUSTOMER_ID = /^cus_[A-Za-z0-9]+$/;
+const SUBSCRIPTION_ID = /^sub_[A-Za-z0-9]+$/;
+
+export function assertSandboxWebhookSecret(value: string): string {
+  if (!WEBHOOK_SECRET.test(value)) throw new SandboxError("STRIPE_SANDBOX_WEBHOOK_SECRET_REJECTED");
+  return value;
+}
+
+export function readWebhookSecret(resolvedPath: string): string {
+  let text = "";
+  try {
+    text = fs.readFileSync(resolvedPath, "utf8");
+  } catch {
+    throw new SandboxError("STRIPE_SANDBOX_WEBHOOK_SECRET_FILE_MISSING");
+  }
+  const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
+  if (lines.length !== 1) throw new SandboxError("STRIPE_SANDBOX_WEBHOOK_SECRET_REJECTED");
+  return assertSandboxWebhookSecret(lines[0]);
+}
+
+export function safeStripeId(kind: "cs" | "cus" | "sub", value: string | null | undefined): string | null {
+  const pattern = kind === "cs" ? SESSION_ID : kind === "cus" ? CUSTOMER_ID : SUBSCRIPTION_ID;
+  return typeof value === "string" && pattern.test(value) ? value : null;
+}
+
+export type PaidCheckoutSessionView = {
+  id: string;
+  customerId: string | null;
+  livemode: boolean;
+  status: string;
+  clientReferenceId: string | null;
+  attemptId: string | null;
+  subscriptionId: string | null;
+};
+
+export type PaidSubscriptionView = {
+  id: string;
+  customerId: string | null;
+  livemode: boolean;
+  status: string;
+};
+
+export type PaidCleanupExpected = {
+  sessionId: string;
+  customerId: string;
+  attemptId: string;
+};
+
+export type PaidCleanupPlan =
+  | { kind: "expire_open" }
+  | { kind: "cancel_subscription"; subscriptionId: string }
+  | { kind: "delete_customer" };
+
+function attemptMatches(session: PaidCheckoutSessionView, attemptId: string): boolean {
+  const client = session.clientReferenceId;
+  const metadataAttempt = session.attemptId;
+  if (client && client !== attemptId) return false;
+  if (metadataAttempt && metadataAttempt !== attemptId) return false;
+  return client === attemptId || metadataAttempt === attemptId;
+}
+
+// The subscription id is taken from the retrieved checkout session. A customer
+// id, or a subscription id remembered in the local database, is not a selector.
+export function paidSessionCleanupPlan(session: PaidCheckoutSessionView, expected: PaidCleanupExpected): PaidCleanupPlan {
+  if (session.id !== expected.sessionId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_ID_MISMATCH", { operation: "checkout.sessions.retrieve" });
+  }
+  if (session.livemode !== false) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_LIVEMODE", { operation: "checkout.sessions.retrieve" });
+  }
+  if (session.customerId !== expected.customerId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_CUSTOMER_MISMATCH", { operation: "checkout.sessions.retrieve" });
+  }
+  if (!attemptMatches(session, expected.attemptId)) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_ATTEMPT_MISMATCH", { operation: "checkout.sessions.retrieve" });
+  }
+  const subscriptionId = safeStripeId("sub", session.subscriptionId);
+  if (session.subscriptionId && !subscriptionId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_UNCONFIRMED", { operation: "checkout.sessions.retrieve" });
+  }
+  if (session.status === "complete" || (session.status === "expired" && subscriptionId)) {
+    if (!subscriptionId) {
+      throw new SandboxError("STRIPE_SANDBOX_CLEANUP_UNCONFIRMED", { operation: "subscriptions.retrieve" });
+    }
+    return { kind: "cancel_subscription", subscriptionId };
+  }
+  if (session.status === "expired") return { kind: "delete_customer" };
+  if (session.status === "open" && subscriptionId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_UNCONFIRMED", { operation: "checkout.sessions.expire" });
+  }
+  if (session.status === "open") return { kind: "expire_open" };
+  throw new SandboxError("STRIPE_SANDBOX_CLEANUP_FAILED", { operation: "checkout.sessions.retrieve" });
+}
+
+export function paidSubscriptionCleanupPlan(
+  subscription: PaidSubscriptionView,
+  expected: { subscriptionId: string; customerId: string }
+): "cancel" | "already_canceled" {
+  if (subscription.id !== expected.subscriptionId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_SUBSCRIPTION_MISMATCH", { operation: "subscriptions.retrieve" });
+  }
+  if (subscription.livemode !== false) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_LIVEMODE", { operation: "subscriptions.cancel" });
+  }
+  if (subscription.customerId !== expected.customerId) {
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_CUSTOMER_MISMATCH", { operation: "subscriptions.cancel" });
+  }
+  if (subscription.status === "canceled") return "already_canceled";
+  if (["incomplete", "incomplete_expired", "trialing", "active", "past_due", "unpaid", "paused"].includes(subscription.status)) {
+    return "cancel";
+  }
+  throw new SandboxError("STRIPE_SANDBOX_CLEANUP_UNCONFIRMED", { operation: "subscriptions.cancel" });
+}
+
+function leftoverLine(label: "leftover_checkout_session" | "leftover_stripe_customer" | "leftover_stripe_subscription", kind: "cs" | "cus" | "sub", value: string | null): string {
+  return `${label}=${safeStripeId(kind, value) ?? "unrecognized"}`;
+}
+
+// Complete sessions are not expired. The customer delete runs only after the
+// subscription that belongs to this session is confirmed canceled. A timeout
+// ends the wait and does not start the next mutation. It does not abort a
+// request that has already been sent, and nothing here continues cleanup after
+// the process exits.
+export async function cleanupPaidCheckout(input: {
+  expected: PaidCleanupExpected & { userId: string };
+  graceMs?: number;
+  signal?: AbortSignal;
+  retrieveSession: () => Promise<PaidCheckoutSessionView>;
+  retrieveSubscription: (subscriptionId: string) => Promise<PaidSubscriptionView>;
+  expireSession: (sessionId: string) => Promise<void>;
+  confirmSessionExpired: () => Promise<boolean>;
+  cancelSubscription: (subscriptionId: string) => Promise<void>;
+  retrieveCustomer: () => Promise<CleanupCustomer>;
+  deleteCustomer: () => Promise<void>;
+  report?: (line: string) => void;
+}): Promise<void> {
+  const report = input.report ?? ((line: string) => {
+    console.error(line);
+  });
+  const graceMs = input.graceMs ?? 15_000;
+  const deadline = Date.now() + graceMs;
+  const remaining = () => deadline - Date.now();
+  let subscriptionId: string | null = null;
+  let customerDeleted = false;
+
+  const reportLeftovers = () => {
+    report(leftoverLine("leftover_checkout_session", "cs", input.expected.sessionId));
+    if (subscriptionId) report(leftoverLine("leftover_stripe_subscription", "sub", subscriptionId));
+    if (!customerDeleted) report(leftoverLine("leftover_stripe_customer", "cus", input.expected.customerId));
+  };
+
+  const fail = (err: unknown): never => {
+    reportLeftovers();
+    if (err instanceof SandboxError) throw err;
+    throw new SandboxError("STRIPE_SANDBOX_CLEANUP_FAILED", { operation: "sandbox.cleanup" });
+  };
+
+  const refuseBudget = (operation: string): never => {
+    throw new SandboxError("STRIPE_SANDBOX_TIMEOUT", { operation, timeoutMs: Math.min(60_000, Math.max(1, graceMs)) });
+  };
+  const step = async <T>(start: () => Promise<T>, operation: string): Promise<T> => {
+    if (input.signal?.aborted) throw new SandboxError("STRIPE_SANDBOX_INTERRUPTED", { operation });
+    if (remaining() <= 0) refuseBudget(operation);
+    const slice = Math.min(15_000, Math.max(1, Math.ceil(remaining())));
+    const value = await withTimeout(start(), slice, operation);
+    if (input.signal?.aborted) throw new SandboxError("STRIPE_SANDBOX_INTERRUPTED", { operation });
+    return value;
+  };
+
+  try {
+    const session = await step(() => input.retrieveSession(), "checkout.sessions.retrieve");
+    const plan = paidSessionCleanupPlan(session, input.expected);
+    if (plan.kind === "cancel_subscription") {
+      subscriptionId = plan.subscriptionId;
+      const current = await step(() => input.retrieveSubscription(plan.subscriptionId), "subscriptions.retrieve");
+      const decision = paidSubscriptionCleanupPlan(current, {
+        subscriptionId: plan.subscriptionId,
+        customerId: input.expected.customerId,
+      });
+      if (decision === "cancel") {
+        await step(() => input.cancelSubscription(plan.subscriptionId), "subscriptions.cancel");
+        const again = await step(() => input.retrieveSubscription(plan.subscriptionId), "subscriptions.retrieve");
+        if (paidSubscriptionCleanupPlan(again, { subscriptionId: plan.subscriptionId, customerId: input.expected.customerId }) !== "already_canceled") {
+          throw new SandboxError("STRIPE_SANDBOX_CLEANUP_UNCONFIRMED", { operation: "subscriptions.cancel" });
+        }
+      }
+      console.log(`canceled_stripe_subscription=${safeStripeId("sub", plan.subscriptionId) ?? "unrecognized"}`);
+    } else if (plan.kind === "expire_open") {
+      const unpaid = sessionCleanupDecision(
+        {
+          id: session.id,
+          customerId: session.customerId,
+          livemode: session.livemode,
+          status: "open",
+          clientReferenceId: session.clientReferenceId,
+          attemptId: session.attemptId,
+        },
+        { id: input.expected.sessionId, customerId: input.expected.customerId, attemptId: input.expected.attemptId }
+      );
+      if (unpaid !== "expire") {
+        throw new SandboxError("STRIPE_SANDBOX_CLEANUP_FAILED", { operation: "checkout.sessions.expire" });
+      }
+      await step(() => input.expireSession(input.expected.sessionId), "checkout.sessions.expire");
+      const expired = await step(() => input.confirmSessionExpired(), "checkout.sessions.retrieve");
+      if (!expired) throw new SandboxError("STRIPE_SANDBOX_CLEANUP_UNCONFIRMED", { operation: "checkout.sessions.expire" });
+    }
+    const retrieved = await step(() => input.retrieveCustomer(), "customers.retrieve");
+    if (input.signal?.aborted) throw new SandboxError("STRIPE_SANDBOX_INTERRUPTED", { operation: "customers.del" });
+    if (remaining() <= 0) refuseBudget("customers.del");
+    if (cleanupDecision(retrieved, { id: input.expected.customerId, userId: input.expected.userId }) !== "delete") {
+      throw new SandboxError("STRIPE_SANDBOX_CLEANUP_FAILED", { operation: "customers.del" });
+    }
+    await step(() => input.deleteCustomer(), "customers.del");
+    customerDeleted = true;
+    console.log(`deleted_stripe_customer=${safeStripeId("cus", input.expected.customerId) ?? "unrecognized"}`);
+  } catch (err) {
+    fail(err);
+  }
+}

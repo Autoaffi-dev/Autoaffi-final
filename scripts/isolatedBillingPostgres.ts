@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { limitedProcessEnv } from "../lib/billing/limitedProcessEnv";
+import { assertSandboxWebhookSecret, SandboxError } from "../lib/billing/stripeSandbox";
 
 const binDir = "/usr/lib/postgresql/16/bin";
 const initdb = path.join(binDir, "initdb");
@@ -21,6 +22,7 @@ export type IsolatedPostgresOptions = {
     STRIPE_SANDBOX_PRICE_BASIC?: string;
     STRIPE_SANDBOX_PRICE_PRO?: string;
     STRIPE_SANDBOX_PRICE_ELITE?: string;
+    STRIPE_SANDBOX_WEBHOOK_SECRET?: string;
   };
   timeoutMs?: number;
   stopCommand?: string;
@@ -226,6 +228,7 @@ export async function runIsolatedPostgres(
   }
 
   let stripeKey = "";
+  let webhookSecret = "";
   const sandboxPrices: Record<string, string> = {};
   if (options.extraEnv?.STRIPE_SANDBOX_SECRET_KEY !== undefined) {
     if (!/^sk_test_[A-Za-z0-9]+$/.test(options.extraEnv.STRIPE_SANDBOX_SECRET_KEY)) {
@@ -242,6 +245,14 @@ export async function runIsolatedPostgres(
       return empty();
     }
     sandboxPrices[name] = value;
+  }
+  if (options.extraEnv?.STRIPE_SANDBOX_WEBHOOK_SECRET !== undefined) {
+    try {
+      webhookSecret = assertSandboxWebhookSecret(options.extraEnv.STRIPE_SANDBOX_WEBHOOK_SECRET);
+    } catch (err) {
+      console.error(err instanceof SandboxError ? err.code : "STRIPE_SANDBOX_WEBHOOK_SECRET_REJECTED");
+      return empty();
+    }
   }
 
   const timeoutMs = options.timeoutMs ?? (stripeKey ? 120_000 : undefined);
@@ -411,6 +422,7 @@ export async function runIsolatedPostgres(
                 BILLING_CUSTOMER_PGDATA: data,
               };
               if (stripeKey) childEnv.STRIPE_SANDBOX_SECRET_KEY = stripeKey;
+              if (webhookSecret) childEnv.STRIPE_SANDBOX_WEBHOOK_SECRET = webhookSecret;
               for (const [name, value] of Object.entries(sandboxPrices)) childEnv[name] = value;
               if (pidFile) childEnv.ISOLATED_POSTGRES_PID_FILE = pidFile;
               const child = spawn(
