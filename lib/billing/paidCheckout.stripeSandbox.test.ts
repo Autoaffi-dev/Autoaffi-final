@@ -22,11 +22,14 @@ import {
   createPaidWebhookServer,
   createServiceRoleEventStore,
   listenerGate,
+  paidProofChecks,
   paidSandboxPaymentDeadline,
   paymentChainAccepted,
   postSignedEvent,
   replayHeaderDecision,
   type PaidWebhookServer,
+  type StoredPaidProof,
+  type VerifiedSignedEvent,
 } from "./paidCheckoutSandbox";
 import { createStripeCheckoutClient, type CheckoutStripe } from "./stripeCheckout";
 import {
@@ -130,6 +133,35 @@ function snapshot(userId: string): PaidSubscriptionSnapshot | null {
     subscription_status,
     paid_until: paidUntilEpoch && Number.isFinite(epoch) ? new Date(epoch * 1000).toISOString() : "",
   };
+}
+
+function readProof(userId: string): StoredPaidProof {
+  const line = psql(
+    database,
+    serviceSql(`select coalesce(invoice_event_id, '') || '|' || coalesce(payment_event_id, '') || '|' || stripe_invoice_id || '|' || coalesce(invoice_payment_id, '') || '|' || coalesce(payment_intent_id, '') || '|' || coalesce(amount_paid::text, '') || '|' || coalesce(currency, '') || '|' || coalesce(stripe_subscription_id, '') || '|' || coalesce(stripe_customer_id, '') || '|' || coalesce(user_id::text, '') from public.billing_stripe_invoice_proofs where user_id = ${quote(userId)}::uuid and invoice_event_id is not null and payment_event_id is not null`)
+  );
+  const parts = line.split("|");
+  if (parts.length !== 10 || !parts[2] || !parts[5]) throw new SandboxError("STRIPE_SANDBOX_INVOICE_GAP", { operation: "invoice_payment.paid" });
+  return {
+    invoiceEventId: parts[0],
+    paymentEventId: parts[1],
+    invoiceId: parts[2],
+    invoicePaymentId: parts[3],
+    paymentIntentId: parts[4],
+    amount: Number(parts[5]),
+    currency: parts[6],
+    subscriptionId: parts[7],
+    customerId: parts[8],
+    userId: parts[9],
+  };
+}
+
+function signedPair(receiver: PaidWebhookServer, proof: StoredPaidProof): { invoice: VerifiedSignedEvent; payment: VerifiedSignedEvent } {
+  const events = receiver.verifiedPaidEvents();
+  const invoice = events.find((event) => event.eventId === proof.invoiceEventId && event.type === "invoice.paid");
+  const payment = events.find((event) => event.eventId === proof.paymentEventId && event.type === "invoice_payment.paid");
+  if (!invoice || !payment) throw new SandboxError("STRIPE_SANDBOX_INVOICE_GAP", { operation: "invoice_payment.paid" });
+  return { invoice, payment };
 }
 
 function idOf(value: string | { id?: string | null } | null | undefined): string | null {
@@ -294,6 +326,7 @@ describe("Stripe sandbox paid checkout", () => {
       psqlFile(database, "supabase/migrations/20261102_billing_stripe_customers.sql");
       psqlFile(database, "supabase/migrations/20261106_billing_checkout_sessions.sql");
       psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
+      psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
       const client = new Stripe(key, { apiVersion: PAID_SANDBOX_API_VERSION, maxNetworkRetries: 0, timeout: 20_000, telemetry: false });
       const sessions = createCaptureBag();
       const customers = createCaptureBag();
@@ -409,21 +442,41 @@ describe("Stripe sandbox paid checkout", () => {
           assert.equal(row?.paid_until, new Date(Number(periodEnd) * 1000).toISOString());
           assert.equal(getPaidPlan(snapshot(userB), userB, new Date()), "none");
           assert.equal(snapshot(userB), null);
-          const accepted = receiver.acceptedInvoice();
-          if (!accepted) throw new SandboxError("STRIPE_SANDBOX_INVOICE_GAP", { operation: "invoice.paid" });
-          const paidUntil = row?.paid_until;
-          const replayRoom = replayHeaderDecision(accepted.header, Date.now(), Math.ceil(PAID_SANDBOX_REPLAY_TIMEOUT_MS / 1000) + 1);
-          if (replayRoom !== "reuse") throw new SandboxError(replayRoom, { operation: "webhook.replay" });
-          const replay = await postSignedEvent(receiver.port, accepted, PAID_SANDBOX_REPLAY_TIMEOUT_MS).catch(() => {
-            throw new SandboxError("STRIPE_SANDBOX_TIMEOUT", { operation: "webhook.replay", timeoutMs: PAID_SANDBOX_REPLAY_TIMEOUT_MS });
+          if (!capturedCustomer.id) throw new SandboxError("STRIPE_SANDBOX_LISTENER_UNCONFIRMED", { operation: "customer.updated" });
+          const proof = readProof(userA);
+          const pair = signedPair(receiver, proof);
+          const subscriptionId = psql(database, serviceSql(`select stripe_subscription_id from public.billing_subscriptions where user_id = ${quote(userA)}::uuid`));
+          const checks = paidProofChecks(proof, pair.invoice, pair.payment, {
+            userId: userA,
+            customerId: capturedCustomer.id,
+            subscriptionId,
           });
-          if (replay.status === 400 && replay.body.error === "WEBHOOK_SIGNATURE_INVALID") {
-            throw new SandboxError("STRIPE_SANDBOX_SIGNATURE_STALE", { operation: "webhook.replay" });
+          for (const [name, ok] of Object.entries(checks)) {
+            console.log(`proof_${name}=${ok ? "match" : "mismatch"}`);
+            if (!ok) throw new SandboxError("STRIPE_SANDBOX_INVOICE_GAP", { operation: "invoice_payment.paid" });
           }
-          assert.equal(replay.status, 200);
-          assert.equal(replay.body.outcome, "duplicate");
+          const paidUntil = row?.paid_until;
+          const proofBefore = psql(database, serviceSql(`select invoice_event_id || '|' || payment_event_id || '|' || invoice_payment_id || '|' || payment_intent_id || '|' || amount_paid::text || '|' || currency || '|' || stripe_subscription_id from public.billing_stripe_invoice_proofs where stripe_invoice_id = ${quote(proof.invoiceId)}`));
+          const needed = Math.ceil(PAID_SANDBOX_REPLAY_TIMEOUT_MS / 1000) + 1;
+          for (const [label, eventId] of [["replay_invoice", proof.invoiceEventId], ["replay_payment", proof.paymentEventId]] as const) {
+            const signed = receiver.originalSigned(eventId);
+            if (!signed) throw new SandboxError("STRIPE_SANDBOX_INVOICE_GAP", { operation: "webhook.replay" });
+            const replayRoom = replayHeaderDecision(signed.header, Date.now(), needed);
+            if (replayRoom !== "reuse") throw new SandboxError(replayRoom, { operation: "webhook.replay" });
+            const replay = await postSignedEvent(receiver.port, signed, PAID_SANDBOX_REPLAY_TIMEOUT_MS).catch(() => {
+              throw new SandboxError("STRIPE_SANDBOX_TIMEOUT", { operation: "webhook.replay", timeoutMs: PAID_SANDBOX_REPLAY_TIMEOUT_MS });
+            });
+            if (replay.status === 400 && replay.body.error === "WEBHOOK_SIGNATURE_INVALID") {
+              throw new SandboxError("STRIPE_SANDBOX_SIGNATURE_STALE", { operation: "webhook.replay" });
+            }
+            assert.equal(replay.status, 200);
+            assert.equal(replay.body.outcome, "duplicate");
+            console.log(`${label}=duplicate`);
+          }
           assert.equal(snapshot(userA)?.paid_until, paidUntil);
           assert.equal(psql(database, serviceSql("select count(*) from public.billing_stripe_invoices")), "1");
+          assert.equal(psql(database, serviceSql(`select invoice_event_id || '|' || payment_event_id || '|' || invoice_payment_id || '|' || payment_intent_id || '|' || amount_paid::text || '|' || currency || '|' || stripe_subscription_id from public.billing_stripe_invoice_proofs where stripe_invoice_id = ${quote(proof.invoiceId)}`)), proofBefore);
+          assert.equal(getPaidPlan(snapshot(userB), userB, new Date()), "none");
           assert.equal(receiver.apiVersions().every((version) => version === PAID_SANDBOX_API_VERSION), true);
           console.log(`event_api_version=${PAID_SANDBOX_API_VERSION}`);
           console.log("paid_chain=basic");

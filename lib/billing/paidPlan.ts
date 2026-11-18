@@ -18,8 +18,9 @@ export type PaidSubscriptionSnapshot = {
 /**
  * Paid access for one user.
  * pending_plan is ignored.
- * cancel_at_period_end does not remove access while status is active or
- * past_due and paid_until is strictly after now.
+ * A paid_until value alone does not grant access. The row must belong to the
+ * user, status must be active or past_due, and paid_until must be after now.
+ * cancel_at_period_end does not remove access while those hold.
  */
 export function getPaidPlan(
   row: PaidSubscriptionSnapshot | null | undefined,

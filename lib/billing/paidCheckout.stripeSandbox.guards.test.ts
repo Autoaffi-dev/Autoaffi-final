@@ -12,11 +12,12 @@ import {
   PAID_SANDBOX_PROCESS_EXIT_RESERVE_MS,
   PAID_SANDBOX_REPLAY_TIMEOUT_MS,
   PAID_SANDBOX_RIG_TIMEOUT_MS,
+  PAID_SANDBOX_CLOVER_ENDPOINT,
   PAID_SANDBOX_WEBHOOK_HOST,
-  STRIPE_LISTEN_COMMAND,
   STRIPE_SIGNATURE_TOLERANCE_SECONDS,
   basicInvoiceSnapshot,
   createPaidWebhookServer,
+  invoicePaymentSnapshot,
   customerUpdatedSnapshot,
   invoicePaidGapCode,
   listenerGate,
@@ -82,6 +83,7 @@ function ids(suffix: string) {
     subscriptionId: "sub_testsubscription",
     priceId: prices.basic,
     paymentIntentId: "pi_testintent",
+    invoicePaymentId: `inpay_${suffix}`,
     periodStart: now - 3600,
     periodEnd: now + 40 * 24 * 3600,
     created: now,
@@ -402,15 +404,22 @@ describe("paid checkout sandbox guards", () => {
     }
   });
 
-  it("names a missing payment list without treating the invoice as paid", () => {
-    const signed = signSnapshot(secret, basicInvoiceSnapshot(ids("gap"), (invoice) => {
-      delete invoice.payments;
-    }));
+  it("accepts a clover invoice without a payment list and still requires the pair", () => {
+    const signed = signSnapshot(secret, basicInvoiceSnapshot(ids("gap")));
     const event = Stripe.webhooks.constructEvent(signed.raw, signed.header, secret);
     const command = commandFromEvent(event, prices);
-    assert.equal(command?.action, "reject");
-    assert.equal(invoicePaidGapCode(event, command), "payments_not_one");
-    assert.equal(paymentChainAccepted({ gaps: ["payments_not_one"], entitlement: "basic" }), false);
+    assert.equal(command?.action, "invoice");
+    assert.equal(command?.outcome, null);
+    assert.equal(invoicePaidGapCode(event, command), null);
+    const record = signSnapshot(secret, invoicePaymentSnapshot(ids("record"), (payment) => {
+      payment.payment = { type: "payment_record", payment_record: "pyr_record" };
+    }));
+    const recordEvent = Stripe.webhooks.constructEvent(record.raw, record.header, secret);
+    const recordCommand = commandFromEvent(recordEvent, prices);
+    assert.equal(recordCommand?.action, "reject");
+    assert.equal(recordCommand?.outcome, "paid_out_of_band");
+    assert.equal(recordCommand?.customerId, null);
+    assert.equal(paymentChainAccepted({ gaps: ["paid_out_of_band"], entitlement: "basic" }), false);
     assert.equal(paymentChainAccepted({ gaps: [], entitlement: "none" }), false);
     assert.equal(paymentChainAccepted({ gaps: [], entitlement: "basic" }), true);
   });
@@ -419,6 +428,7 @@ describe("paid checkout sandbox guards", () => {
     const captured = { id: "cus_testcustomer" as string | null };
     const opens = { count: 0 };
     const applied: string[] = [];
+    const customers: Array<string | null> = [];
     const server = await createPaidWebhookServer({
       port: 0,
       secret,
@@ -428,8 +438,10 @@ describe("paid checkout sandbox guards", () => {
         async apply(command) {
           opens.count += 1;
           applied.push(command.eventId);
+          customers.push(command.customerId);
           if (applied.filter((id) => id === command.eventId).length > 1) return { outcome: "duplicate" };
           if (command.action === "invoice") return { outcome: "invoice_applied" };
+          if (command.action === "payment") return { outcome: "payment_awaiting_invoice" };
           return { outcome: "status_applied" };
         },
       }),
@@ -448,10 +460,33 @@ describe("paid checkout sandbox guards", () => {
       const invoice = signSnapshot(secret, basicInvoiceSnapshot(ids("basic")));
       const first = await postSignedEvent(server.port, invoice);
       assert.equal(first.body.outcome, "invoice_applied");
+      const foreignPay = signSnapshot(secret, invoicePaymentSnapshot({
+        ...ids("foreign"),
+        eventId: "evt_foreignpay",
+        invoiceId: "in_foreignpay",
+        customerId: "cus_someoneelse",
+        paymentIntentId: "pi_foreignpay",
+        invoicePaymentId: "inpay_foreignpay",
+      }));
+      const foreign = await postSignedEvent(server.port, foreignPay);
+      assert.equal(foreign.body.outcome, "payment_awaiting_invoice");
+      assert.equal(applied.includes("evt_foreignpay"), true);
+      assert.equal(customers[customers.length - 1], null);
       const replay = await postSignedEvent(server.port, invoice);
       assert.equal(replay.body.outcome, "duplicate");
       assert.equal(server.gaps().length, 0);
       assert.equal(server.apiVersions().every((version) => version === PAID_SANDBOX_API_VERSION), true);
+      const verified = server.verifiedPaidEvents();
+      const signedInvoice = verified.find((event) => event.eventId === "evt_basic");
+      const signedPayment = verified.find((event) => event.eventId === "evt_foreignpay");
+      assert.equal(signedInvoice?.type, "invoice.paid");
+      assert.equal(signedInvoice?.signatureVerified, true);
+      assert.equal(signedInvoice?.apiVersion, PAID_SANDBOX_API_VERSION);
+      assert.equal(signedPayment?.type, "invoice_payment.paid");
+      assert.equal(signedPayment?.signatureVerified, true);
+      assert.equal(signedPayment?.customerId, null);
+      assert.equal(JSON.stringify(verified).includes(secret), false);
+      assert.equal(server.originalSigned("evt_basic")?.header.startsWith("t="), true);
       const status = signSnapshot(secret, subscriptionStatusSnapshot({
         eventId: "evt_status",
         customerId: "cus_testcustomer",
@@ -460,7 +495,7 @@ describe("paid checkout sandbox guards", () => {
         created: Math.floor(Date.now() / 1000),
       }));
       assert.equal((await postSignedEvent(server.port, status)).body.outcome, "status_applied");
-      assert.equal(server.storeOpens(), 3);
+      assert.equal(server.storeOpens(), 4);
     } finally {
       await server.close();
     }
@@ -559,9 +594,14 @@ describe("paid checkout sandbox guards", () => {
     assert.equal(paidTest.includes("invoices.retrieve"), false);
     assert.equal(paidTest.includes("paymentIntents.retrieve"), false);
     const script = readFileSync("scripts/test-billing-paid-stripe-sandbox.ts", "utf8");
-    for (const part of STRIPE_LISTEN_COMMAND) assert.match(script, new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.equal(script.includes("stripe listen"), false);
+    assert.match(script, new RegExp(PAID_SANDBOX_CLOVER_ENDPOINT.apiVersion.replace(/\./g, "\\.")));
+    assert.match(script, new RegExp(PAID_SANDBOX_CLOVER_ENDPOINT.secretFile));
+    assert.match(script, /127\.0\.0\.1:8787\/billing-webhook/);
+    for (const event of PAID_SANDBOX_CLOVER_ENDPOINT.events) {
+      assert.match(script, new RegExp(event.replace(/\./g, "\\.")));
+    }
     assert.equal(script.includes("--latest"), false);
     assert.equal(script.includes("--live"), false);
-    assert.equal(script.includes("--api-version"), false);
   });
 });

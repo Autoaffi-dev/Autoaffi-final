@@ -12,7 +12,7 @@ const port = process.env.BILLING_CUSTOMER_PGPORT || "";
 const user = process.env.BILLING_CUSTOMER_PGUSER || "";
 const data = process.env.BILLING_CUSTOMER_PGDATA || "";
 const database = "billing_webhook_test";
-const APPLY = "public.billing_apply_stripe_event(text,text,timestamptz,boolean,text,text,text,text,text,text,boolean,text,text,text,integer,timestamptz,timestamptz,text)";
+const APPLY = "public.billing_apply_stripe_event(text,text,timestamptz,boolean,text,text,text,text,text,text,boolean,text,text,text,integer,timestamptz,timestamptz,text,text,text,integer,text,text,boolean)";
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
@@ -150,7 +150,7 @@ type ApplyInput = {
   eventId: string;
   eventType: string;
   created: number;
-  action: "invoice" | "status" | "reject";
+  action: "invoice" | "payment" | "status" | "reject";
   livemode?: boolean;
   outcome?: string | null;
   customerId?: string | null;
@@ -158,9 +158,15 @@ type ApplyInput = {
   status?: string | null;
   cancel?: boolean | null;
   invoiceId?: string | null;
+  invoicePaymentId?: string | null;
+  paymentIntentId?: string | null;
   priceId?: string | null;
   plan?: string | null;
   amount?: number | null;
+  amountRequested?: number | null;
+  currency?: string | null;
+  paymentStatus?: string | null;
+  isDefault?: boolean | null;
   periodStart?: number | null;
   periodEnd?: number | null;
   metadataUserId?: string | null;
@@ -184,6 +190,10 @@ function sqlTime(value: number | null): string {
 }
 
 function call(input: ApplyInput): string {
+  const currency = input.currency === undefined ? (input.action === "invoice" || input.action === "payment" ? "usd" : null) : input.currency;
+  const amountRequested = input.amountRequested === undefined ? (input.action === "payment" ? input.amount ?? null : null) : input.amountRequested;
+  const paymentStatus = input.paymentStatus === undefined ? (input.action === "payment" ? "paid" : null) : input.paymentStatus;
+  const isDefault = input.isDefault === undefined ? (input.action === "payment" ? true : null) : input.isDefault;
   return `select public.billing_apply_stripe_event(
     ${sqlText(input.eventId)},
     ${sqlText(input.eventType)},
@@ -202,7 +212,13 @@ function call(input: ApplyInput): string {
     ${sqlInt(input.amount ?? null)},
     ${sqlTime(input.periodStart ?? null)},
     ${sqlTime(input.periodEnd ?? null)},
-    ${sqlText(input.metadataUserId ?? null)}
+    ${sqlText(input.metadataUserId ?? null)},
+    ${sqlText(input.invoicePaymentId ?? null)},
+    ${sqlText(input.paymentIntentId ?? null)},
+    ${sqlInt(amountRequested)},
+    ${sqlText(currency)},
+    ${sqlText(paymentStatus)},
+    ${sqlBool(isDefault)}
   )`;
 }
 
@@ -211,12 +227,29 @@ function run(input: ApplyInput): string {
 }
 
 function reset() {
+  psql(database, "delete from public.billing_stripe_invoice_proofs");
   psql(database, "delete from public.billing_stripe_invoices");
   psql(database, "delete from public.billing_stripe_events");
   psql(database, "delete from public.billing_subscriptions");
 }
 
+function payment(eventId: string, invoiceId: string, amount = 1900, extra: Partial<ApplyInput> = {}): string {
+  return run({
+    eventId,
+    eventType: "invoice_payment.paid",
+    created: TIE - 1,
+    action: "payment",
+    invoiceId,
+    invoicePaymentId: `inpay_${invoiceId.slice(3)}`,
+    paymentIntentId: `pi_${invoiceId.slice(3)}`,
+    amount,
+    amountRequested: amount,
+    ...extra,
+  });
+}
+
 function invoice(eventId: string, invoiceId: string, subscriptionId = "sub_B"): string {
+  assert.match(payment(`evt_p${eventId.slice(3)}`, invoiceId), /payment_awaiting_invoice/);
   return run({
     eventId,
     eventType: "invoice.paid",
@@ -286,6 +319,7 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261102_billing_stripe_customers.sql");
     psqlFile(database, "supabase/migrations/20261106_billing_checkout_sessions.sql");
     psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
+    psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psql(database, `insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(USER_A)}::uuid, 'cus_A'), (${quote(USER_B)}::uuid, 'cus_B')`);
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_events', 'select')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_events', 'insert')"), "t");
@@ -296,7 +330,19 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_customers', 'update')"), "f");
     assert.equal(psql(database, `select has_function_privilege('service_role', '${APPLY}', 'execute')`), "t");
     assert.equal(psql(database, `select has_function_privilege('anon', '${APPLY}', 'execute')`), "f");
+    assert.equal(psql(database, `select has_function_privilege('authenticated', '${APPLY}', 'execute')`), "f");
+    assert.equal(psql(database, `select has_function_privilege('public', '${APPLY}', 'execute')`), "f");
+    assert.equal(psql(database, "select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'billing_apply_stripe_event'"), "1");
     assert.equal(psql(database, "select has_function_privilege('anon', 'public.billing_lock_stripe_customer(text)', 'execute')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoice_proofs', 'select')"), "t");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoice_proofs', 'insert')"), "t");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoice_proofs', 'update')"), "t");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoice_proofs', 'delete')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('anon', 'public.billing_stripe_invoice_proofs', 'select')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('authenticated', 'public.billing_stripe_invoice_proofs', 'select')"), "f");
+    const anonRead = psqlTry("begin; set local role anon; select count(*) from public.billing_stripe_invoice_proofs; commit;");
+    assert.equal(anonRead.ok, false);
+    assert.match(anonRead.stderr, /permission denied/);
   });
 
   it("keeps an invoice from granting access until a status event arrives", () => {
@@ -326,7 +372,7 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
           assert.match(second, deniedFirst ? /tie_rejected_less_restrictive/ : /tie_applied_stricter/);
           assert.equal(snapshot(USER_B)?.subscription_status, denied);
           assert.equal(entitlement(USER_B), "none");
-          assert.equal(psql(database, "select count(*) from public.billing_stripe_events"), "3");
+          assert.equal(psql(database, "select count(*) from public.billing_stripe_events"), "4");
         }
       }
     }
@@ -474,28 +520,466 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
     assert.equal(snapshot(USER_B), null);
   });
 
-  it("serializes two concurrent first events through the customer binding lock", async () => {
+  it("does not move paid_until for a lone invoice or a lone payment", () => {
     reset();
+    assert.match(run({
+      eventId: "evt_lone_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_lone",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_awaiting_payment/);
+    assert.equal(snapshot(USER_B), null);
+    assert.equal(entitlement(USER_B), "none");
+    assert.match(payment("evt_lone_payment", "in_lonepay"), /payment_awaiting_invoice/);
+    assert.equal(snapshot(USER_B), null);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_customers"), "2");
+    assert.equal(psql(database, "select coalesce(user_id::text, '') from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_lonepay'"), "");
+  });
+
+  it("sets paid_until from either arrival order and still grants none before status", () => {
+    reset();
+    assert.match(run({
+      eventId: "evt_order_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_order",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_awaiting_payment/);
+    assert.equal(snapshot(USER_B), null);
+    assert.match(payment("evt_order_payment", "in_order"), /invoice_applied/);
+    assert.equal(snapshot(USER_B)?.subscription_status, "incomplete");
+    assert.equal(entitlement(USER_B), "none");
+    assert.equal(psql(database, "select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions"), String(PERIOD_END));
+    assert.match(status("evt_order_status", "active", TIE + 5), /status_applied/);
+    assert.equal(psql(database, "select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions"), String(PERIOD_END));
+    assert.equal(entitlement(USER_B), "pro");
+  });
+
+  it("treats the same payment object as one proof and a changed object as a conflict", () => {
+    reset();
+    assert.match(payment("evt_pay_same", "in_same"), /payment_awaiting_invoice/);
+    assert.match(payment("evt_pay_same_again", "in_same", 1900, {
+      invoicePaymentId: "inpay_same",
+      paymentIntentId: "pi_same",
+    }), /payment_already_recorded/);
+    assert.match(payment("evt_pay_same_amount", "in_same", 700, {
+      invoicePaymentId: "inpay_same",
+      paymentIntentId: "pi_same",
+    }), /payment_conflict/);
+    assert.match(payment("evt_pay_same_currency", "in_same", 1900, {
+      invoicePaymentId: "inpay_same",
+      paymentIntentId: "pi_same",
+      currency: "eur",
+    }), /payment_conflict/);
+    assert.equal(psql(database, "select amount_paid::text || ':' || currency from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_same'"), "1900:usd");
+    assert.equal(snapshot(USER_B), null);
+    assert.match(payment("evt_pay_other_object", "in_same", 1900, {
+      invoicePaymentId: "inpay_otherobject",
+      paymentIntentId: "pi_otherobject",
+    }), /payment_conflict/);
+    assert.equal(psql(database, "select invoice_payment_id from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_same'"), "inpay_same");
+  });
+
+  it("does not hide a changed invoice as a duplicate", () => {
+    reset();
+    assert.match(run({
+      eventId: "evt_inv_half",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_half",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_awaiting_payment/);
+    assert.match(run({
+      eventId: "evt_inv_half_again",
+      eventType: "invoice.paid",
+      created: TIE + 1,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_half",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_already_recorded/);
+    assert.match(run({
+      eventId: "evt_inv_half_changed",
+      eventType: "invoice.paid",
+      created: TIE + 2,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_half",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END + 86400,
+    }), /invoice_conflict/);
+    assert.equal(psql(database, "select trunc(extract(epoch from period_end))::text from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_half'"), String(PERIOD_END));
+    assert.equal(snapshot(USER_B), null);
+  });
+
+  it("applies the same invoice once after the binding arrives", () => {
+    reset();
+    const user = "33333333-3333-4333-8333-333333333333";
+    psql(database, `insert into auth.users (id) values (${quote(user)}::uuid)`);
+    assert.match(payment("evt_bind_payment", "in_bindlate"), /payment_awaiting_invoice/);
+    const invoiceInput = {
+      eventId: "evt_bind_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice" as const,
+      customerId: "cus_bindlate",
+      subscriptionId: "sub_bindlate",
+      invoiceId: "in_bindlate",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    };
+    assert.match(run(invoiceInput), /binding_missing/);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_events where event_id = 'evt_bind_invoice'"), "0");
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_customers where stripe_customer_id = 'cus_bindlate'"), "0");
+    assert.equal(snapshot(user), null);
+    psql(database, `insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(user)}::uuid, 'cus_bindlate')`);
+    assert.match(run(invoiceInput), /invoice_applied/);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_events where event_id = 'evt_bind_invoice'"), "1");
+    assert.equal(psql(database, "select invoice_event_id || '|' || payment_event_id || '|' || invoice_payment_id from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_bindlate'"), "evt_bind_invoice|evt_bind_payment|inpay_bindlate");
+    assert.equal(snapshot(user)?.subscription_status, "incomplete");
+    assert.equal(psql(database, `select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions where user_id = ${quote(user)}::uuid`), String(PERIOD_END));
+    assert.equal(entitlement(user), "none");
+    assert.match(run(invoiceInput), /duplicate/);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
+    assert.equal(psql(database, `select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions where user_id = ${quote(user)}::uuid`), String(PERIOD_END));
+  });
+
+  it("keeps the applied proof when later payment and invoice content conflict", () => {
+    reset();
+    assert.match(payment("evt_after_payment", "in_after"), /payment_awaiting_invoice/);
+    assert.match(run({
+      eventId: "evt_after_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_after",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_applied/);
+    const proof = psql(database, "select invoice_event_id || '|' || payment_event_id || '|' || invoice_payment_id || '|' || payment_intent_id || '|' || amount_paid::text || '|' || currency || '|' || trunc(extract(epoch from period_end))::text from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_after'");
+    const invoiceRow = psql(database, "select event_id || '|' || amount_paid::text || '|' || currency || '|' || trunc(extract(epoch from period_end))::text from public.billing_stripe_invoices where stripe_invoice_id = 'in_after'");
+    const paidUntil = psql(database, "select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions where user_id = '22222222-2222-4222-8222-222222222222'");
+    assert.match(payment("evt_after_other", "in_after", 1900, {
+      invoicePaymentId: "inpay_afterother",
+      paymentIntentId: "pi_afterother",
+    }), /payment_conflict/);
+    assert.match(payment("evt_after_changed", "in_after", 700, {
+      invoicePaymentId: "inpay_after",
+      paymentIntentId: "pi_after",
+    }), /payment_conflict/);
+    assert.match(run({
+      eventId: "evt_after_invoice_changed",
+      eventType: "invoice.paid",
+      created: TIE + 2,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_after",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END + 86400,
+    }), /invoice_conflict/);
+    assert.equal(psql(database, "select invoice_event_id || '|' || payment_event_id || '|' || invoice_payment_id || '|' || payment_intent_id || '|' || amount_paid::text || '|' || currency || '|' || trunc(extract(epoch from period_end))::text from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_after'"), proof);
+    assert.equal(psql(database, "select event_id || '|' || amount_paid::text || '|' || currency || '|' || trunc(extract(epoch from period_end))::text from public.billing_stripe_invoices where stripe_invoice_id = 'in_after'"), invoiceRow);
+    assert.equal(psql(database, "select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions where user_id = '22222222-2222-4222-8222-222222222222'"), paidUntil);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
+  });
+
+  it("lets the later invoice finish a repeated payment exactly once", () => {
+    reset();
+    assert.match(payment("evt_repeat_payment", "in_repeat"), /payment_awaiting_invoice/);
+    assert.match(payment("evt_repeat_payment_again", "in_repeat", 1900, {
+      invoicePaymentId: "inpay_repeat",
+      paymentIntentId: "pi_repeat",
+    }), /payment_already_recorded/);
+    assert.equal(snapshot(USER_B), null);
+    const invoiceInput = {
+      eventId: "evt_repeat_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice" as const,
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_repeat",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    };
+    assert.match(run(invoiceInput), /invoice_applied/);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
+    assert.equal(psql(database, "select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions"), String(PERIOD_END));
+    assert.equal(entitlement(USER_B), "none");
+    assert.match(run({ ...invoiceInput, eventId: "evt_repeat_invoice_again", created: TIE + 1 }), /invoice_already_recorded/);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
+    assert.equal(psql(database, "select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions"), String(PERIOD_END));
+    assert.equal(psql(database, "select invoice_payment_id || '|' || payment_event_id from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_repeat'"), "inpay_repeat|evt_repeat_payment");
+  });
+
+  it("does not apply an invoice that carries payment fields without a payment proof", () => {
+    reset();
+    assert.match(run({
+      eventId: "evt_smuggle",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_smuggle",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+      invoicePaymentId: "inpay_smuggle",
+      paymentIntentId: "pi_smuggle",
+      amountRequested: 1900,
+      paymentStatus: "paid",
+      isDefault: true,
+    }), /invoice_awaiting_payment/);
+    assert.equal(snapshot(USER_B), null);
+    assert.equal(entitlement(USER_B), "none");
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "0");
+    assert.equal(psql(database, "select coalesce(invoice_payment_id, '') || '|' || coalesce(payment_intent_id, '') || '|' || coalesce(payment_event_id, '') from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_smuggle'"), "||");
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoice_proofs where invoice_payment_id = 'inpay_smuggle' or payment_intent_id = 'pi_smuggle'"), "0");
+  });
+
+  it("refuses to use one PaymentIntent as proof for two invoices", () => {
+    reset();
+    assert.match(payment("evt_pi_a", "in_pia"), /payment_awaiting_invoice/);
+    assert.match(payment("evt_pi_b", "in_pib", 1900, {
+      invoicePaymentId: "inpay_pib",
+      paymentIntentId: "pi_pia",
+    }), /payment_reused/);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_pib'"), "0");
+    assert.match(run({
+      eventId: "evt_pi_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_pia",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_applied/);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
+    assert.equal(entitlement(USER_B), "none");
+  });
+
+  it("retries after rollback and after a failure once the event insert has happened", () => {
+    reset();
+    psql(database, `begin; select set_config('role', 'service_role', true); ${call({
+      eventId: "evt_rollback",
+      eventType: "invoice_payment.paid",
+      created: TIE,
+      action: "payment",
+      invoiceId: "in_rollback",
+      invoicePaymentId: "inpay_rollback",
+      paymentIntentId: "pi_rollback",
+      amount: 1900,
+    })}; rollback;`);
+    assert.equal(psql(database, "select count(*) from public.billing_stripe_events where event_id = 'evt_rollback'"), "0");
+    assert.match(payment("evt_rollback", "in_rollback"), /payment_awaiting_invoice/);
+
+    assert.match(run({
+      eventId: "evt_fail_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_B",
+      invoiceId: "in_failwrite",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_awaiting_payment/);
+    psql(database, `
+      create function public.billing_test_fail_event_write()
+      returns trigger language plpgsql as $fn$
+      begin
+        if new.event_id = 'evt_failwrite' then
+          raise exception 'BILLING_TEST_WRITE_FAILED';
+        end if;
+        return null;
+      end;
+      $fn$;
+      create constraint trigger billing_test_fail_event_write
+      after insert on public.billing_stripe_events
+      deferrable initially deferred
+      for each row
+      when (new.event_id = 'evt_failwrite')
+      execute function public.billing_test_fail_event_write();
+    `);
+    try {
+      const failed = psqlTry(`begin; select set_config('role', 'service_role', true); ${call({
+        eventId: "evt_failwrite",
+        eventType: "invoice_payment.paid",
+        created: TIE + 1,
+        action: "payment",
+        invoiceId: "in_failwrite",
+        invoicePaymentId: "inpay_failwrite",
+        paymentIntentId: "pi_failwrite",
+        amount: 1900,
+      })}; commit;`);
+      assert.equal(failed.ok, false);
+      assert.match(failed.stderr, /BILLING_TEST_WRITE_FAILED/);
+      assert.equal(psql(database, "select count(*) from public.billing_stripe_events where event_id = 'evt_failwrite'"), "0");
+      assert.equal(psql(database, "select payment_event_id is null from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_failwrite'"), "t");
+      assert.equal(snapshot(USER_B), null);
+    } finally {
+      psql(database, "drop trigger if exists billing_test_fail_event_write on public.billing_stripe_events; drop function if exists public.billing_test_fail_event_write();");
+    }
+    assert.match(payment("evt_failwrite", "in_failwrite"), /invoice_applied/);
+    assert.equal(snapshot(USER_B)?.subscription_status, "incomplete");
+    assert.equal(entitlement(USER_B), "none");
+    assert.equal(psql(database, "select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions"), String(PERIOD_END));
+  });
+
+  it("locks the invoice before the customer so status can proceed while the invoice waits", async () => {
+    reset();
+    const probe = new PsqlSession("webhook_probe");
     const invoiceSession = new PsqlSession("webhook_invoice");
     const statusSession = new PsqlSession("webhook_status");
     try {
-      await invoiceSession.exec(`begin; select set_config('role', 'service_role', true); ${call({
-        eventId: "evt_concurrent_invoice",
+      await probe.exec("begin");
+      await probe.exec("select pg_advisory_xact_lock(hashtextextended('stripe-invoice:in_lockorder', 0))");
+      let invoiceFinished = false;
+      const invoiceResult = invoiceSession.exec(`begin; select set_config('role', 'service_role', true); ${call({
+        eventId: "evt_lockorder",
         eventType: "invoice.paid",
         created: TIE,
         action: "invoice",
         customerId: "cus_B",
         subscriptionId: "sub_B",
-        invoiceId: "in_concurrent",
+        invoiceId: "in_lockorder",
+        priceId: "price_pro",
+        plan: "pro",
+        amount: 1900,
+        periodStart: PERIOD_START,
+        periodEnd: PERIOD_END,
+      })};`).then((value) => {
+        invoiceFinished = true;
+        return value;
+      });
+      const deadline = Date.now() + 5000;
+      let waiting = "";
+      while (Date.now() < deadline && !invoiceFinished) {
+        waiting = psql(database, "select coalesce(wait_event, '') from pg_stat_activity where application_name = 'webhook_invoice'");
+        if (waiting === "advisory") break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.equal(invoiceFinished, false);
+      assert.equal(waiting, "advisory");
+      assert.equal(psql(database, "select count(*) from pg_locks l join pg_stat_activity a on a.pid = l.pid where a.application_name = 'webhook_invoice' and l.locktype = 'tuple'"), "0");
+      const statusResult = await statusSession.exec(`begin; select set_config('role', 'service_role', true); ${call({
+        eventId: "evt_lockstatus",
+        eventType: "customer.subscription.updated",
+        created: TIE,
+        action: "status",
+        customerId: "cus_B",
+        subscriptionId: "sub_B",
+        status: "active",
+        cancel: false,
+      })}; commit;`);
+      assert.match(statusResult, /status_pending/);
+      assert.equal(invoiceFinished, false);
+      await probe.exec("commit");
+      assert.match(await invoiceResult, /invoice_awaiting_payment/);
+      await invoiceSession.exec("commit");
+      assert.equal(snapshot(USER_B), null);
+    } finally {
+      await probe.close();
+      await invoiceSession.close();
+      await statusSession.close();
+    }
+  });
+
+  it("serializes a concurrent invoice, payment, and status update", async () => {
+    reset();
+    const invoiceSession = new PsqlSession("webhook_invoice");
+    const paymentSession = new PsqlSession("webhook_payment");
+    const statusSession = new PsqlSession("webhook_status");
+    try {
+      await invoiceSession.exec(`begin; select set_config('role', 'service_role', true); ${call({
+        eventId: "evt_three_invoice",
+        eventType: "invoice.paid",
+        created: TIE,
+        action: "invoice",
+        customerId: "cus_B",
+        subscriptionId: "sub_B",
+        invoiceId: "in_three",
         priceId: "price_pro",
         plan: "pro",
         amount: 1900,
         periodStart: PERIOD_START,
         periodEnd: PERIOD_END,
       })};`);
-      let finished = false;
+      let paymentFinished = false;
+      let statusFinished = false;
+      const paymentResult = paymentSession.exec(`begin; select set_config('role', 'service_role', true); ${call({
+        eventId: "evt_three_payment",
+        eventType: "invoice_payment.paid",
+        created: TIE,
+        action: "payment",
+        invoiceId: "in_three",
+        invoicePaymentId: "inpay_three",
+        paymentIntentId: "pi_three",
+        amount: 1900,
+      })}; commit;`).then((value) => {
+        paymentFinished = true;
+        return value;
+      });
       const statusResult = statusSession.exec(`begin; select set_config('role', 'service_role', true); ${call({
-        eventId: "evt_concurrent_status",
+        eventId: "evt_three_status",
         eventType: "customer.subscription.updated",
         created: TIE,
         action: "status",
@@ -504,26 +988,35 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
         status: "active",
         cancel: false,
       })}; commit;`).then((value) => {
-        finished = true;
+        statusFinished = true;
         return value;
       });
       const deadline = Date.now() + 5000;
-      let waiting = "";
-      while (Date.now() < deadline && !finished) {
-        waiting = psql(database, "select coalesce(wait_event_type, '') from pg_stat_activity where application_name = 'webhook_status'");
-        if (waiting === "Lock") break;
+      let paymentWait = "";
+      let statusWait = "";
+      const statusBlocked = () => statusWait === "tuple" || statusWait === "transactionid";
+      while (Date.now() < deadline && !(paymentWait === "advisory" && statusBlocked())) {
+        paymentWait = psql(database, "select coalesce(wait_event, '') from pg_stat_activity where application_name = 'webhook_payment' and state = 'active'");
+        statusWait = psql(database, "select coalesce(wait_event, '') from pg_stat_activity where application_name = 'webhook_status' and state = 'active'");
+        if (paymentFinished || statusFinished) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      assert.equal(finished, false);
-      assert.equal(waiting, "Lock");
+      assert.equal(paymentFinished, false);
+      assert.equal(statusFinished, false);
+      assert.equal(paymentWait, "advisory");
+      assert.equal(statusBlocked(), true);
       await invoiceSession.exec("commit");
-      assert.match(await statusResult, /status_applied/);
-      assert.equal(psql(database, "select count(*) from public.billing_subscriptions where user_id = " + `${quote(USER_B)}::uuid`), "1");
+      assert.match(await paymentResult, /invoice_applied/);
+      assert.match(await statusResult, /status_applied|status_pending/);
+      assert.equal(psql(database, "select count(*) from public.billing_subscriptions"), "1");
+      assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
       assert.equal(snapshot(USER_B)?.subscription_status, "active");
+      assert.equal(psql(database, "select trunc(extract(epoch from paid_until))::text from public.billing_subscriptions"), String(PERIOD_END));
       assert.equal(entitlement(USER_B), "pro");
-      assert.equal(psql(database, "select count(*) from public.billing_stripe_events"), "2");
+      assert.equal(psql(database, "select count(*) from public.billing_stripe_events"), "3");
     } finally {
       await invoiceSession.close();
+      await paymentSession.close();
       await statusSession.close();
     }
   });

@@ -43,6 +43,12 @@ export function createSupabaseStripeEventStore(client: StripeEventQueryClient): 
         p_period_start: command.periodStart,
         p_period_end: command.periodEnd,
         p_metadata_user_id: command.metadataUserId,
+        p_invoice_payment_id: command.invoicePaymentId,
+        p_payment_intent_id: command.paymentIntentId,
+        p_amount_requested: command.amountRequested,
+        p_currency: command.currency,
+        p_payment_status: command.paymentStatus,
+        p_is_default: command.isDefault,
       });
       if (result.error || result.data == null) throw new StripeEventStoreError();
       const data = typeof result.data === "string" ? parseOutcome(result.data) : result.data;

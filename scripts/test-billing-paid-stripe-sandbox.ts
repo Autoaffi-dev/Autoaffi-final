@@ -1,20 +1,28 @@
 import { spawnSync } from "node:child_process";
 import { limitedProcessEnv } from "../lib/billing/limitedProcessEnv";
-import { PAID_SANDBOX_RIG_TIMEOUT_MS, STRIPE_LISTEN_COMMAND } from "../lib/billing/paidCheckoutSandbox";
+import { PAID_SANDBOX_CLOVER_ENDPOINT, PAID_SANDBOX_RIG_TIMEOUT_MS } from "../lib/billing/paidCheckoutSandbox";
 import { assertKeyFileOutsideRepo, findLiveEnvName, readTestKey, readWebhookSecret, SandboxError } from "../lib/billing/stripeSandbox";
 import { runIsolatedPostgres } from "./isolatedBillingPostgres";
 
-// Before the manual run, execute `stripe version` and `stripe listen --help` in the same shell.
-// Use the command below only when that help text shows every flag it contains.
-// stripe listen --events invoice.paid,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,customer.updated --events-from @self --forward-to http://127.0.0.1:8787/billing-webhook
-// The public listen reference defaults to a sandbox account. Its live flag switches to live mode and must stay unused.
-// Its latest flag selects the CLI's current latest API version, not 2025-11-17.clover.
-// The reference does not provide a webhook API version pin.
-// Confirm in Workbench that the sandbox account's default API version is already 2025-11-17.clover.
-// Do not change the account version from this test. The Node SDK API version does not render webhook events.
-// This harness fails unless the received event.api_version is 2025-11-17.clover.
+// The CLI listener cannot select webhook API version 2025-11-17.clover.
+// The manual run receives events from a separate sandbox webhook endpoint.
+// That endpoint is created outside this harness and is not created here.
+// Its API version is exactly 2025-11-17.clover.
+// Its signing secret is its own and is read only from STRIPE_SANDBOX_WEBHOOK_SECRET_FILE.
+// Destination: http://127.0.0.1:8787/billing-webhook
+// Events: invoice.paid, invoice_payment.paid, customer.subscription.created, customer.subscription.updated, customer.subscription.deleted, customer.updated
+// This file does not create the endpoint. A manual run requires that endpoint and its own secret to already exist.
+// The receiver fails unless every received event.api_version is 2025-11-17.clover.
 // STRIPE_SANDBOX_KEY_FILE is the existing sandbox key file shared with the checkout and customer scripts.
-void STRIPE_LISTEN_COMMAND;
+const cloverEndpoint = PAID_SANDBOX_CLOVER_ENDPOINT;
+if (
+  cloverEndpoint.apiVersion !== "2025-11-17.clover"
+  || cloverEndpoint.secretFile !== "STRIPE_SANDBOX_WEBHOOK_SECRET_FILE"
+  || cloverEndpoint.url !== "http://127.0.0.1:8787/billing-webhook"
+  || cloverEndpoint.events.join(",") !== "invoice.paid,invoice_payment.paid,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,customer.updated"
+) {
+  throw new Error("STRIPE_SANDBOX_CLOVER_ENDPOINT_MISMATCH");
+}
 
 function report(err: unknown): never {
   if (err instanceof SandboxError) {

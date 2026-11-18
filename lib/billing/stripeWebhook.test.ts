@@ -90,7 +90,7 @@ type PaidInvoiceFixture = Pick<
   | "metadata"
 > & {
   lines: PaidListFixture<PaidLineFixture>;
-  payments: PaidListFixture<PaidPaymentFixture>;
+  payments?: PaidListFixture<PaidPaymentFixture>;
 };
 
 type LineDistortion = {
@@ -132,7 +132,7 @@ function validPaidInvoice(): PaidInvoiceFixture {
     discounts: [],
     pretax_credit_amounts: [],
     taxes: [],
-    subscription: "sub_B",
+    subscription: null,
     period: { start: 1767225600, end: 1798761600 },
     pricing: {
       type: "price_details",
@@ -145,7 +145,7 @@ function validPaidInvoice(): PaidInvoiceFixture {
       subscription_item_details: {
         invoice_item: null,
         proration: false,
-        proration_details: null,
+        proration_details: { credited_items: null },
         subscription: "sub_B",
         subscription_item: "si_B",
       },
@@ -189,24 +189,6 @@ function validPaidInvoice(): PaidInvoiceFixture {
       url: "/v1/invoices/in_pro/lines",
       data: [line],
     },
-    payments: {
-      object: "list",
-      has_more: false,
-      url: "/v1/invoices/in_pro/payments",
-      data: [
-        {
-          id: "inpay_pro",
-          object: "invoice_payment",
-          amount_paid: amount,
-          amount_requested: amount,
-          currency: "usd",
-          status: "paid",
-          is_default: true,
-          invoice: "in_pro",
-          payment: { type: "payment_intent", payment_intent: "pi_pro" },
-        },
-      ],
-    },
   } satisfies PaidInvoiceFixture;
 }
 
@@ -230,6 +212,43 @@ function invoicePaidEvent(invoice: PaidInvoiceFixture | InvoiceDistortion): Stri
 
 function paidInvoice(): Stripe.Event {
   return invoicePaidEvent(validPaidInvoice());
+}
+
+function paymentEvent(mutate?: (payment: {
+  invoice?: unknown;
+  amount_paid?: number;
+  amount_requested?: number;
+  payment?: { type?: string; payment_intent?: unknown; payment_record?: string };
+  is_default?: boolean;
+  status?: string;
+  currency?: string;
+}) => void): Stripe.Event {
+  const payment = {
+    id: "inpay_pro",
+    object: "invoice_payment",
+    amount_paid: 1900,
+    amount_requested: 1900,
+    created: 1763000000,
+    currency: "usd",
+    invoice: "in_pro",
+    is_default: true,
+    livemode: false,
+    payment: { type: "payment_intent", payment_intent: "pi_pro" },
+    status: "paid",
+    status_transitions: { canceled_at: null, paid_at: 1763000000 },
+  };
+  mutate?.(payment);
+  return {
+    id: "evt_payment",
+    object: "event",
+    api_version: STRIPE_WEBHOOK_API_VERSION,
+    created: 1763000000,
+    livemode: false,
+    pending_webhooks: 1,
+    request: { id: null, idempotency_key: null },
+    type: "invoice_payment.paid",
+    data: { object: payment },
+  } as Stripe.Event;
 }
 
 function distortedPaidInvoice(
@@ -318,6 +337,8 @@ describe("stripe webhook parser", () => {
     assert.equal(applied[0].priceId, PRICES.pro);
     assert.equal(applied[0].subscriptionId, "sub_B");
     assert.equal(applied[0].periodEnd, new Date(1798761600 * 1000).toISOString());
+    assert.equal(applied[0].invoicePaymentId, null);
+    assert.equal(applied[0].currency, "usd");
     assert.equal(applied[0].livemode, false);
   });
 
@@ -360,12 +381,11 @@ describe("stripe webhook parser", () => {
         if (!details) throw new Error("PAID_INVOICE_FIXTURE");
         details.proration = true;
       }],
-      ["paid_out_of_band", (invoice) => {
-        const payment = invoice.payments?.data[0]?.payment;
-        if (!payment) throw new Error("PAID_INVOICE_FIXTURE");
-        payment.type = "payment_record";
+      ["proration_not_in_scope", (_invoice, line) => {
+        const details = line.parent?.subscription_item_details;
+        if (!details) throw new Error("PAID_INVOICE_FIXTURE");
+        details.proration_details = { credited_items: { invoice: "in_credit", invoice_line_items: ["il_old"] } };
       }],
-      ["payment_not_in_stripe", (invoice) => { delete invoice.payments; }],
     ];
     for (const [outcome, mutate] of cases) {
       const command = commandFromEvent(distortedPaidInvoice(mutate), PRICES);
@@ -388,68 +408,72 @@ describe("stripe webhook parser", () => {
     assert.notEqual(command?.action, "invoice");
   });
 
+  it("reads an unexpanded invoice_payment.paid without choosing a customer", () => {
+    const command = commandFromEvent(paymentEvent(), PRICES);
+    assert.equal(command?.action, "payment");
+    assert.equal(command?.outcome, null);
+    assert.equal(command?.customerId, null);
+    assert.equal(command?.subscriptionId, null);
+    assert.equal(command?.plan, null);
+    assert.equal(command?.invoiceId, "in_pro");
+    assert.equal(command?.invoicePaymentId, "inpay_pro");
+    assert.equal(command?.paymentIntentId, "pi_pro");
+    assert.equal(command?.amount, 1900);
+    assert.equal(command?.amountRequested, 1900);
+    assert.equal(command?.currency, "usd");
+    assert.equal(command?.isDefault, true);
+  });
+
   it("rejects a payment linked to another invoice or missing a PaymentIntent id", () => {
-    const paymentOf = (invoice: InvoiceDistortion) => {
-      const payment = invoice.payments?.data[0];
-      if (!payment) throw new Error("PAID_INVOICE_FIXTURE");
-      return payment;
-    };
+    const malformedInvoice = commandFromEvent(paymentEvent((payment) => {
+      payment.invoice = "not-an-invoice";
+    }), PRICES);
+    assert.equal(malformedInvoice?.action, "reject");
+    assert.equal(malformedInvoice?.outcome, "payload_rejected");
+    assert.equal(malformedInvoice?.customerId, null);
 
-    const wrongInvoice = commandFromEvent(
-      distortedPaidInvoice((invoice) => {
-        paymentOf(invoice).invoice = "in_other";
-      }),
-      PRICES
-    );
-    assert.equal(wrongInvoice?.action, "reject");
-    assert.equal(wrongInvoice?.outcome, "payment_not_in_stripe");
+    const expandedMissing = commandFromEvent(paymentEvent((payment) => {
+      payment.invoice = { object: "invoice" };
+    }), PRICES);
+    assert.equal(expandedMissing?.outcome, "payload_rejected");
 
-    const expandedWrong = commandFromEvent(
-      distortedPaidInvoice((invoice) => {
-        paymentOf(invoice).invoice = { id: "in_other", object: "invoice" };
-      }),
-      PRICES
-    );
-    assert.equal(expandedWrong?.outcome, "payment_not_in_stripe");
-
-    const missingIntent = commandFromEvent(
-      distortedPaidInvoice((invoice) => {
-        paymentOf(invoice).payment = { type: "payment_intent" };
-      }),
-      PRICES
-    );
+    const missingIntent = commandFromEvent(paymentEvent((payment) => {
+      payment.payment = { type: "payment_intent" };
+    }), PRICES);
     assert.equal(missingIntent?.outcome, "payment_not_in_stripe");
 
-    const invalidIntent = commandFromEvent(
-      distortedPaidInvoice((invoice) => {
-        paymentOf(invoice).payment = { type: "payment_intent", payment_intent: "ch_not_a_payment_intent" };
-      }),
-      PRICES
-    );
+    const invalidIntent = commandFromEvent(paymentEvent((payment) => {
+      payment.payment = { type: "payment_intent", payment_intent: "ch_not_a_payment_intent" };
+    }), PRICES);
     assert.equal(invalidIntent?.outcome, "payment_not_in_stripe");
 
-    const expandedInvalid = commandFromEvent(
-      distortedPaidInvoice((invoice) => {
-        paymentOf(invoice).payment = { type: "payment_intent", payment_intent: { id: "py_bad", object: "payment_intent" } };
-      }),
-      PRICES
-    );
+    const expandedInvalid = commandFromEvent(paymentEvent((payment) => {
+      payment.payment = { type: "payment_intent", payment_intent: { id: "py_bad", object: "payment_intent" } };
+    }), PRICES);
     assert.equal(expandedInvalid?.outcome, "payment_not_in_stripe");
+
+    const outOfBand = commandFromEvent(paymentEvent((payment) => {
+      payment.payment = { type: "payment_record", payment_record: "pyr_out" };
+    }), PRICES);
+    assert.equal(outOfBand?.outcome, "paid_out_of_band");
+
+    const partial = commandFromEvent(paymentEvent((payment) => {
+      payment.amount_paid = 100;
+      payment.amount_requested = 100;
+    }), PRICES);
+    assert.equal(partial?.outcome, "amount_mismatch");
   });
 
   it("accepts an expanded invoice and PaymentIntent id without calling Stripe", () => {
-    const command = commandFromEvent(
-      distortedPaidInvoice((invoice) => {
-        const payment = invoice.payments?.data[0];
-        if (!payment) throw new Error("PAID_INVOICE_FIXTURE");
-        payment.invoice = { id: "in_pro", object: "invoice" };
-        payment.payment = { type: "payment_intent", payment_intent: { id: "pi_pro", object: "payment_intent" } };
-      }),
-      PRICES
-    );
-    assert.equal(command?.action, "invoice");
+    const command = commandFromEvent(paymentEvent((payment) => {
+      payment.invoice = { id: "in_pro", object: "invoice" };
+      payment.payment = { type: "payment_intent", payment_intent: { id: "pi_pro", object: "payment_intent" } };
+    }), PRICES);
+    assert.equal(command?.action, "payment");
     assert.equal(command?.invoiceId, "in_pro");
+    assert.equal(command?.paymentIntentId, "pi_pro");
     assert.equal(command?.amount, 1900);
+    assert.equal(command?.customerId, null);
   });
 
   it("classifies live mode, the wrong API version, checkout, and refunds without payment proof", () => {
@@ -635,6 +659,7 @@ describe("stripe webhook parser", () => {
     const source = readFileSync("lib/billing/stripeWebhook.ts", "utf8");
     const route = readFileSync("app/api/billing/webhook/route.ts", "utf8");
     const sql = readFileSync("supabase/migrations/20261112_billing_stripe_events.sql", "utf8");
+    const proof = readFileSync("supabase/migrations/20261117_billing_invoice_payment_proof.sql", "utf8");
     assert.match(source, /request\.text\(\)/);
     assert.doesNotMatch(source, /request\.json\(|api\.stripe\.com|customers\.create|\.paid_out_of_band/);
     assert.match(route, /process\.env\.BILLING_WEBHOOK_ENABLED === "true"/);
@@ -654,5 +679,10 @@ describe("stripe webhook parser", () => {
     assert.doesNotMatch(sql, /grant (update|delete) on table public\.billing_stripe_events/i);
     assert.doesNotMatch(sql, /grant update on table public\.billing_stripe_customers/i);
     assert.doesNotMatch(sql, /grant delete/i);
+    assert.match(proof, /drop function public\.billing_apply_stripe_event/);
+    assert.match(proof, /grant select, insert, update on table public\.billing_stripe_invoice_proofs to service_role/);
+    assert.match(proof, /Unique here by product rule/);
+    assert.doesNotMatch(proof, /grant delete/i);
+    assert.doesNotMatch(proof, /grant update on table public\.billing_stripe_events/i);
   });
 });

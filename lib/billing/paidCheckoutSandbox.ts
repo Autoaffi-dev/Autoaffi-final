@@ -22,21 +22,24 @@ export const PAID_SANDBOX_REPLAY_TIMEOUT_MS = 3_000;
 export const PAID_SANDBOX_CLOSE_TIMEOUT_MS = 2_000;
 export const PAID_SANDBOX_AFTER_PAYMENT_RESERVE_MS = PAID_SANDBOX_REPLAY_TIMEOUT_MS + PAID_SANDBOX_CLOSE_TIMEOUT_MS + 1_000;
 
-// The public listen reference documents --events, --events-from, and --forward-to.
-// Its default is a sandbox account and the account's default API version.
-// It has no flag that pins 2025-11-17.clover. The Node SDK does not render webhook events.
-// Before a manual run, `stripe version` and `stripe listen --help` are required.
-// --events-from belongs in the command only when that help text shows it.
-export const STRIPE_LISTEN_COMMAND = [
-  "stripe",
-  "listen",
-  "--events",
-  "invoice.paid,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,customer.updated",
-  "--events-from",
-  "@self",
-  "--forward-to",
-  `http://${PAID_SANDBOX_WEBHOOK_HOST}:${PAID_SANDBOX_WEBHOOK_PORT}${PAID_SANDBOX_WEBHOOK_PATH}`,
-] as const;
+// stripe listen cannot select webhook API version 2025-11-17.clover.
+// The manual run receives events from a separate sandbox webhook endpoint.
+// That endpoint is created outside this harness. Its API version is exactly
+// 2025-11-17.clover, and its signing secret is its own.
+// The secret is read only from STRIPE_SANDBOX_WEBHOOK_SECRET_FILE.
+export const PAID_SANDBOX_CLOVER_ENDPOINT = {
+  apiVersion: PAID_SANDBOX_API_VERSION,
+  url: `http://${PAID_SANDBOX_WEBHOOK_HOST}:${PAID_SANDBOX_WEBHOOK_PORT}${PAID_SANDBOX_WEBHOOK_PATH}`,
+  secretFile: "STRIPE_SANDBOX_WEBHOOK_SECRET_FILE",
+  events: [
+    "invoice.paid",
+    "invoice_payment.paid",
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "customer.updated",
+  ],
+} as const;
 
 export function paidSandboxPaymentDeadline(startedAt: number): number {
   return startedAt
@@ -84,6 +87,7 @@ const GAP_CODES = new Set([
   "not_payment_proof",
   "customer_rejected",
   "invoice_rejected",
+  "payment_rejected",
 ]);
 
 const CUSTOMER_ID = /^cus_[A-Za-z0-9]+$/;
@@ -107,6 +111,9 @@ export function customerIdFromStripeEvent(event: Stripe.Event): string | null {
 }
 
 export function eventReachesStore(event: Stripe.Event, capturedCustomerId: string | null): "apply" | "ignore" {
+  // invoice_payment.paid has no customer. Let the store keep it unbound.
+  // The captured customer is not copied onto the event.
+  if (event.type === "invoice_payment.paid") return "apply";
   const customerId = customerIdFromStripeEvent(event);
   if (!capturedCustomerId || !customerId || customerId !== capturedCustomerId) return "ignore";
   return "apply";
@@ -122,16 +129,18 @@ export function invoicePaidGapCode(event: Stripe.Event, command: WebhookCommand 
   if (event.type !== "invoice.paid") return null;
   if (command?.action === "invoice" && command.outcome === null && command.apiVersion === PAID_SANDBOX_API_VERSION) return null;
   if (command?.outcome === "api_version_mismatch" || event.api_version !== PAID_SANDBOX_API_VERSION) return "api_version_mismatch";
-  const invoice = invoiceOf(event);
-  if (!invoice || !command) return "payload_invalid";
-  const payments = invoice.payments;
-  if (!payments || payments.has_more !== false || payments.data.length !== 1) return "payments_not_one";
-  const line = invoice.lines?.data?.[0];
-  const details = line?.parent?.subscription_item_details;
-  if (details && details.proration_details != null) return "proration_details_present";
-  if (line && line.subscription == null) return "line_subscription_absent";
+  if (!invoiceOf(event) || !command) return "payload_invalid";
   if (command.outcome && GAP_CODES.has(command.outcome)) return command.outcome;
   return "invoice_rejected";
+}
+
+export function paymentGapCode(event: Stripe.Event, command: WebhookCommand | null): string | null {
+  if (event.type !== "invoice_payment.paid") return null;
+  if (command?.action === "payment" && command.outcome === null && command.apiVersion === PAID_SANDBOX_API_VERSION) return null;
+  if (command?.outcome === "api_version_mismatch" || event.api_version !== PAID_SANDBOX_API_VERSION) return "api_version_mismatch";
+  if (!command) return "payload_invalid";
+  if (command.outcome && GAP_CODES.has(command.outcome)) return command.outcome;
+  return "payment_rejected";
 }
 
 export function paymentChainAccepted(input: { gaps: readonly string[]; entitlement: string }): boolean {
@@ -149,6 +158,7 @@ type InvoiceIds = {
   subscriptionId: string;
   priceId: string;
   paymentIntentId: string;
+  invoicePaymentId: string;
   periodStart: number;
   periodEnd: number;
   created: number;
@@ -166,7 +176,7 @@ export function basicInvoiceSnapshot(ids: InvoiceIds, mutate?: (invoice: Record<
     discounts: [],
     pretax_credit_amounts: [],
     taxes: [],
-    subscription: ids.subscriptionId,
+    subscription: null,
     period: { start: ids.periodStart, end: ids.periodEnd },
     pricing: {
       type: "price_details",
@@ -179,7 +189,7 @@ export function basicInvoiceSnapshot(ids: InvoiceIds, mutate?: (invoice: Record<
       subscription_item_details: {
         invoice_item: null,
         proration: false,
-        proration_details: null,
+        proration_details: { credited_items: null },
         subscription: ids.subscriptionId,
         subscription_item: "si_basic",
       },
@@ -218,24 +228,6 @@ export function basicInvoiceSnapshot(ids: InvoiceIds, mutate?: (invoice: Record<
     automatic_tax: { enabled: false, disabled_reason: null, liability: null, provider: null, status: null },
     metadata: {},
     lines: { object: "list", has_more: false, url: "/v1/invoices/in_basic/lines", data: [line] },
-    payments: {
-      object: "list",
-      has_more: false,
-      url: "/v1/invoices/in_basic/payments",
-      data: [
-        {
-          id: "inpay_basic",
-          object: "invoice_payment",
-          amount_paid: amount,
-          amount_requested: amount,
-          currency: "usd",
-          status: "paid",
-          is_default: true,
-          invoice: ids.invoiceId,
-          payment: { type: "payment_intent", payment_intent: ids.paymentIntentId },
-        },
-      ],
-    },
   };
   mutate?.(invoice, line);
   return {
@@ -248,6 +240,35 @@ export function basicInvoiceSnapshot(ids: InvoiceIds, mutate?: (invoice: Record<
     request: { id: null, idempotency_key: null },
     type: "invoice.paid",
     data: { object: invoice },
+  };
+}
+
+export function invoicePaymentSnapshot(ids: InvoiceIds, mutate?: (payment: Record<string, unknown>) => void): Record<string, unknown> {
+  const payment: Record<string, unknown> = {
+    id: ids.invoicePaymentId,
+    object: "invoice_payment",
+    amount_paid: 700,
+    amount_requested: 700,
+    created: ids.created,
+    currency: "usd",
+    invoice: ids.invoiceId,
+    is_default: true,
+    livemode: false,
+    payment: { type: "payment_intent", payment_intent: ids.paymentIntentId },
+    status: "paid",
+    status_transitions: { canceled_at: null, paid_at: ids.created },
+  };
+  mutate?.(payment);
+  return {
+    id: ids.eventId,
+    object: "event",
+    api_version: PAID_SANDBOX_API_VERSION,
+    created: ids.created,
+    livemode: false,
+    pending_webhooks: 1,
+    request: { id: null, idempotency_key: null },
+    type: "invoice_payment.paid",
+    data: { object: payment },
   };
 }
 
@@ -315,8 +336,11 @@ function sqlTime(value: string | null): string {
 
 export function applyStripeEventSql(command: WebhookCommand): string {
   const amount = command.amount === null ? "null::integer" : String(command.amount);
-  if (command.amount !== null && (!Number.isInteger(command.amount) || command.amount < 0 || command.amount > 100_000)) {
-    throw new Error("WEBHOOK_STORE_INPUT_REJECTED");
+  const amountRequested = command.amountRequested === null ? "null::integer" : String(command.amountRequested);
+  for (const value of [command.amount, command.amountRequested]) {
+    if (value !== null && (!Number.isInteger(value) || value < 0 || value > 100_000)) {
+      throw new Error("WEBHOOK_STORE_INPUT_REJECTED");
+    }
   }
   const cancel = command.cancelAtPeriodEnd === null ? "null::boolean" : command.cancelAtPeriodEnd ? "true" : "false";
   return `select public.billing_apply_stripe_event(
@@ -325,7 +349,7 @@ export function applyStripeEventSql(command: WebhookCommand): string {
     ${sqlTime(command.eventCreated)},
     ${command.livemode ? "true" : "false"},
     ${sqlText(command.apiVersion, API_VERSION)},
-    ${sqlText(command.action, /^(invoice|status|reject)$/)},
+    ${sqlText(command.action, /^(invoice|payment|status|reject)$/)},
     ${sqlText(command.outcome, command.outcome === null ? null : OUTCOME)},
     ${sqlText(command.customerId, command.customerId === null ? null : CUSTOMER_ID)},
     ${sqlText(command.subscriptionId, command.subscriptionId === null ? null : /^sub_[A-Za-z0-9]+$/)},
@@ -337,7 +361,13 @@ export function applyStripeEventSql(command: WebhookCommand): string {
     ${amount},
     ${sqlTime(command.periodStart)},
     ${sqlTime(command.periodEnd)},
-    ${sqlText(command.metadataUserId, command.metadataUserId === null ? null : USER_ID)}
+    ${sqlText(command.metadataUserId, command.metadataUserId === null ? null : USER_ID)},
+    ${sqlText(command.invoicePaymentId, command.invoicePaymentId === null ? null : /^inpay_[A-Za-z0-9_]+$/)},
+    ${sqlText(command.paymentIntentId, command.paymentIntentId === null ? null : /^pi_[A-Za-z0-9_]+$/)},
+    ${amountRequested},
+    ${sqlText(command.currency, command.currency === null ? null : /^usd$/)},
+    ${sqlText(command.paymentStatus, command.paymentStatus === null ? null : /^paid$/)},
+    ${command.isDefault === null ? "null::boolean" : command.isDefault ? "true" : "false"}
   )`;
 }
 
@@ -356,13 +386,75 @@ export function createServiceRoleEventStore(psql: (sql: string) => string): Stri
   };
 }
 
+export type VerifiedSignedEvent = {
+  type: "invoice.paid" | "invoice_payment.paid";
+  apiVersion: string;
+  signatureVerified: true;
+  eventId: string;
+  invoiceId: string;
+  invoicePaymentId: string | null;
+  paymentIntentId: string | null;
+  amount: number | null;
+  currency: string | null;
+  subscriptionId: string | null;
+  customerId: string | null;
+};
+
+export type StoredPaidProof = {
+  invoiceEventId: string;
+  paymentEventId: string;
+  invoiceId: string;
+  invoicePaymentId: string;
+  paymentIntentId: string;
+  amount: number;
+  currency: string;
+  subscriptionId: string;
+  customerId: string;
+  userId: string;
+};
+
+export function paidProofChecks(
+  proof: StoredPaidProof,
+  invoice: VerifiedSignedEvent,
+  payment: VerifiedSignedEvent,
+  expected: { userId: string; customerId: string; subscriptionId: string }
+): Record<"invoice" | "payment" | "invoiceId" | "invoicePaymentId" | "paymentIntent" | "amount" | "currency" | "subscription" | "customer", boolean> {
+  return {
+    invoice: invoice.signatureVerified === true
+      && invoice.type === "invoice.paid"
+      && invoice.apiVersion === PAID_SANDBOX_API_VERSION
+      && invoice.eventId === proof.invoiceEventId,
+    payment: payment.signatureVerified === true
+      && payment.type === "invoice_payment.paid"
+      && payment.apiVersion === PAID_SANDBOX_API_VERSION
+      && payment.eventId === proof.paymentEventId,
+    invoiceId: proof.invoiceId.length > 0
+      && proof.invoiceId === invoice.invoiceId
+      && proof.invoiceId === payment.invoiceId,
+    invoicePaymentId: payment.invoicePaymentId !== null
+      && proof.invoicePaymentId === payment.invoicePaymentId,
+    paymentIntent: payment.paymentIntentId !== null
+      && proof.paymentIntentId === payment.paymentIntentId,
+    amount: proof.amount === invoice.amount && proof.amount === payment.amount,
+    currency: proof.currency === "usd" && invoice.currency === "usd" && payment.currency === "usd",
+    subscription: proof.subscriptionId === expected.subscriptionId
+      && invoice.subscriptionId === expected.subscriptionId
+      && payment.subscriptionId === null,
+    customer: proof.userId === expected.userId
+      && proof.customerId === expected.customerId
+      && invoice.customerId === expected.customerId
+      && payment.customerId === null,
+  };
+}
+
 export type PaidWebhookServer = {
   port: number;
   gaps: () => readonly string[];
   storeOpens: () => number;
   apiVersions: () => readonly string[];
   listener: () => ListenerState;
-  acceptedInvoice: () => { raw: string; header: string } | null;
+  verifiedPaidEvents: () => readonly VerifiedSignedEvent[];
+  originalSigned: (eventId: string) => { raw: string; header: string } | null;
   close: () => Promise<void>;
 };
 
@@ -388,8 +480,8 @@ export async function createPaidWebhookServer(input: {
   const gaps: string[] = [];
   const apiVersions: string[] = [];
   const listener: ListenerState = { ready: false, apiVersionFault: false };
+  const held = new Map<string, { raw: string; header: string; view: VerifiedSignedEvent }>();
   let storeOpens = 0;
-  let accepted: { raw: string; header: string } | null = null;
   const server = http.createServer(async (req, res) => {
     const send = (status: number, body: Record<string, string>) => {
       const payload = JSON.stringify(body);
@@ -437,8 +529,35 @@ export async function createPaidWebhookServer(input: {
       } catch {
         command = null;
       }
-      const gap = invoicePaidGapCode(event, command);
+      const gap = invoicePaidGapCode(event, command) ?? paymentGapCode(event, command);
       if (gap) gaps.push(gap);
+      if (
+        command
+        && command.outcome === null
+        && command.invoiceId
+        && event.api_version === PAID_SANDBOX_API_VERSION
+        && (command.action === "invoice" || command.action === "payment")
+        && (event.type === "invoice.paid" || event.type === "invoice_payment.paid")
+        && !held.has(command.eventId)
+      ) {
+        held.set(command.eventId, {
+          raw,
+          header: signature,
+          view: {
+            type: event.type,
+            apiVersion: event.api_version,
+            signatureVerified: true,
+            eventId: command.eventId,
+            invoiceId: command.invoiceId,
+            invoicePaymentId: command.invoicePaymentId,
+            paymentIntentId: command.paymentIntentId,
+            amount: command.amount,
+            currency: command.currency,
+            subscriptionId: command.subscriptionId,
+            customerId: command.customerId,
+          },
+        });
+      }
       const response = await handleStripeWebhook({
         request: new Request(`http://${PAID_SANDBOX_WEBHOOK_HOST}${PAID_SANDBOX_WEBHOOK_PATH}`, {
           method: "POST",
@@ -465,7 +584,6 @@ export async function createPaidWebhookServer(input: {
         const parsed = JSON.parse(text) as { outcome?: unknown; error?: unknown };
         if (typeof parsed.outcome === "string" && OUTCOME.test(parsed.outcome)) {
           forwarded = { outcome: parsed.outcome };
-          if (parsed.outcome === "invoice_applied") accepted = { raw, header: signature };
         } else if (typeof parsed.error === "string" && ERROR_CODE.test(parsed.error)) {
           forwarded = { error: parsed.error };
         }
@@ -492,7 +610,11 @@ export async function createPaidWebhookServer(input: {
     storeOpens: () => storeOpens,
     apiVersions: () => apiVersions,
     listener: () => ({ ready: listener.ready, apiVersionFault: listener.apiVersionFault }),
-    acceptedInvoice: () => accepted,
+    verifiedPaidEvents: () => [...held.values()].map((entry) => entry.view),
+    originalSigned: (eventId) => {
+      const entry = held.get(eventId);
+      return entry ? { raw: entry.raw, header: entry.header } : null;
+    },
     close: () => new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
   };
 }

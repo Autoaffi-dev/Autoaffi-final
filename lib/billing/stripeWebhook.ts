@@ -13,8 +13,11 @@ import type { StripeEventStore } from "./stripeEventStore";
 // A second subscription id does not replace the first.
 // Discounts, credits, refunds, prorations, and trials do not extend access.
 // A granted plan here does not put payment gates on posts or reels.
-// Payment proof reads ids carried on the invoice payment. It does not retrieve
-// or verify a PaymentIntent through the Stripe API.
+// paid_until moves only when invoice.paid and invoice_payment.paid both match.
+// Neither event alone moves it. getPaidPlan still returns none until the
+// subscription status and owner checks pass.
+// Payment proof reads ids carried on invoice_payment.paid. It does not retrieve a PaymentIntent
+// and it does not choose a customer binding.
 
 export const STRIPE_WEBHOOK_API_VERSION = "2025-11-17.clover";
 
@@ -22,8 +25,9 @@ const EVENT_ID = /^evt_[A-Za-z0-9]+$/;
 const CUSTOMER_ID = /^cus_[A-Za-z0-9]+$/;
 const SUBSCRIPTION_ID = /^sub_[A-Za-z0-9]+$/;
 const INVOICE_ID = /^in_[A-Za-z0-9]+$/;
+const INVOICE_PAYMENT_ID = /^inpay_[A-Za-z0-9_]+$/;
 const PRICE_ID = /^price_[A-Za-z0-9]+$/;
-const PAYMENT_INTENT_ID = /^pi_[A-Za-z0-9]+$/;
+const PAYMENT_INTENT_ID = /^pi_[A-Za-z0-9_]+$/;
 const EVENT_TYPE = /^[a-z0-9_.]+$/;
 // ECMAScript time values are integer milliseconds in [-8.64e15, 8.64e15].
 const MAX_UNIX_SECONDS = 8_640_000_000_000;
@@ -49,16 +53,22 @@ export type WebhookCommand = {
   eventCreated: string;
   livemode: boolean;
   apiVersion: string | null;
-  action: "invoice" | "status" | "reject";
+  action: "invoice" | "payment" | "status" | "reject";
   outcome: string | null;
   customerId: string | null;
   subscriptionId: string | null;
   status: string | null;
   cancelAtPeriodEnd: boolean | null;
   invoiceId: string | null;
+  invoicePaymentId: string | null;
+  paymentIntentId: string | null;
   priceId: string | null;
   plan: CheckoutPlan | null;
   amount: number | null;
+  amountRequested: number | null;
+  currency: string | null;
+  paymentStatus: string | null;
+  isDefault: boolean | null;
   periodStart: string | null;
   periodEnd: string | null;
   metadataUserId: string | null;
@@ -128,6 +138,12 @@ export function commandFromEvent(event: Stripe.Event, prices: WebhookPrices): We
     if (!object) return null;
     if (object.object !== "subscription") return reject(base, "payload_rejected");
     return readSubscription(base, event.type, object as unknown as Stripe.Subscription);
+  }
+  if (event.type === "invoice_payment.paid") {
+    const object = readDataObject(event);
+    if (!object) return null;
+    if (object.object !== "invoice_payment") return reject(base, "payload_rejected");
+    return readInvoicePayment(base, object as unknown as Stripe.InvoicePayment);
   }
   return reject(base, "ignored_type");
 }
@@ -215,7 +231,7 @@ function readInvoice(base: WebhookCommand, invoice: Stripe.Invoice, prices: Webh
   }
   const details = line.parent.subscription_item_details;
   if (!details || details.subscription !== lineSubscription) return reject(next, "payload_rejected");
-  if (details.proration !== false || details.proration_details != null) return reject(next, "proration_not_in_scope");
+  if (prorationOutOfScope(details)) return reject(next, "proration_not_in_scope");
   if (!Array.isArray(invoice.discounts) || !Array.isArray(line.discounts)) return reject(next, "payload_rejected");
   if (
     invoice.discounts.length > 0 ||
@@ -245,9 +261,6 @@ function readInvoice(base: WebhookCommand, invoice: Stripe.Invoice, prices: Webh
     return reject(next, "tax_not_in_scope");
   }
   if (listMissing(invoice.total_taxes) || listMissing(line.taxes)) return reject(next, "payload_rejected");
-  const paymentState = stripePayment(invoice.payments, invoice.id);
-  if (paymentState === "out_of_band") return reject(next, "paid_out_of_band");
-  if (paymentState !== "ok") return reject(next, "payment_not_in_stripe");
 
   const priceId = line.pricing?.type === "price_details" ? line.pricing.price_details?.price ?? null : null;
   const plan = priceId ? planForPrice(prices, priceId) : null;
@@ -283,11 +296,6 @@ function readInvoice(base: WebhookCommand, invoice: Stripe.Invoice, prices: Webh
     periodOk;
   if (!amountsOk) return reject(next, "amount_mismatch");
 
-  const payment = invoice.payments?.data[0];
-  if (!payment || payment.currency !== "usd" || payment.amount_paid !== amount || payment.amount_requested !== amount) {
-    return reject(next, "amount_mismatch");
-  }
-
   return {
     ...next,
     subscriptionId: lineSubscription,
@@ -296,9 +304,40 @@ function readInvoice(base: WebhookCommand, invoice: Stripe.Invoice, prices: Webh
     priceId,
     plan,
     amount,
+    currency: "usd",
     periodStart,
     periodEnd,
     metadataUserId: metadataUser(invoice.metadata),
+  };
+}
+
+function readInvoicePayment(base: WebhookCommand, payment: Stripe.InvoicePayment): WebhookCommand {
+  const invoicePaymentId = INVOICE_PAYMENT_ID.test(payment.id) ? payment.id : null;
+  const invoiceId = linkedInvoiceId(payment.invoice);
+  const next = { ...base, invoiceId, invoicePaymentId };
+  if (!invoicePaymentId || !invoiceId) return reject(next, "payload_rejected");
+  if (payment.payment?.type === "payment_record") return reject(next, "paid_out_of_band");
+  if (payment.status !== "paid") return reject(next, "not_payment_proof");
+  if (payment.is_default !== true || payment.payment?.type !== "payment_intent") return reject(next, "payment_not_in_stripe");
+  const intentId = paymentIntentId(payment.payment);
+  if (!intentId) return reject(next, "payment_not_in_stripe");
+  const paid = allowedAmount(payment.amount_paid);
+  const requested = allowedAmount(payment.amount_requested);
+  if (payment.currency !== "usd" || paid === null || requested === null || paid !== requested) {
+    return reject(next, "amount_mismatch");
+  }
+  return {
+    ...next,
+    action: "payment",
+    outcome: null,
+    customerId: null,
+    subscriptionId: null,
+    paymentIntentId: intentId,
+    amount: paid,
+    amountRequested: requested,
+    currency: "usd",
+    paymentStatus: "paid",
+    isDefault: true,
   };
 }
 
@@ -362,9 +401,15 @@ function blank(event: Envelope): WebhookCommand {
     status: null,
     cancelAtPeriodEnd: null,
     invoiceId: null,
+    invoicePaymentId: null,
+    paymentIntentId: null,
     priceId: null,
     plan: null,
     amount: null,
+    amountRequested: null,
+    currency: null,
+    paymentStatus: null,
+    isDefault: null,
     periodStart: null,
     periodEnd: null,
     metadataUserId: null,
@@ -404,32 +449,33 @@ function subscriptionIdOf(
 ): string | null {
   const fromParent = parent?.subscription_item_details?.subscription ?? null;
   const parentId = typeof fromParent === "string" && SUBSCRIPTION_ID.test(fromParent) ? fromParent : null;
+  if (!parentId) return null;
+  if (subscription == null) return parentId;
   const lineId =
     typeof subscription === "string"
       ? SUBSCRIPTION_ID.test(subscription)
         ? subscription
         : null
-      : subscription && typeof subscription.id === "string" && SUBSCRIPTION_ID.test(subscription.id)
+      : typeof subscription.id === "string" && SUBSCRIPTION_ID.test(subscription.id)
         ? subscription.id
         : null;
-  if (!parentId || !lineId || parentId !== lineId) return null;
+  if (!lineId || parentId !== lineId) return null;
   return parentId;
 }
 
-function stripePayment(payments: Stripe.Invoice["payments"], invoiceId: string): "ok" | "out_of_band" | "missing" {
-  if (!payments || payments.has_more !== false || !Array.isArray(payments.data) || payments.data.length !== 1) {
-    return "missing";
+function prorationOutOfScope(details: { proration: boolean; proration_details: { credited_items: unknown } | null }): boolean {
+  if (details.proration !== false) return true;
+  const extra = details.proration_details;
+  if (extra == null) return false;
+  return extra.credited_items != null;
+}
+
+function allowedAmount(value: unknown): number | null {
+  if (!whole(value)) return null;
+  for (const plan of CHECKOUT_PLANS) {
+    if (CHECKOUT_PRICE_CENTS[plan] === value) return value;
   }
-  const payment = payments.data[0];
-  if (!payment || payment.object !== "invoice_payment") return "missing";
-  if (payment.payment?.type === "payment_record") return "out_of_band";
-  if (payment.status !== "paid" || payment.is_default !== true || payment.payment?.type !== "payment_intent") {
-    return "missing";
-  }
-  if (linkedInvoiceId(payment.invoice) !== invoiceId) return "missing";
-  // Id carried on the invoice payment. This does not retrieve a PaymentIntent.
-  if (!paymentIntentId(payment.payment)) return "missing";
-  return "ok";
+  return null;
 }
 
 function linkedInvoiceId(invoice: Stripe.InvoicePayment["invoice"] | null | undefined): string | null {
