@@ -14,6 +14,7 @@
     "test:billing-webhook-postgres": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs scripts/test-billing-webhook-postgres.ts",
     "test:billing-paid-sandbox-local": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs scripts/test-billing-paid-sandbox-local.ts",
     "test:billing-paid-stripe-sandbox": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs scripts/test-billing-paid-stripe-sandbox.ts",
+    "test:billing-paid-entitlement": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs scripts/test-billing-paid-entitlement.ts",
     "test:billing-customer-linux": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs --test --test-concurrency=1 lib/billing/billingCustomer.stripeSandbox.posix.test.ts lib/billing/isolatedPostgres.lifecycle.test.ts",
     "test:phase1d": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs --test lib/inboxTokenCrypto.test.ts lib/auth/phase1d.contract.test.ts lib/auth/phase1d-b.contract.test.ts lib/business/email/gmailLifecycle.test.ts",
     "test:phase1c": "node --experimental-strip-types --import ./lib/auth/registerRelativeTs.mjs --test lib/auth/phase1c.contract.test.ts lib/user-funnels/phase1c.userFunnels.test.ts",
