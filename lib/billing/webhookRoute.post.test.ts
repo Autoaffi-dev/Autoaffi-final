@@ -76,7 +76,14 @@ const { POST } = await import("../../app/api/billing/webhook/route.ts");
 
 const previous: Record<string, string | undefined> = {
   BILLING_WEBHOOK_ENABLED: process.env.BILLING_WEBHOOK_ENABLED,
+  BILLING_LIVE_WEBHOOK_ENABLED: process.env.BILLING_LIVE_WEBHOOK_ENABLED,
+  STRIPE_ACCOUNT_ID_TEST: process.env.STRIPE_ACCOUNT_ID_TEST,
+  STRIPE_ACCOUNT_ID: process.env.STRIPE_ACCOUNT_ID,
   STRIPE_WEBHOOK_SECRET_TEST: process.env.STRIPE_WEBHOOK_SECRET_TEST,
+  STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
+  STRIPE_PRICE_BASIC: process.env.STRIPE_PRICE_BASIC,
+  STRIPE_PRICE_PRO: process.env.STRIPE_PRICE_PRO,
+  STRIPE_PRICE_ELITE: process.env.STRIPE_PRICE_ELITE,
   STRIPE_PRICE_BASIC_TEST: process.env.STRIPE_PRICE_BASIC_TEST,
   STRIPE_PRICE_PRO_TEST: process.env.STRIPE_PRICE_PRO_TEST,
   STRIPE_PRICE_ELITE_TEST: process.env.STRIPE_PRICE_ELITE_TEST,
@@ -99,7 +106,9 @@ function assignEnv(name: "NODE_ENV" | "VERCEL_ENV", value: string | undefined) {
 
 function enable() {
   process.env.BILLING_WEBHOOK_ENABLED = "true";
+  delete process.env.BILLING_LIVE_WEBHOOK_ENABLED;
   process.env.STRIPE_WEBHOOK_SECRET_TEST = "whsec_testsecret123";
+  process.env.STRIPE_ACCOUNT_ID_TEST = "acct_test";
   process.env.STRIPE_PRICE_BASIC_TEST = "price_basic";
   process.env.STRIPE_PRICE_PRO_TEST = "price_pro";
   process.env.STRIPE_PRICE_ELITE_TEST = "price_elite";
@@ -204,5 +213,47 @@ describe("POST /api/billing/webhook", () => {
     assert.deepEqual(await response.json(), { error: "WEBHOOK_LIVEMODE_REJECTED" });
     assert.equal(harness.constructs, 1);
     assert.equal(harness.opens, 0);
+  });
+
+  it("rejects both activation flags before signature verification", async () => {
+    enable();
+    process.env.BILLING_LIVE_WEBHOOK_ENABLED = "true";
+    harness.constructs = 0;
+    harness.opens = 0;
+    const response = await call("signed");
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "WEBHOOK_MODE_AMBIGUOUS" });
+    assert.equal(harness.constructs, 0);
+    assert.equal(harness.opens, 0);
+  });
+
+  it("accepts a live event in production only when the live flag is the one that is on", async () => {
+    delete process.env.BILLING_WEBHOOK_ENABLED;
+    process.env.BILLING_LIVE_WEBHOOK_ENABLED = "true";
+    process.env.STRIPE_WEBHOOK_SECRET_TEST = "whsec_testsecret123";
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_livesecret123";
+    process.env.STRIPE_ACCOUNT_ID = "acct_live";
+    process.env.STRIPE_PRICE_BASIC = "price_basic";
+    process.env.STRIPE_PRICE_PRO = "price_pro";
+    process.env.STRIPE_PRICE_ELITE = "price_elite";
+    assignEnv("NODE_ENV", "production");
+    assignEnv("VERCEL_ENV", "production");
+    harness.constructs = 0;
+    harness.opens = 0;
+    harness.outcome = "ignored_type";
+    harness.event = {
+      id: "evt_liveok",
+      object: "event",
+      api_version: "2025-11-17.clover",
+      created: 1763000000,
+      livemode: true,
+      type: "customer.created",
+      data: { object: { object: "customer", id: "cus_live" } },
+    };
+    const response = await call("signed");
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { outcome: "ignored_type" });
+    assert.equal(harness.constructs, 1);
+    assert.equal(harness.opens, 1);
   });
 });

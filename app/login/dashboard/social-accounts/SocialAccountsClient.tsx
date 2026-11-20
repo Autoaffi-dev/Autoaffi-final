@@ -167,18 +167,6 @@ const PLATFORM_DESCRIPTION: Record<
     "Connect LinkedIn to bring your professional profile into Autoaffi. Deeper content analytics will only appear when LinkedIn gives Autoaffi access to those signals.",
 };
 
-/*
- * TEMPORARY:
- *
- * This is intentionally left as the existing plan source
- * until Autoaffi's real subscription/plan state is wired
- * into this page.
- *
- * Do not treat this as the final launch plan implementation.
- */
-const ACTIVE_PLAN: Plan =
-  "Elite";
-
 const INITIAL_STATE: Record<
   PlatformKey,
   PlatformState
@@ -631,6 +619,34 @@ export default function SocialAccountsClient() {
   const pathname =
     usePathname();
 
+  const [entitlementPlan, setEntitlementPlan] = useState<
+    "loading" | "error" | "none" | "Basic" | "Pro" | "Elite"
+  >("loading");
+
+  useEffect(() => {
+    let mounted = true;
+    fetch("/api/billing/entitlement", { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => null)) as { plan?: string } | null;
+        if (!mounted) return;
+        if (!response.ok) {
+          setEntitlementPlan("error");
+          return;
+        }
+        if (body?.plan === "basic") setEntitlementPlan("Basic");
+        else if (body?.plan === "pro") setEntitlementPlan("Pro");
+        else if (body?.plan === "elite") setEntitlementPlan("Elite");
+        else if (body?.plan === "none") setEntitlementPlan("none");
+        else setEntitlementPlan("error");
+      })
+      .catch(() => {
+        if (mounted) setEntitlementPlan("error");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const safePath =
     pathname ??
     "/login/dashboard/social-accounts";
@@ -827,29 +843,12 @@ export default function SocialAccountsClient() {
         platform
       ];
 
-    if (
-      ACTIVE_PLAN ===
-      "Elite"
-    ) {
-      return false;
+    if (entitlementPlan === "Elite") return false;
+    if (entitlementPlan === "Pro") return neededPlan === "Elite";
+    if (entitlementPlan === "Basic") {
+      return neededPlan === "Pro" || neededPlan === "Elite";
     }
-
-    if (
-      ACTIVE_PLAN ===
-      "Pro"
-    ) {
-      return (
-        neededPlan ===
-        "Elite"
-      );
-    }
-
-    return (
-      neededPlan ===
-        "Pro" ||
-      neededPlan ===
-        "Elite"
-    );
+    return true;
   }
 
   // -----------------------------------------------------

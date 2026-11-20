@@ -15,7 +15,7 @@ export default function DailyPostDeliveryCard({
   plan,
 }: {
   creatorMode: "beginner" | "consistent" | "growth";
-  plan: "basic" | "pro" | "elite";
+  plan: "none" | "basic" | "pro" | "elite";
 }) {
   const [state, setState] = useState<DeliveryState>({
     enabled: false,
@@ -34,7 +34,7 @@ export default function DailyPostDeliveryCard({
     async function load() {
       try {
         const res = await fetch(
-          `/api/dashboard/daily-post-delivery?creatorMode=${creatorMode}&plan=${plan}`,
+          `/api/dashboard/daily-post-delivery?creatorMode=${creatorMode}`,
           {
             method: "GET",
             cache: "no-store",
@@ -81,7 +81,6 @@ export default function DailyPostDeliveryCard({
         body: JSON.stringify({
           enabled: next,
           creatorMode,
-          plan,
         }),
       });
 

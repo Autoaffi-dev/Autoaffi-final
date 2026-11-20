@@ -269,6 +269,7 @@ const webhookEnv = {
   STRIPE_PRICE_BASIC_TEST: PRICE_BASIC,
   STRIPE_PRICE_PRO_TEST: PRICE_PRO,
   STRIPE_PRICE_ELITE_TEST: PRICE_ELITE,
+  STRIPE_ACCOUNT_ID_TEST: "acct_test",
 };
 
 async function postSigned(signed: { raw: string; header: string }): Promise<string> {
@@ -655,6 +656,7 @@ describe("paid entitlement chain", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
+    psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
   });
 
   it("keeps access through refund and renewal, then removes it when an active subscription is deleted", { timeout: 30_000 }, async () => {

@@ -177,9 +177,11 @@ describe("GET entitlement behavior", () => {
         return row({ user_id: USER_A });
       },
     });
-    const body = await readPlan(response);
-    assert.equal(body.status, 401);
-    assert.equal(body.plan, "none");
+    const text = await response.text();
+    const body = JSON.parse(text) as { plan?: string; error?: string };
+    assert.equal(response.status, 401);
+    assert.equal(body.error, "UNAUTHORIZED");
+    assert.equal(body.plan, undefined);
     assert.equal(reads, 0);
   });
 
@@ -192,11 +194,13 @@ describe("GET entitlement behavior", () => {
         throw new Error(secret);
       },
     });
-    const body = await readPlan(response);
-    assert.equal(body.status, 500);
-    assert.equal(body.plan, "none");
-    assert.equal(body.text.includes(secret), false);
-    assert.equal(body.text.includes("billing_subscriptions"), false);
+    const text = await response.text();
+    const body = JSON.parse(text) as { plan?: string; error?: string };
+    assert.equal(response.status, 500);
+    assert.equal(body.error, "ENTITLEMENT_READ_FAILED");
+    assert.equal(body.plan, undefined);
+    assert.equal(text.includes(secret), false);
+    assert.equal(text.includes("billing_subscriptions"), false);
   });
 
   it("keeps access for cancellation at period end and denies the exact end instant", async () => {

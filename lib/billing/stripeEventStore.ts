@@ -49,6 +49,7 @@ export function createSupabaseStripeEventStore(client: StripeEventQueryClient): 
         p_currency: command.currency,
         p_payment_status: command.paymentStatus,
         p_is_default: command.isDefault,
+        p_account_id: command.accountId,
       });
       if (result.error || result.data == null) throw new StripeEventStoreError();
       const data = typeof result.data === "string" ? parseOutcome(result.data) : result.data;

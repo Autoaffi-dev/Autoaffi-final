@@ -13,6 +13,7 @@ interface DashboardCardProps {
   description: string;
   points?: string[];
   comingSoon?: boolean;
+  forceLocked?: boolean;
 }
 
 export default function DashboardCard({
@@ -24,11 +25,13 @@ export default function DashboardCard({
   description,
   points = [],
   comingSoon = false,
+  forceLocked = false,
 }: DashboardCardProps) {
   // 🔐 LÅST-LOGIK (helt typesafe)
   // - Basic kan inte öppna Pro
   // - Bara Elite kan öppna Elite
   const locked =
+    forceLocked ||
     (minPlan === "pro" && plan === "basic") ||
     (minPlan === "elite" && (plan === "basic" || plan === "pro"));
 
