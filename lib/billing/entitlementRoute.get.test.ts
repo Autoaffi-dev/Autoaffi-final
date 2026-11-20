@@ -191,7 +191,7 @@ describe("exported GET with real requireUserId", () => {
     const body = await response.json();
 
     assert.equal(response.status, 401);
-    assert.deepEqual(body, { plan: "none" });
+    assert.deepEqual(body, { error: "UNAUTHORIZED" });
     assert.equal(response.headers.get("cache-control"), "private, no-store");
     assert.deepEqual(harness.queries, []);
   });

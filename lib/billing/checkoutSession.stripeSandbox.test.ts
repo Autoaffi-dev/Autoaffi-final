@@ -208,6 +208,7 @@ describe("Stripe sandbox checkout session", () => {
     psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
+    psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
     const client = new Stripe(key, {
       apiVersion: "2025-11-17.clover",
       maxNetworkRetries: 0,

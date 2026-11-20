@@ -5,7 +5,7 @@ import DailyPostDeliveryCard from "./DailyPostDeliveryCard";
 
 interface WeeklyFocusProps {
   creatorMode: "beginner" | "consistent" | "growth" | null;
-  plan: "basic" | "pro" | "elite";
+  plan: "none" | "basic" | "pro" | "elite";
 }
 
 type SafeCreatorMode = "beginner" | "consistent" | "growth";
@@ -37,7 +37,7 @@ function getISOWeekNumber(d = new Date()) {
   return weekNo;
 }
 
-function contentCoachBlueprintBeastV2(plan: "basic" | "pro" | "elite") {
+function contentCoachBlueprintBeastV2(plan: "none" | "basic" | "pro" | "elite") {
   const planBlock =
     plan === "elite"
       ? [
@@ -54,6 +54,12 @@ function contentCoachBlueprintBeastV2(plan: "basic" | "pro" | "elite") {
             "- Provide 1 alternate CTA keyword option.",
             "- Provide short repurpose suggestion (Reel -> Post).",
             "- Provide a follow-up DM script.",
+          ].join("\n")
+        : plan === "none"
+        ? [
+            "PLAN RULES:",
+            "- No paid plan is active.",
+            "- Do not assume Basic, Pro, or Elite features.",
           ].join("\n")
         : [
             "PLAN RULES (BASIC):",
@@ -92,7 +98,7 @@ function contentCoachBlueprintBeastV2(plan: "basic" | "pro" | "elite") {
 
 function buildLocalFallback(args: {
   creatorMode: SafeCreatorMode;
-  plan: "basic" | "pro" | "elite";
+  plan: "none" | "basic" | "pro" | "elite";
 }): WeeklyFocusPayload {
   const { creatorMode, plan } = args;
   const week = getISOWeekNumber(new Date());
@@ -191,7 +197,7 @@ export default function WeeklyFocus({ creatorMode, plan }: WeeklyFocusProps) {
 
       try {
         const res = await fetch(
-          `/api/dashboard/weekly-focus?creatorMode=${safeCreatorMode}&plan=${plan}`,
+          `/api/dashboard/weekly-focus?creatorMode=${safeCreatorMode}`,
           { cache: "no-store" }
         );
 
@@ -199,17 +205,26 @@ export default function WeeklyFocus({ creatorMode, plan }: WeeklyFocusProps) {
 
         if (!mounted) return;
 
-        if (res.ok && json?.item) {
+        if (!res.ok || json?.plan === "none") {
+          setWeekly(null);
+          return;
+        }
+
+        if (json?.item) {
           setWeekly(json.item);
           return;
         }
+
+        if (plan !== "none") {
+          setWeekly(buildLocalFallback({ creatorMode: safeCreatorMode, plan }));
+          return;
+        }
       } catch {
-        // fallback below
+        if (mounted) setWeekly(null);
+        return;
       }
 
-      if (mounted) {
-        setWeekly(buildLocalFallback({ creatorMode: safeCreatorMode, plan }));
-      }
+      if (mounted) setWeekly(null);
     }
 
     setLoading(true);

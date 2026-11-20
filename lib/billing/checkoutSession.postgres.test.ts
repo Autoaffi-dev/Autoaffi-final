@@ -223,6 +223,7 @@ describe("checkout postgres transition", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
+    psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'select')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'insert')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'update')"), "t");

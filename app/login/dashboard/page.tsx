@@ -23,6 +23,8 @@ import OnboardingOverlay from "./_components/OnboardingOverlay";
 import OnboardingFlow from "./_components/OnboardingFlow";
 import AISpeech from "./_components/AISpeech";
 import SpotlightHighlight from "./_components/SpotlightHighlight";
+import { useEntitlementView } from "./_components/useEntitlementView";
+import { cardForceLocked, paidCardPlan } from "@/lib/billing/entitlementView";
 
 // TYPES
 type Plan = "basic" | "pro" | "elite";
@@ -111,7 +113,7 @@ function clearSpoken() {
   } catch {}
 }
 
-export default function DashboardPage({ searchParams }: any) {
+export default function DashboardPage() {
   const router = useRouter();
   const { status } = useSession();
 
@@ -135,18 +137,10 @@ export default function DashboardPage({ searchParams }: any) {
   // ✅ block any speech during navigation clicks (Step 1/2/3)
   const suppressSpeechRef = useRef(false);
 
-  // Next.js fix: ensure searchParams is NOT a Promise
-  const resolvedParams =
-    searchParams && typeof searchParams === "object" && !("then" in searchParams)
-      ? searchParams
-      : {};
-
-  const planFromUrl = resolvedParams.plan;
-
-  const activePlan: Plan =
-    planFromUrl === "pro" || planFromUrl === "elite" || planFromUrl === "basic"
-      ? (planFromUrl as Plan)
-      : "basic";
+  const entitlement = useEntitlementView();
+  const paidPlan = paidCardPlan(entitlement);
+  const cardPlan: Plan = paidPlan ?? "basic";
+  const lockPaidCards = cardForceLocked(entitlement, false);
 
   // STATE
   const [creatorMode, setCreatorMode] = useState<CreatorMode>(null);
@@ -560,10 +554,10 @@ export default function DashboardPage({ searchParams }: any) {
       )}
 
       {/* PLAN STRIP */}
-      <PlanStrip plan={activePlan} beginnerHoursLeft={beginnerHoursLeft} />
+      <PlanStrip view={entitlement} beginnerHoursLeft={beginnerHoursLeft} />
 
       {/* CONSISTENCY TEXT */}
-      <ConsistencyText creatorMode={creatorMode} plan={activePlan} />
+      <ConsistencyText creatorMode={creatorMode} />
 
       {/* MINI NAV */}
       <MiniNav onJump={scrollToId} />
@@ -583,7 +577,7 @@ export default function DashboardPage({ searchParams }: any) {
       )}
 
       {/* WEEKLY FOCUS */}
-      <WeeklyFocus creatorMode={creatorMode} plan={activePlan} />
+      <WeeklyFocus creatorMode={creatorMode} plan={paidPlan ?? "none"} />
 
       {/* GROWTH PLAN */}
       {creatorMode && (
@@ -627,7 +621,8 @@ export default function DashboardPage({ searchParams }: any) {
         >
           <div className="grid gap-4 md:grid-cols-3">
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Social Accounts"
               badge="Start"
@@ -637,7 +632,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Affiliate Offers"
               badge="Core"
@@ -649,7 +645,8 @@ export default function DashboardPage({ searchParams }: any) {
 
 
             <DashboardCard
-  plan={activePlan}
+  plan={cardPlan}
+              forceLocked={lockPaidCards}
   minPlan="basic"
   title="Profile Setup"
   badge="Core"
@@ -663,7 +660,8 @@ export default function DashboardPage({ searchParams }: any) {
 />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Autoaffi AI Coach"
               badge="AI Coach"
@@ -683,7 +681,8 @@ export default function DashboardPage({ searchParams }: any) {
         <SectionBlock id="dashboard-content-offers" title="Content & Offers" subtitle="Turn your offers into high-performing content.">
           <div className="grid gap-4 md:grid-cols-3">
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Posts Generator"
               badge="AI + Links"
@@ -693,7 +692,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Reels & Shorts"
               badge="AI Video"
@@ -703,7 +703,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-  plan={activePlan}
+  plan={cardPlan}
+              forceLocked={lockPaidCards}
   minPlan="pro"
   title="Autoaffi Pushes"
   badge="Pro"
@@ -723,7 +724,8 @@ export default function DashboardPage({ searchParams }: any) {
         <SectionBlock id="dashboard-recurring" title="Recurring Income & Funnels" subtitle="Build long-term predictable affiliate income.">
           <div className="grid gap-4 md:grid-cols-3">
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Autoaffi Recurring"
               badge="Lifetime 50%"
@@ -733,7 +735,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Recurring AI Stack"
               badge="AI Tools"
@@ -743,7 +746,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="pro"
               title="Funnel Builders"
               badge="Funnels"
@@ -758,7 +762,8 @@ export default function DashboardPage({ searchParams }: any) {
         <SectionBlock id="dashboard-audience-growth" title="Audience & Growth" subtitle="Find trends, angles & niche opportunities.">
           <div className="grid gap-4 md:grid-cols-3">
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Growth Hub"
               badge="Insights"
@@ -768,7 +773,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="pro"
               title="Smart Suggestions"
               badge="Pro"
@@ -778,7 +784,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="pro"
               title="Viral Heads-Up"
               badge="Trends"
@@ -793,7 +800,8 @@ export default function DashboardPage({ searchParams }: any) {
         <SectionBlock id="dashboard-data-learning" title="Data, Leads & Learning" subtitle="Track performance, leads and get smarter over time.">
           <div className="grid gap-4 md:grid-cols-3">
             <DashboardCard
-  plan={activePlan}
+  plan={cardPlan}
+              forceLocked={lockPaidCards}
   minPlan="basic"
   title="Contact Manager"
   badge="CRM"
@@ -803,7 +811,8 @@ export default function DashboardPage({ searchParams }: any) {
 />
 
             <DashboardCard
-  plan={activePlan}
+  plan={cardPlan}
+              forceLocked={lockPaidCards}
   minPlan="basic"
   title="Business Finder"
   badge="Growth"
@@ -817,7 +826,8 @@ export default function DashboardPage({ searchParams }: any) {
 />
 
             <DashboardCard
-  plan={activePlan}
+  plan={cardPlan}
+              forceLocked={lockPaidCards}
   minPlan="basic"
   title="Leads Hub"
   badge="Data"
@@ -831,7 +841,8 @@ export default function DashboardPage({ searchParams }: any) {
 />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="pro"
               title="Smart Suggestions List"
               badge="Pro"
@@ -846,7 +857,8 @@ export default function DashboardPage({ searchParams }: any) {
         <SectionBlock id="dashboard-system" title="System & Account" subtitle="Settings, payouts & integrations.">
           <div className="grid gap-4 md:grid-cols-4">
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={false}
               minPlan="basic"
               title="Payments & Integrations"
               badge="Billing"
@@ -856,7 +868,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Payouts"
               badge="Earnings"
@@ -866,7 +879,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={false}
               minPlan="basic"
               title="Settings"
               badge="Preferences"
@@ -876,7 +890,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={false}
               minPlan="basic"
               title="Support"
               badge="Help"
@@ -895,7 +910,8 @@ export default function DashboardPage({ searchParams }: any) {
         >
           <div className="grid gap-4 md:grid-cols-3">
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Community Boost"
               badge="Soon"
@@ -906,7 +922,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Content Calendar"
               badge="Soon"
@@ -917,7 +934,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="basic"
               title="Creator Collab Hub"
               badge="Soon"
@@ -933,7 +951,8 @@ export default function DashboardPage({ searchParams }: any) {
         <SectionBlock id="dashboard-elite-engines" title="Elite Power Engines" subtitle="Advanced engines — visible to all, unlocked for Elite.">
           <div className="grid gap-4 md:grid-cols-2">
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="elite"
               title="Tracking ID Engine"
               badge="Elite"
@@ -944,7 +963,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="elite"
               title="Offer Rotation AI"
               badge="Elite"
@@ -955,7 +975,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="elite"
               title="Viral Engine"
               badge="Elite"
@@ -966,7 +987,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="elite"
               title="Auto Funnel Builder"
               badge="Elite"
@@ -977,7 +999,8 @@ export default function DashboardPage({ searchParams }: any) {
             />
 
             <DashboardCard
-              plan={activePlan}
+              plan={cardPlan}
+              forceLocked={lockPaidCards}
               minPlan="elite"
               title="Timeline Analytics"
               badge="Elite"
