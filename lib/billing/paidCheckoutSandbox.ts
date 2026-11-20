@@ -1,5 +1,6 @@
 import http from "node:http";
 import Stripe from "stripe";
+import { CHECKOUT_PRICE_CENTS } from "./checkoutConfig";
 import type { StripeEventStore } from "./stripeEventStore";
 import {
   commandFromEvent,
@@ -165,7 +166,7 @@ type InvoiceIds = {
 };
 
 export function basicInvoiceSnapshot(ids: InvoiceIds, mutate?: (invoice: Record<string, unknown>, line: Record<string, unknown>) => void): Record<string, unknown> {
-  const amount = 700;
+  const amount = CHECKOUT_PRICE_CENTS.basic;
   const line: Record<string, unknown> = {
     id: "il_basic",
     object: "line_item",
@@ -247,8 +248,8 @@ export function invoicePaymentSnapshot(ids: InvoiceIds, mutate?: (payment: Recor
   const payment: Record<string, unknown> = {
     id: ids.invoicePaymentId,
     object: "invoice_payment",
-    amount_paid: 700,
-    amount_requested: 700,
+    amount_paid: CHECKOUT_PRICE_CENTS.basic,
+    amount_requested: CHECKOUT_PRICE_CENTS.basic,
     created: ids.created,
     currency: "usd",
     invoice: ids.invoiceId,

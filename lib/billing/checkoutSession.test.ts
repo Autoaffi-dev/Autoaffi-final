@@ -315,7 +315,7 @@ describe("checkout session handler", () => {
     const stripe = stripeFake({
       async retrievePrice() {
         calls.push("price:bad");
-        return { ...price("basic"), unitAmount: 900 };
+        return { ...price("basic"), unitAmount: 700 };
       },
     });
     const response = await post({ plan: "basic" }, { store, customers, stripe });
@@ -679,6 +679,150 @@ describe("checkout session handler", () => {
     });
     const statuses = [first.status, second.status].sort();
     assert.ok(statuses.includes(200));
+    assert.equal(store.rows[0]?.unit_amount, CHECKOUT_PRICE_CENTS.basic);
+    assert.equal(store.rows[0]?.stripe_price_id, "price_basic");
+  });
+
+  it("keeps a stored 700 basic attempt on its original price and idempotency key", async () => {
+    const key = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    for (const status of ["pending", "unknown"] as const) {
+      calls.length = 0;
+      const store = new MemoryCheckout();
+      const row = seeded(store, {
+        status,
+        stripe_price_id: "price_basic700",
+        unit_amount: 700,
+        idempotency_key: key,
+        stripe_session_id: null,
+        stripe_session_url: null,
+      });
+      const created: Array<{ key: string; params: ReturnType<typeof createParamsForAttempt> }> = [];
+      const stripe = stripeFake({
+        async retrievePrice() {
+          calls.push("price");
+          return price("basic");
+        },
+        async createSession(attempt, idempotencyKey) {
+          created.push({ key: idempotencyKey, params: createParamsForAttempt(attempt) });
+          return sessionFor({ ...attempt, stripe_session_id: "cs_created" });
+        },
+        async listSessions() {
+          calls.push("session.list");
+          if (status !== "unknown") return { complete: true, sessions: [] };
+          return {
+            complete: true,
+            sessions: [sessionFor(row, { id: "cs_listed700", url: "https://checkout.stripe.com/c/pay/cs_listed700" })],
+          };
+        },
+      });
+      const response = await post({ plan: "basic" }, { store, customers: new MemoryCustomers(), stripe });
+      const body = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal("url" in body, true);
+      assert.equal(calls.includes("price"), false);
+      assert.equal(store.rows.length, 1);
+      assert.equal(store.rows[0]?.unit_amount, 700);
+      assert.equal(store.rows[0]?.stripe_price_id, "price_basic700");
+      assert.equal(store.rows[0]?.idempotency_key, key);
+      if (status === "pending") {
+        assert.equal(created.length, 1);
+        assert.equal(created[0].key, key);
+        assert.deepEqual(created[0].params, {
+          mode: "subscription",
+          customer: row.stripe_customer_id,
+          line_items: [{ price: "price_basic700", quantity: 1 }],
+          success_url: row.success_url,
+          cancel_url: row.cancel_url,
+          client_reference_id: row.id,
+          metadata: { user_id: USER, plan: "basic", attempt_id: row.id },
+          adaptive_pricing: { enabled: false },
+          automatic_tax: { enabled: false },
+          expand: ["line_items"],
+        });
+      } else {
+        assert.equal(created.length, 0);
+        assert.equal(calls.includes("session.list"), true);
+      }
+    }
+
+    calls.length = 0;
+    const openStore = new MemoryCheckout();
+    const open = seeded(openStore, {
+      status: "open",
+      stripe_price_id: "price_basic700",
+      unit_amount: 700,
+      idempotency_key: key,
+      stripe_session_id: "cs_open700",
+      stripe_session_url: "https://checkout.stripe.com/c/pay/cs_open700",
+    });
+    const openStripe = stripeFake({
+      async retrievePrice() {
+        calls.push("price");
+        return price("basic");
+      },
+      async createSession() {
+        calls.push("session.create");
+        throw new Error("stored open attempt must not create");
+      },
+      async retrieveSession() {
+        return sessionFor(open, { id: "cs_open700", url: "https://checkout.stripe.com/c/pay/cs_open700" });
+      },
+    });
+    const openResponse = await post({ plan: "basic" }, { store: openStore, customers: new MemoryCustomers(), stripe: openStripe });
+    assert.equal(openResponse.status, 200);
+    assert.deepEqual(await openResponse.json(), { url: "https://checkout.stripe.com/c/pay/cs_open700" });
+    assert.equal(calls.includes("price"), false);
+    assert.equal(calls.includes("session.create"), false);
+    assert.equal(openStore.rows.length, 1);
+    assert.equal(openStore.rows[0]?.unit_amount, 700);
+    assert.equal(openStore.rows[0]?.idempotency_key, key);
+  });
+
+  it("prices the basic successor at 900 after the stored 700 session is confirmed expired", async () => {
+    calls.length = 0;
+    const store = new MemoryCheckout();
+    const parent = seeded(store, {
+      status: "expiring",
+      plan: "basic",
+      stripe_price_id: "price_basic700",
+      unit_amount: 700,
+      supersede_plan: "basic",
+      stripe_session_id: "cs_old700",
+      stripe_session_url: "https://checkout.stripe.com/c/pay/cs_old700",
+      expire_idempotency_key: "99999999-9999-4999-8999-999999999999",
+      expire_anchor_at: NOW.toISOString(),
+    });
+    const created: string[] = [];
+    const stripe = stripeFake({
+      async retrieveSession() {
+        return sessionFor(parent, { id: "cs_old700", status: "expired", url: null });
+      },
+      async createSession(row) {
+        created.push(`${row.stripe_price_id}:${row.unit_amount}:${row.idempotency_key}`);
+        return sessionFor(
+          { ...row, stripe_session_id: "cs_next900" },
+          { id: "cs_next900", url: "https://checkout.stripe.com/c/pay/cs_next900" }
+        );
+      },
+    });
+    const response = await post({ plan: "basic" }, { store, customers: new MemoryCustomers(), stripe });
+    assert.equal(response.status, 200);
+    const storedParent = store.rows.find((row) => row.id === parent.id);
+    const successor = store.rows.find((row) => row.id !== parent.id);
+    assert.equal(storedParent?.status, "expired");
+    assert.equal(storedParent?.plan, "basic");
+    assert.equal(storedParent?.unit_amount, 700);
+    assert.equal(storedParent?.stripe_price_id, "price_basic700");
+    assert.equal(storedParent?.idempotency_key, parent.idempotency_key);
+    assert.equal(storedParent?.successor_attempt_id, successor?.id);
+    assert.equal(successor?.status, "open");
+    assert.equal(successor?.plan, "basic");
+    assert.equal(successor?.unit_amount, 900);
+    assert.equal(successor?.stripe_price_id, "price_basic");
+    assert.notEqual(successor?.idempotency_key, parent.idempotency_key);
+    assert.deepEqual(created, [`price_basic:900:${successor?.idempotency_key}`]);
+    const blocking = store.rows.filter((row) => ["pending", "open", "unknown", "expiring", "complete"].includes(row.status));
+    assert.deepEqual(blocking.map((row) => row.id), [successor?.id]);
   });
 
   it("keeps an HTTP failure blocking and does not create again", async () => {

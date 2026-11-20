@@ -220,6 +220,9 @@ describe("checkout postgres transition", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261101_billing_paid_plan.sql");
     psqlFile(database, "supabase/migrations/20261102_billing_stripe_customers.sql");
     psqlFile(database, "supabase/migrations/20261106_billing_checkout_sessions.sql");
+    psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
+    psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
+    psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'select')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'insert')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'update')"), "t");
@@ -327,7 +330,7 @@ describe("checkout postgres transition", { concurrency: 1 }, () => {
           livemode: true,
           type: "recurring",
           billingScheme: "per_unit",
-          unitAmount: 700,
+          unitAmount: 900,
           customUnitAmount: false,
           interval: "month",
           intervalCount: 1,

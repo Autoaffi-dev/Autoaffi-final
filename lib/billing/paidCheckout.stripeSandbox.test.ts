@@ -327,6 +327,7 @@ describe("Stripe sandbox paid checkout", () => {
       psqlFile(database, "supabase/migrations/20261106_billing_checkout_sessions.sql");
       psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
       psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
+      psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
       const client = new Stripe(key, { apiVersion: PAID_SANDBOX_API_VERSION, maxNetworkRetries: 0, timeout: 20_000, telemetry: false });
       const sessions = createCaptureBag();
       const customers = createCaptureBag();

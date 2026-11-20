@@ -125,6 +125,7 @@ describe("paid checkout local receiver", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261106_billing_checkout_sessions.sql");
     psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
+    psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
     psql(database, `insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(userA)}::uuid, ${quote(customerA)})`);
 
     const now = Math.floor(Date.now() / 1000);

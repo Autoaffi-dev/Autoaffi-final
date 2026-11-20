@@ -3,10 +3,15 @@ export const CHECKOUT_PLANS = ["basic", "pro", "elite"] as const;
 export type CheckoutPlan = (typeof CHECKOUT_PLANS)[number];
 
 export const CHECKOUT_PRICE_CENTS: Record<CheckoutPlan, number> = {
-  basic: 700,
+  basic: 900,
   pro: 1900,
   elite: 3900,
 };
+
+// Historical Basic amount. New checkout accepts only CHECKOUT_PRICE_CENTS.basic.
+// The test webhook binds this amount to STRIPE_PRICE_BASIC_TEST_LEGACY, not to
+// the current Basic price id.
+export const LEGACY_BASIC_PRICE_CENTS = 700;
 
 export const BLOCKING_SUBSCRIPTION_STATUSES = [
   "incomplete",

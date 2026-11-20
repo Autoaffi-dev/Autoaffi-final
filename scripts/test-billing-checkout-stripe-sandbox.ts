@@ -19,6 +19,9 @@ if (liveName) report(new SandboxError("STRIPE_SANDBOX_LIVE_ENV", { envName: live
 const filePath = process.env.STRIPE_SANDBOX_KEY_FILE;
 if (!filePath) report(new SandboxError("STRIPE_SANDBOX_KEY_FILE_MISSING"));
 
+// STRIPE_SANDBOX_PRICE_BASIC is only the manual sandbox harness price.
+// A later sandbox run should set it to the new 900-cent Basic price id.
+// The ordinary test webhook reads STRIPE_PRICE_BASIC_TEST and is not configured here.
 const prices = {
   STRIPE_SANDBOX_PRICE_BASIC: process.env.STRIPE_SANDBOX_PRICE_BASIC || "",
   STRIPE_SANDBOX_PRICE_PRO: process.env.STRIPE_SANDBOX_PRICE_PRO || "",

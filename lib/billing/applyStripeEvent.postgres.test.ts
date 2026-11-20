@@ -321,10 +321,157 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psql(database, `insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(USER_A)}::uuid, 'cus_A'), (${quote(USER_B)}::uuid, 'cus_B')`);
+    const signatureBefore = psql(
+      database,
+      "select pg_get_function_identity_arguments(p.oid) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'billing_apply_stripe_event'"
+    );
+    psql(
+      database,
+      `insert into public.billing_checkout_sessions (
+        id, user_id, row_version, status, idempotency_key, create_anchor_at, stripe_customer_id, stripe_account_id,
+        plan, stripe_price_id, unit_amount, currency, quantity, livemode, success_url, cancel_url, mode,
+        adaptive_pricing_enabled, automatic_tax_enabled, stripe_session_id, stripe_session_url
+      ) values (
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid, ${quote(USER_B)}::uuid, 1, 'open',
+        'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'::uuid, now(), 'cus_B', 'acct_live',
+        'basic', 'price_basic700', 700, 'usd', 1, false,
+        'https://app.example/billing/checkout/return?attempt=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&result=success',
+        'https://app.example/billing/checkout/return?attempt=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&result=cancel',
+        'subscription', false, false, 'cs_hist700', 'https://checkout.stripe.com/c/pay/cs_hist700'
+      )`
+    );
+    assert.match(payment("evt_hist_pay", "in_hist700", 700, {
+      invoicePaymentId: "inpay_hist700",
+      paymentIntentId: "pi_hist700",
+    }), /payment_awaiting_invoice/);
+    assert.match(run({
+      eventId: "evt_hist_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_A",
+      subscriptionId: "sub_stored",
+      invoiceId: "in_stored700",
+      priceId: "price_basic700",
+      plan: "basic",
+      amount: 700,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_awaiting_payment/);
+    assert.match(payment("evt_stored_pay", "in_stored700", 700, {
+      invoicePaymentId: "inpay_stored700",
+      paymentIntentId: "pi_stored700",
+    }), /invoice_applied/);
+    const pendingBefore = psql(
+      database,
+      "select coalesce(paid_plan, '') || '|' || amount_paid::text || '|' || coalesce(invoice_event_id, '') from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_hist700'"
+    );
+    const storedBefore = psql(
+      database,
+      "select paid_plan || '|' || amount_paid::text from public.billing_stripe_invoices where stripe_invoice_id = 'in_stored700'"
+    );
+    const sessionBefore = psql(
+      database,
+      "select plan || '|' || stripe_price_id || '|' || unit_amount::text || '|' || status from public.billing_checkout_sessions where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'"
+    );
+    psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
+    assert.equal(pendingBefore, "|700|");
+    assert.equal(psql(database, "select coalesce(paid_plan, '') || '|' || amount_paid::text || '|' || coalesce(invoice_event_id, '') from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_hist700'"), pendingBefore);
+    assert.equal(storedBefore, "basic|700");
+    assert.equal(psql(database, "select paid_plan || '|' || amount_paid::text from public.billing_stripe_invoices where stripe_invoice_id = 'in_stored700'"), storedBefore);
+    assert.equal(sessionBefore, "basic|price_basic700|700|open");
+    assert.equal(psql(database, "select plan || '|' || stripe_price_id || '|' || unit_amount::text || '|' || status from public.billing_checkout_sessions where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'"), sessionBefore);
+    assert.equal(psql(database, "select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'billing_apply_stripe_event'"), "1");
+    assert.equal(
+      psql(database, "select pg_get_function_identity_arguments(p.oid) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'billing_apply_stripe_event'"),
+      signatureBefore
+    );
+    assert.equal(psql(database, `select has_function_privilege('service_role', '${APPLY}', 'execute')`), "t");
+    assert.equal(psql(database, `select has_function_privilege('anon', '${APPLY}', 'execute')`), "f");
+    assert.equal(psql(database, `select has_function_privilege('authenticated', '${APPLY}', 'execute')`), "f");
+    assert.equal(psql(database, `select has_function_privilege('public', '${APPLY}', 'execute')`), "f");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_events', 'update')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_events', 'delete')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoice_proofs', 'update')"), "t");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoice_proofs', 'delete')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'delete')"), "f");
+    psql(database, "delete from public.billing_subscriptions");
+    const conflict = psqlTry(`begin; select set_config('role', 'service_role', true); ${call({
+      eventId: "evt_hist_wrong",
+      eventType: "invoice.paid",
+      created: TIE + 1,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_hist",
+      invoiceId: "in_hist700",
+      priceId: "price_basic900",
+      plan: "basic",
+      amount: 900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    })}; commit;`);
+    assert.equal(conflict.ok, true);
+    assert.match(conflict.stdout, /invoice_conflict/);
+    assert.equal(psql(database, "select coalesce(paid_plan, '') || '|' || amount_paid::text from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_hist700'"), "|700");
+    assert.match(run({
+      eventId: "evt_hist_complete",
+      eventType: "invoice.paid",
+      created: TIE + 2,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_hist",
+      invoiceId: "in_hist700",
+      priceId: "price_basic700",
+      plan: "basic",
+      amount: 700,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_applied/);
+    assert.match(payment("evt_new900_pay", "in_new900", 900, {
+      invoicePaymentId: "inpay_new900",
+      paymentIntentId: "pi_new900",
+    }), /payment_awaiting_invoice/);
+    assert.equal(psql(database, "select coalesce(paid_plan, '') from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_new900'"), "");
+    assert.match(run({
+      eventId: "evt_new900_invoice",
+      eventType: "invoice.paid",
+      created: TIE + 3,
+      action: "invoice",
+      customerId: "cus_A",
+      subscriptionId: "sub_stored",
+      invoiceId: "in_new900",
+      priceId: "price_basic900",
+      plan: "basic",
+      amount: 900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_applied/);
+    assert.equal(psql(database, "select paid_plan || '|' || amount_paid::text from public.billing_stripe_invoices where stripe_invoice_id = 'in_stored700'"), "basic|700");
+    const rejected = psqlTry(`begin; select set_config('role', 'service_role', true); ${call({
+      eventId: "evt_bad701",
+      eventType: "invoice.paid",
+      created: TIE + 4,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_hist",
+      invoiceId: "in_bad701",
+      priceId: "price_basic900",
+      plan: "basic",
+      amount: 701,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    })}; commit;`);
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.stderr, /BILLING_EVENT_REJECTED/);
+    reset();
+    psql(database, "delete from public.billing_checkout_sessions");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_events', 'select')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_events', 'insert')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_events', 'update')"), "f");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_events', 'delete')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoices', 'select')"), "t");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoices', 'insert')"), "t");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoices', 'update')"), "f");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_invoices', 'delete')"), "f");
     assert.equal(psql(database, "select has_table_privilege('anon', 'public.billing_stripe_events', 'select')"), "f");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_customers', 'update')"), "f");

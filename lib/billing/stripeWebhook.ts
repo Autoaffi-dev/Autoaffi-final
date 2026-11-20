@@ -1,5 +1,5 @@
 import type Stripe from "stripe";
-import { CHECKOUT_PLANS, CHECKOUT_PRICE_CENTS, type CheckoutPlan } from "./checkoutConfig";
+import { CHECKOUT_PLANS, CHECKOUT_PRICE_CENTS, LEGACY_BASIC_PRICE_CENTS, type CheckoutPlan } from "./checkoutConfig";
 import type { StripeEventStore } from "./stripeEventStore";
 
 // Test-mode ingestion only. The route stays disabled unless BILLING_WEBHOOK_ENABLED
@@ -45,7 +45,9 @@ const STATUSES = new Set([
 
 const REFUND_EVENTS = new Set(["charge.refunded", "charge.refund.updated", "credit_note.created"]);
 
-export type WebhookPrices = Record<CheckoutPlan, string>;
+export type WebhookPrices = Record<CheckoutPlan, string> & {
+  legacyBasic?: string;
+};
 
 export type WebhookCommand = {
   eventId: string;
@@ -103,8 +105,12 @@ export function readWebhookTestConfig(
     if (!PRICE_ID.test(id)) return null;
     prices[plan] = id;
   }
-  if (new Set(Object.values(prices)).size !== CHECKOUT_PLANS.length) return null;
-  return { secret, prices };
+  const currentIds = CHECKOUT_PLANS.map((plan) => prices[plan]);
+  if (new Set(currentIds).size !== currentIds.length) return null;
+  const legacyRaw = env.STRIPE_PRICE_BASIC_TEST_LEGACY ?? "";
+  if (legacyRaw === "") return { secret, prices };
+  if (!PRICE_ID.test(legacyRaw) || currentIds.includes(legacyRaw)) return null;
+  return { secret, prices: { ...prices, legacyBasic: legacyRaw } };
 }
 
 export function commandFromEvent(event: Stripe.Event, prices: WebhookPrices): WebhookCommand | null {
@@ -263,9 +269,9 @@ function readInvoice(base: WebhookCommand, invoice: Stripe.Invoice, prices: Webh
   if (listMissing(invoice.total_taxes) || listMissing(line.taxes)) return reject(next, "payload_rejected");
 
   const priceId = line.pricing?.type === "price_details" ? line.pricing.price_details?.price ?? null : null;
-  const plan = priceId ? planForPrice(prices, priceId) : null;
-  if (!priceId || !PRICE_ID.test(priceId) || !plan) return reject(next, "amount_mismatch");
-  const amount = CHECKOUT_PRICE_CENTS[plan];
+  const bound = priceId && PRICE_ID.test(priceId) ? amountForKnownPrice(prices, priceId) : null;
+  if (!priceId || !PRICE_ID.test(priceId) || !bound) return reject(next, "amount_mismatch");
+  const { plan, amount } = bound;
   const periodStartSeconds = line.period?.start;
   const periodEndSeconds = line.period?.end;
   const periodStart = unixSecondsToIso(periodStartSeconds);
@@ -332,6 +338,8 @@ function readInvoicePayment(base: WebhookCommand, payment: Stripe.InvoicePayment
     outcome: null,
     customerId: null,
     subscriptionId: null,
+    priceId: null,
+    plan: null,
     paymentIntentId: intentId,
     amount: paid,
     amountRequested: requested,
@@ -472,6 +480,7 @@ function prorationOutOfScope(details: { proration: boolean; proration_details: {
 
 function allowedAmount(value: unknown): number | null {
   if (!whole(value)) return null;
+  if (value === LEGACY_BASIC_PRICE_CENTS) return value;
   for (const plan of CHECKOUT_PLANS) {
     if (CHECKOUT_PRICE_CENTS[plan] === value) return value;
   }
@@ -504,6 +513,18 @@ function listMissing(list: ReadonlyArray<unknown> | null | undefined): boolean {
 function planForPrice(prices: WebhookPrices, priceId: string): CheckoutPlan | null {
   const matches = CHECKOUT_PLANS.filter((plan) => prices[plan] === priceId);
   return matches.length === 1 ? matches[0] : null;
+}
+
+function amountForKnownPrice(
+  prices: WebhookPrices,
+  priceId: string
+): { plan: CheckoutPlan; amount: number } | null {
+  const current = planForPrice(prices, priceId);
+  const legacy = prices.legacyBasic === priceId;
+  if (legacy && current) return null;
+  if (legacy) return { plan: "basic", amount: LEGACY_BASIC_PRICE_CENTS };
+  if (!current) return null;
+  return { plan: current, amount: CHECKOUT_PRICE_CENTS[current] };
 }
 
 function decimalCents(value: string | null, cents: number): boolean {

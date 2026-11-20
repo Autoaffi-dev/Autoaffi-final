@@ -214,6 +214,23 @@ function paidInvoice(): Stripe.Event {
   return invoicePaidEvent(validPaidInvoice());
 }
 
+function basicInvoice(priceId: string, amount: number): Stripe.Event {
+  return distortedPaidInvoice((invoice, line) => {
+    invoice.id = "in_basic";
+    invoice.amount_due = amount;
+    invoice.amount_paid = amount;
+    invoice.subtotal = amount;
+    invoice.total = amount;
+    invoice.subtotal_excluding_tax = amount;
+    invoice.total_excluding_tax = amount;
+    line.amount = amount;
+    if (line.pricing?.type === "price_details" && line.pricing.price_details) {
+      line.pricing.unit_amount_decimal = String(amount);
+      line.pricing.price_details.price = priceId;
+    }
+  });
+}
+
 function paymentEvent(mutate?: (payment: {
   invoice?: unknown;
   amount_paid?: number;
@@ -321,6 +338,61 @@ describe("stripe webhook parser", () => {
     assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_WEBHOOK_SECRET_TEST: "sk_test_secret" }), null);
     assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_PRO_TEST: PRICES.basic }), null);
     assert.equal(readWebhookTestConfig({ STRIPE_SECRET_KEY: "sk_live_secret" }), null);
+  });
+
+  it("binds the current basic price to 900 and an explicit legacy id to 700", () => {
+    const legacy = "price_basic700";
+    assert.deepEqual(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: legacy }), {
+      secret: SECRET,
+      prices: { ...PRICES, legacyBasic: legacy },
+    });
+    assert.deepEqual(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: "" }), {
+      secret: SECRET,
+      prices: PRICES,
+    });
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: PRICES.basic }), null);
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: PRICES.pro }), null);
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: PRICES.elite }), null);
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: "price_basic 700" }), null);
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST: PRICES.pro }), null);
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_ELITE_TEST: PRICES.basic }), null);
+    assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_ELITE_TEST: PRICES.pro }), null);
+
+    const prices = { ...PRICES, legacyBasic: legacy };
+    const current = commandFromEvent(basicInvoice(PRICES.basic, CHECKOUT_PRICE_CENTS.basic), prices);
+    assert.equal(current?.action, "invoice");
+    assert.equal(current?.plan, "basic");
+    assert.equal(current?.amount, 900);
+    assert.equal(current?.priceId, PRICES.basic);
+    assert.equal(commandFromEvent(basicInvoice(PRICES.basic, 700), prices)?.outcome, "amount_mismatch");
+    assert.equal(commandFromEvent(basicInvoice(PRICES.basic, 700), PRICES)?.outcome, "amount_mismatch");
+
+    const historical = commandFromEvent(basicInvoice(legacy, 700), prices);
+    assert.equal(historical?.action, "invoice");
+    assert.equal(historical?.plan, "basic");
+    assert.equal(historical?.amount, 700);
+    assert.equal(historical?.priceId, legacy);
+    assert.equal(commandFromEvent(basicInvoice(legacy, 900), prices)?.outcome, "amount_mismatch");
+    assert.equal(commandFromEvent(basicInvoice("price_unknown", 900), prices)?.outcome, "amount_mismatch");
+    assert.equal(commandFromEvent(basicInvoice("price_unknown", 900), prices)?.plan, null);
+
+    for (const amount of [700, 900]) {
+      const payment = commandFromEvent(paymentEvent((row) => {
+        row.amount_paid = amount;
+        row.amount_requested = amount;
+      }), prices);
+      assert.equal(payment?.action, "payment");
+      assert.equal(payment?.plan, null);
+      assert.equal(payment?.priceId, null);
+      assert.equal(payment?.amount, amount);
+    }
+    const rejected = commandFromEvent(paymentEvent((row) => {
+      row.amount_paid = 701;
+      row.amount_requested = 701;
+    }), prices);
+    assert.equal(rejected?.outcome, "amount_mismatch");
+    assert.equal(rejected?.plan, null);
+    assert.equal(rejected?.priceId, null);
   });
 
   it("accepts a signed raw clover invoice and keeps the exact body", async () => {
@@ -684,5 +756,15 @@ describe("stripe webhook parser", () => {
     assert.match(proof, /Unique here by product rule/);
     assert.doesNotMatch(proof, /grant delete/i);
     assert.doesNotMatch(proof, /grant update on table public\.billing_stripe_events/i);
+    assert.match(proof, /p_amount <> 700/);
+    const widened = readFileSync("supabase/migrations/20261120_billing_basic_amount_900.sql", "utf8");
+    assert.match(widened, /create or replace function public\.billing_apply_stripe_event/);
+    assert.match(widened, /p_amount not in \(700, 900, 1900, 3900\)/);
+    assert.match(widened, /p_plan = 'basic' and p_amount not in \(700, 900\)/);
+    assert.match(widened, /grant execute on function public\.billing_apply_stripe_event\(/);
+    assert.match(widened, /to service_role;/);
+    assert.doesNotMatch(widened, /grant delete/i);
+    assert.doesNotMatch(widened, /p_amount <> 700/);
+    assert.doesNotMatch(widened, /p_amount not in \(700, 1900, 3900\)/);
   });
 });
