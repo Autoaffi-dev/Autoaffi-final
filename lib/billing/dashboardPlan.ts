@@ -1,6 +1,6 @@
 import { requireUserId } from "@/lib/auth/server";
 import { loadPaidSubscription } from "./loadPaidSubscription";
-import { getPaidPlan, type EntitlementPlan } from "./paidPlan";
+import { getPaidPlan, readPaidAccess, type EntitlementPlan } from "./paidPlan";
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -23,10 +23,12 @@ export async function readDashboardPlan(
     return { ok: false, response: json({ error: unauthorized ? "UNAUTHORIZED" : "ENTITLEMENT_READ_FAILED" }, unauthorized ? 401 : 500) };
   }
   if (!userId) return { ok: false, response: json({ error: "UNAUTHORIZED" }, 401) };
+  const access = readPaidAccess(process.env, process.env.NODE_ENV);
+  if (!access) return { ok: false, response: json({ error: "ENTITLEMENT_CONFIG" }, 500) };
 
   try {
     const row = await loadPaidSubscription(userId);
-    return { ok: true, userId, plan: getPaidPlan(row, userId, now) };
+    return { ok: true, userId, plan: getPaidPlan(row, userId, now, access) };
   } catch {
     return { ok: false, response: json({ error: "ENTITLEMENT_READ_FAILED" }, 500) };
   }

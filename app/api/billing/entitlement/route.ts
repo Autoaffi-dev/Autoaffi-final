@@ -10,5 +10,7 @@ export async function GET(request: Request) {
     request,
     resolveUserId: requireUserId,
     loadSubscription: loadPaidSubscription,
+    env: process.env,
+    nodeEnv: process.env.NODE_ENV,
   });
 }

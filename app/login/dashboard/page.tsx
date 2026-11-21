@@ -622,7 +622,7 @@ export default function DashboardPage() {
           <div className="grid gap-4 md:grid-cols-3">
             <DashboardCard
               plan={cardPlan}
-              forceLocked={lockPaidCards}
+              forceLocked={false}
               minPlan="basic"
               title="Social Accounts"
               badge="Start"

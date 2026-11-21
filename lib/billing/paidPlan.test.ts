@@ -19,6 +19,8 @@ const NOW = new Date("2026-11-01T00:00:00.000Z");
 const FUTURE = "2026-12-01T00:00:00.000Z";
 const EXACT = "2026-11-01T00:00:00.000Z";
 
+const ACCESS = { livemode: true as const, accountId: "acct_live" };
+
 function row(
   overrides: Partial<PaidSubscriptionSnapshot> & Pick<PaidSubscriptionSnapshot, "user_id">
 ): PaidSubscriptionSnapshot {
@@ -28,6 +30,8 @@ function row(
     paid_until: FUTURE,
     cancel_at_period_end: false,
     pending_plan: null,
+    livemode: true,
+    stripe_account_id: "acct_live",
     ...overrides,
   };
 }
@@ -55,14 +59,14 @@ async function readPlan(response: Response) {
 
 describe("getPaidPlan", () => {
   it("returns none when the user has no row", () => {
-    assert.equal(getPaidPlan(null, USER_A, NOW), "none");
-    assert.equal(getPaidPlan(undefined, USER_A, NOW), "none");
+    assert.equal(getPaidPlan(null, USER_A, NOW, ACCESS), "none");
+    assert.equal(getPaidPlan(undefined, USER_A, NOW, ACCESS), "none");
   });
 
   it("returns Pro only for the user who owns a valid Pro row", () => {
     const pro = row({ user_id: USER_A, paid_plan: "pro" });
-    assert.equal(getPaidPlan(pro, USER_A, NOW), "pro");
-    assert.equal(getPaidPlan(pro, USER_B, NOW), "none");
+    assert.equal(getPaidPlan(pro, USER_A, NOW, ACCESS), "pro");
+    assert.equal(getPaidPlan(pro, USER_B, NOW, ACCESS), "none");
   });
 
   it("keeps Basic when an unpaid upgrade asks for Pro", () => {
@@ -71,19 +75,20 @@ describe("getPaidPlan", () => {
       paid_plan: "basic",
       pending_plan: "pro",
     });
-    assert.equal(getPaidPlan(basic, USER_B, NOW), "basic");
+    assert.equal(getPaidPlan(basic, USER_B, NOW, ACCESS), "basic");
   });
 
   it("grants past_due access and keeps a period-end cancellation inside paid time", () => {
     assert.equal(
-      getPaidPlan(row({ user_id: USER_A, subscription_status: "past_due" }), USER_A, NOW),
+      getPaidPlan(row({ user_id: USER_A, subscription_status: "past_due" }), USER_A, NOW, ACCESS),
       "pro"
     );
     assert.equal(
       getPaidPlan(
         row({ user_id: USER_A, cancel_at_period_end: true, paid_plan: "elite" }),
         USER_A,
-        NOW
+        NOW,
+        ACCESS
       ),
       "elite"
     );
@@ -91,7 +96,7 @@ describe("getPaidPlan", () => {
 
   it("denies access at the exact expiry instant", () => {
     assert.equal(
-      getPaidPlan(row({ user_id: USER_A, paid_until: EXACT, cancel_at_period_end: true }), USER_A, NOW),
+      getPaidPlan(row({ user_id: USER_A, paid_until: EXACT, cancel_at_period_end: true }), USER_A, NOW, ACCESS),
       "none"
     );
   });
@@ -106,7 +111,7 @@ describe("getPaidPlan", () => {
       "unpaid",
     ]) {
       assert.equal(
-        getPaidPlan(row({ user_id: USER_A, subscription_status }), USER_A, NOW),
+        getPaidPlan(row({ user_id: USER_A, subscription_status }), USER_A, NOW, ACCESS),
         "none",
         subscription_status
       );
@@ -114,14 +119,24 @@ describe("getPaidPlan", () => {
   });
 
   it("denies an unknown plan name", () => {
-    assert.equal(getPaidPlan(row({ user_id: USER_A, paid_plan: "vip" }), USER_A, NOW), "none");
+    assert.equal(getPaidPlan(row({ user_id: USER_A, paid_plan: "vip" }), USER_A, NOW, ACCESS), "none");
+  });
+
+  it("denies unknown mode, the wrong account, and test data for a live reader", () => {
+    assert.equal(getPaidPlan(row({ user_id: USER_A, livemode: null, stripe_account_id: null }), USER_A, NOW, ACCESS), "none");
+    assert.equal(getPaidPlan(row({ user_id: USER_A, livemode: false }), USER_A, NOW, ACCESS), "none");
+    assert.equal(getPaidPlan(row({ user_id: USER_A, stripe_account_id: "acct_other" }), USER_A, NOW, ACCESS), "none");
+    assert.equal(
+      getPaidPlan(row({ user_id: USER_A }), USER_A, NOW, { livemode: false, accountId: "acct_live" }),
+      "none"
+    );
   });
 });
 
 describe("GET entitlement behavior", () => {
   it("does not give B user A's Pro from the query, header, or a mismatched row", async () => {
     const lookedUp: string[] = [];
-    const response = await handleEntitlementGet({
+    const response = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
       request: requestForBAskingAsA(),
       now: NOW,
       resolveUserId: async () => USER_B,
@@ -138,7 +153,7 @@ describe("GET entitlement behavior", () => {
   });
 
   it("returns B's own Basic when B asks the request to be treated as Pro", async () => {
-    const response = await handleEntitlementGet({
+    const response = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
       request: requestForBAskingAsA(),
       now: NOW,
       resolveUserId: async () => USER_B,
@@ -154,7 +169,7 @@ describe("GET entitlement behavior", () => {
   });
 
   it("returns none with 200 when the signed-in user has no row", async () => {
-    const response = await handleEntitlementGet({
+    const response = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
       request: requestForBAskingAsA(),
       now: NOW,
       resolveUserId: async () => USER_A,
@@ -167,7 +182,7 @@ describe("GET entitlement behavior", () => {
 
   it("returns 401 and does not read the database when logged out", async () => {
     let reads = 0;
-    const response = await handleEntitlementGet({
+    const response = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
       request: requestForBAskingAsA(),
       resolveUserId: async () => {
         throw new Error("UNAUTHORIZED");
@@ -187,7 +202,7 @@ describe("GET entitlement behavior", () => {
 
   it("returns 500 without database details or paid access when the read fails", async () => {
     const secret = "sk_live_should_not_leak relation billing_subscriptions";
-    const response = await handleEntitlementGet({
+    const response = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
       request: requestForBAskingAsA(),
       resolveUserId: async () => USER_A,
       loadSubscription: async () => {
@@ -203,8 +218,38 @@ describe("GET entitlement behavior", () => {
     assert.equal(text.includes("billing_subscriptions"), false);
   });
 
+  it("returns a config error before reading when the environment account is missing", async () => {
+    let reads = 0;
+    const response = await handleEntitlementGet({
+      env: {},
+      nodeEnv: "production",
+      request: requestForBAskingAsA(),
+      resolveUserId: async () => USER_A,
+      loadSubscription: async () => {
+        reads += 1;
+        return row({ user_id: USER_A });
+      },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 500);
+    assert.deepEqual(body, { error: "ENTITLEMENT_CONFIG" });
+    assert.equal(reads, 0);
+  });
+
+  it("returns none for an active row whose mode is unknown", async () => {
+    const response = await handleEntitlementGet({
+      env: { STRIPE_ACCOUNT_ID: "acct_live" },
+      nodeEnv: "production",
+      request: new Request("http://localhost/api/billing/entitlement"),
+      now: NOW,
+      resolveUserId: async () => USER_A,
+      loadSubscription: async () => row({ user_id: USER_A, livemode: null, stripe_account_id: null }),
+    });
+    assert.equal((await readPlan(response)).plan, "none");
+  });
+
   it("keeps access for cancellation at period end and denies the exact end instant", async () => {
-    const active = await handleEntitlementGet({
+    const active = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
       request: new Request("http://localhost/api/billing/entitlement"),
       now: NOW,
       resolveUserId: async () => USER_A,
@@ -213,7 +258,7 @@ describe("GET entitlement behavior", () => {
     });
     assert.equal((await readPlan(active)).plan, "pro");
 
-    const expired = await handleEntitlementGet({
+    const expired = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
       request: new Request("http://localhost/api/billing/entitlement?plan=pro"),
       now: NOW,
       resolveUserId: async () => USER_A,
@@ -227,7 +272,7 @@ describe("GET entitlement behavior", () => {
 
   it("denies incomplete and paused rows for the signed-in user", async () => {
     for (const subscription_status of ["incomplete", "paused"]) {
-      const response = await handleEntitlementGet({
+      const response = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
         request: new Request("http://localhost/api/billing/entitlement?plan=elite"),
         now: NOW,
         resolveUserId: async () => USER_A,
@@ -276,7 +321,11 @@ describe("paid subscription read", () => {
       },
     ]);
     assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("pending_plan"), false);
-    assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("stripe_"), false);
+    assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("livemode"), true);
+    assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("stripe_account_id"), true);
+    assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("stripe_customer"), false);
+    assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("stripe_subscription"), false);
+    assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("stripe_price"), false);
     assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("invoice"), false);
     assert.equal(PAID_SUBSCRIPTION_COLUMNS.includes("last_applied"), false);
   });

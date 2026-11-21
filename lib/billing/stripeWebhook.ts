@@ -7,6 +7,19 @@ import type { StripeEventStore } from "./stripeEventStore";
 // blocked when VERCEL_ENV or NODE_ENV is production. Only mode "live" can
 // accept livemode=true, and only after its own secret verifies the signature.
 // The request body cannot choose the secret, the account, or the mode.
+// A valid signature proves that the raw body was signed with the webhook
+// secret selected by this receiver. It does not prove which Stripe account
+// owns that secret. Stripe returns an endpoint secret only when the endpoint
+// is created, so retrieving the endpoint cannot re-prove that the configured
+// secret belongs to that endpoint. The operator binds the secret to the
+// endpoint id. This receiver then checks that the API key's account equals
+// the configured account and that the configured endpoint exists on that key,
+// is enabled, and has the same livemode. That check does not replace
+// invoice.paid and invoice_payment.paid, and it does not fetch either object.
+// Ordinary account events omit event.account. Those events stay valid when
+// the configured account and endpoint agree. A present event.account that
+// differs is still rejected. A configured account id is not treated as proof
+// by itself.
 // livemode=false does not by itself isolate the database. A verified event is
 // written to whichever database this process is configured to use.
 // Same-second status conflicts stay conservative until a later Stripe read.
@@ -29,6 +42,7 @@ const INVOICE_PAYMENT_ID = /^inpay_[A-Za-z0-9_]+$/;
 const PRICE_ID = /^price_[A-Za-z0-9]+$/;
 const PAYMENT_INTENT_ID = /^pi_[A-Za-z0-9_]+$/;
 const ACCOUNT_ID = /^acct_[A-Za-z0-9]+$/;
+const ENDPOINT_ID = /^we_[A-Za-z0-9]+$/;
 const EVENT_TYPE = /^[a-z0-9_.]+$/;
 // ECMAScript time values are integer milliseconds in [-8.64e15, 8.64e15].
 const MAX_UNIX_SECONDS = 8_640_000_000_000;
@@ -84,8 +98,35 @@ export type WebhookConfig = {
   secret: string;
   prices: WebhookPrices;
   accountId: string;
+  endpointId: string;
   livemode: boolean;
 };
+
+export type WebhookEndpointProof = {
+  id: string;
+  livemode: boolean;
+  status: string;
+  deleted?: boolean;
+};
+
+export type WebhookAccountProof = {
+  retrieveAccount(): Promise<{ id: string }>;
+  retrieveWebhookEndpoint(id: string): Promise<WebhookEndpointProof>;
+};
+
+export function webhookAccountProofAccepted(input: {
+  accountId: string;
+  endpoint: WebhookEndpointProof;
+  config: Pick<WebhookConfig, "accountId" | "endpointId" | "livemode">;
+}): boolean {
+  if (input.endpoint.deleted === true) return false;
+  return (
+    input.accountId === input.config.accountId &&
+    input.endpoint.id === input.config.endpointId &&
+    input.endpoint.livemode === input.config.livemode &&
+    input.endpoint.status === "enabled"
+  );
+}
 
 type Envelope = {
   id: string;
@@ -118,6 +159,9 @@ export function readWebhookTestConfig(
   if ((env.STRIPE_WEBHOOK_SECRET ?? "") === secret) return null;
   const accountId = env.STRIPE_ACCOUNT_ID_TEST ?? "";
   if (!ACCOUNT_ID.test(accountId)) return null;
+  const endpointId = env.STRIPE_WEBHOOK_ENDPOINT_TEST ?? "";
+  if (!ENDPOINT_ID.test(endpointId)) return null;
+  if ((env.STRIPE_WEBHOOK_ENDPOINT ?? "") === endpointId) return null;
   const prices = readPriceSet(env, {
     basic: "STRIPE_PRICE_BASIC_TEST",
     pro: "STRIPE_PRICE_PRO_TEST",
@@ -126,9 +170,9 @@ export function readWebhookTestConfig(
   if (!prices) return null;
   const currentIds = CHECKOUT_PLANS.map((plan) => prices[plan]);
   const legacyRaw = env.STRIPE_PRICE_BASIC_TEST_LEGACY ?? "";
-  if (legacyRaw === "") return { secret, prices, accountId, livemode: false };
+  if (legacyRaw === "") return { secret, prices, accountId, endpointId, livemode: false };
   if (!PRICE_ID.test(legacyRaw) || currentIds.includes(legacyRaw)) return null;
-  return { secret, prices: { ...prices, legacyBasic: legacyRaw }, accountId, livemode: false };
+  return { secret, prices: { ...prices, legacyBasic: legacyRaw }, accountId, endpointId, livemode: false };
 }
 
 export function readWebhookLiveConfig(
@@ -139,13 +183,16 @@ export function readWebhookLiveConfig(
   if ((env.STRIPE_WEBHOOK_SECRET_TEST ?? "") === secret) return null;
   const accountId = env.STRIPE_ACCOUNT_ID ?? "";
   if (!ACCOUNT_ID.test(accountId)) return null;
+  const endpointId = env.STRIPE_WEBHOOK_ENDPOINT ?? "";
+  if (!ENDPOINT_ID.test(endpointId)) return null;
+  if ((env.STRIPE_WEBHOOK_ENDPOINT_TEST ?? "") === endpointId) return null;
   const prices = readPriceSet(env, {
     basic: "STRIPE_PRICE_BASIC",
     pro: "STRIPE_PRICE_PRO",
     elite: "STRIPE_PRICE_ELITE",
   });
   if (!prices) return null;
-  return { secret, prices, accountId, livemode: true };
+  return { secret, prices, accountId, endpointId, livemode: true };
 }
 
 export function commandFromEvent(
@@ -203,6 +250,7 @@ export async function handleStripeWebhook(input: {
   mode?: WebhookMode;
   env: { readonly [key: string]: string | undefined };
   constructEvent: (payload: string, header: string, secret: string) => Stripe.Event;
+  accountProof?: WebhookAccountProof;
   openStore: () => Promise<StripeEventStore>;
 }): Promise<Response> {
   const mode = input.mode ?? "test";
@@ -234,6 +282,16 @@ export async function handleStripeWebhook(input: {
   }
   if (eventAccount != null && typeof eventAccount !== "string") {
     return json(400, { error: "WEBHOOK_ACCOUNT_REJECTED" });
+  }
+  if (!input.accountProof) return json(500, { error: "WEBHOOK_CONFIG" });
+  try {
+    const account = await input.accountProof.retrieveAccount();
+    const endpoint = await input.accountProof.retrieveWebhookEndpoint(config.endpointId);
+    if (!webhookAccountProofAccepted({ accountId: account.id, endpoint, config })) {
+      return json(409, { error: "WEBHOOK_ACCOUNT_UNVERIFIED" });
+    }
+  } catch {
+    return json(500, { error: "WEBHOOK_ACCOUNT_UNVERIFIED" });
   }
 
   let command: WebhookCommand | null;

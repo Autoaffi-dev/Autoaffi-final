@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type { BillingCustomerStore } from "./billingCustomer";
+import { createSupabaseBillingCustomerStore, type BillingCustomerQueryClient } from "./billingCustomerStore";
 import { handleCheckoutPost } from "./checkoutSession";
 import { CheckoutAttemptConflict, type CheckoutAttempt, type CheckoutStore, type FinishExpiringResult } from "./checkoutStore";
 import { limitedProcessEnv } from "./limitedProcessEnv";
@@ -224,6 +225,11 @@ describe("checkout postgres transition", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
     psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
+    psqlFile(database, "supabase/migrations/20261122_billing_verified_binding.sql");
+    assert.equal(psql(database, "select has_column_privilege('service_role', 'public.billing_stripe_customers', 'livemode', 'UPDATE')"), "t");
+    assert.equal(psql(database, "select has_column_privilege('service_role', 'public.billing_stripe_customers', 'stripe_account_id', 'UPDATE')"), "t");
+    assert.equal(psql(database, "select has_column_privilege('service_role', 'public.billing_stripe_customers', 'user_id', 'UPDATE')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_customers', 'delete')"), "f");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'select')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'insert')"), "t");
     assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_checkout_sessions', 'update')"), "t");
@@ -387,6 +393,10 @@ describe("checkout postgres transition", { concurrency: 1 }, () => {
     assert.equal(stored.stripe_customer_id, "cus_B");
     assert.equal(stored.stripe_account_id, "acct_live");
     assert.equal(stored.livemode, true);
+    assert.equal(
+      psql(database, `select livemode::text || '|' || stripe_account_id from public.billing_stripe_customers where user_id = ${quote(USER_B)}::uuid`),
+      "true|acct_live"
+    );
     assert.ok(seen.length >= 1);
     assert.equal(new Set(seen.map((item) => item.key)).size, 1);
     assert.equal(seen[0].key, stored.idempotency_key);
@@ -403,6 +413,110 @@ describe("checkout postgres transition", { concurrency: 1 }, () => {
       assert.deepEqual(item.params.expand, ["line_items"]);
       assert.equal(item.params.mode, "subscription");
     }
+  });
+
+  it("fills a null customer binding from the verified checkout account and refuses to relabel it", async () => {
+    psql(database, "delete from public.billing_checkout_sessions");
+    psql(database, "delete from public.billing_subscriptions");
+    psql(database, "delete from public.billing_stripe_customers");
+    const store = createSupabaseBillingCustomerStore(serviceCustomerClient());
+    assert.deepEqual(await store.insert({ userId: USER_B, stripeCustomerId: "cus_B" }), { ok: true });
+    assert.equal(
+      await store.recordVerifiedAccount({
+        userId: USER_B,
+        stripeCustomerId: "cus_B",
+        livemode: true,
+        stripeAccountId: "acct_live",
+      }),
+      "recorded"
+    );
+    assert.equal(
+      await store.recordVerifiedAccount({
+        userId: USER_B,
+        stripeCustomerId: "cus_B",
+        livemode: true,
+        stripeAccountId: "acct_live",
+      }),
+      "already_verified"
+    );
+    assert.equal(
+      await store.recordVerifiedAccount({
+        userId: USER_B,
+        stripeCustomerId: "cus_B",
+        livemode: false,
+        stripeAccountId: "acct_other",
+      }),
+      "conflict"
+    );
+    assert.equal(
+      psql(database, `select livemode::text || '|' || stripe_account_id from public.billing_stripe_customers where stripe_customer_id = 'cus_B'`),
+      "true|acct_live"
+    );
+
+    const response = await handleCheckoutPost({
+      resolveUserId: async () => USER_B,
+      enabled: true,
+      env: { NEXT_PUBLIC_APP_URL: "https://app.example" },
+      nodeEnv: "test",
+      openRuntime: async () => ({
+        origin: "https://app.example",
+        prices: { basic: "price_basic", pro: "price_pro", elite: "price_elite" },
+        livemode: true,
+        loadSubscription: async () => null,
+        customerStore: pgCustomers(),
+        checkoutStore: pgCheckout(),
+        stripe: {
+          async retrieveAccount() {
+            return { id: "acct_other" };
+          },
+          async retrievePrice() {
+            return {
+              id: "price_basic",
+              active: true,
+              currency: "usd",
+              livemode: true,
+              type: "recurring",
+              billingScheme: "per_unit",
+              unitAmount: 900,
+              customUnitAmount: false,
+              interval: "month",
+              intervalCount: 1,
+              usageType: "licensed",
+              meter: null,
+            };
+          },
+          async retrieveCustomer(id) {
+            return { id, deleted: false, livemode: true, userId: USER_B };
+          },
+          async createCustomer() {
+            throw new Error("customer create");
+          },
+          async listSubscriptions() {
+            return { complete: true, blocking: false };
+          },
+          async createSession() {
+            throw new Error("session create");
+          },
+          async retrieveSession() {
+            throw new Error("retrieve");
+          },
+          async listSessions() {
+            return { complete: true, sessions: [] };
+          },
+          async expireSession() {
+            throw new Error("expire");
+          },
+        },
+      }),
+      request: pgRequest(),
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "CHECKOUT_ACCOUNT_MISMATCH" });
+    assert.equal(
+      psql(database, `select livemode::text || '|' || stripe_account_id from public.billing_stripe_customers where stripe_customer_id = 'cus_B'`),
+      "true|acct_live"
+    );
+    assert.equal(psql(database, "select count(*) from public.billing_checkout_sessions"), "0");
   });
 
   it("removes the parent and successor when that user is deleted", () => {
@@ -456,7 +570,121 @@ function pgCustomers(): BillingCustomerStore {
     async insert() {
       return { ok: false as const, reason: "store_failed" as const };
     },
+    async recordVerifiedAccount(input) {
+      return recordCustomerAccount(input);
+    },
   };
+}
+
+function serviceCustomerClient(): BillingCustomerQueryClient {
+  return {
+    from() {
+      return {
+        select(columns) {
+          return {
+            eq(column, value) {
+              return {
+                async maybeSingle() {
+                  const verified = columns.includes("livemode");
+                  const projection = verified
+                    ? "user_id::text || '|' || stripe_customer_id || '|' || coalesce(livemode::text, '') || '|' || coalesce(stripe_account_id, '')"
+                    : "user_id::text || '|' || stripe_customer_id";
+                  const cast = column === "user_id" ? "::uuid" : "";
+                  const line = serviceRole(
+                    `select ${projection} from public.billing_stripe_customers where ${column} = ${quote(value)}${cast}`
+                  );
+                  if (!line) return { data: null, error: null };
+                  const parts = line.split("|");
+                  if (!verified) return { data: { user_id: parts[0], stripe_customer_id: parts[1] }, error: null };
+                  return {
+                    data: {
+                      user_id: parts[0],
+                      stripe_customer_id: parts[1],
+                      livemode: parts[2] === "true" ? true : parts[2] === "false" ? false : null,
+                      stripe_account_id: parts[3] || null,
+                    },
+                    error: null,
+                  };
+                },
+              };
+            },
+          };
+        },
+        async insert(row) {
+          const result = serviceRoleTry(
+            `insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(row.user_id)}::uuid, ${quote(row.stripe_customer_id)})`
+          );
+          if (result.ok) return { error: null };
+          if (/23505/.test(result.stderr)) return { error: { code: "23505", message: result.stderr } };
+          return { error: { message: result.stderr || "insert failed" } };
+        },
+        update(row) {
+          return {
+            eq(userColumn, userId) {
+              return {
+                eq(customerColumn, customerId) {
+                  return {
+                    is() {
+                      return {
+                        async is() {
+                          const result = serviceRoleTry(
+                            `update public.billing_stripe_customers set livemode = ${row.livemode ? "true" : "false"}, stripe_account_id = ${quote(row.stripe_account_id)} where ${userColumn} = ${quote(userId)}::uuid and ${customerColumn} = ${quote(customerId)} and livemode is null and stripe_account_id is null`
+                          );
+                          return result.ok ? { error: null } : { error: { message: result.stderr || "update failed" } };
+                        },
+                      };
+                    },
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+function serviceRole(sql: string): string {
+  const text = psql(database, `begin; select set_config('role', 'service_role', true); ${sql}; commit;`);
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && line !== "service_role")
+    .join("\n");
+}
+
+function serviceRoleTry(sql: string): { ok: boolean; stderr: string } {
+  try {
+    serviceRole(sql);
+    return { ok: true, stderr: "" };
+  } catch (err) {
+    const error = err as { stderr?: string };
+    return { ok: false, stderr: String(error.stderr || "") };
+  }
+}
+
+function recordCustomerAccount(input: {
+  userId: string;
+  stripeCustomerId: string;
+  livemode: boolean;
+  stripeAccountId: string;
+}): "recorded" | "already_verified" | "conflict" | "missing" {
+  const line = psql(
+    database,
+    `select coalesce(livemode::text, '') || '|' || coalesce(stripe_account_id, '') from public.billing_stripe_customers where user_id = ${quote(input.userId)}::uuid and stripe_customer_id = ${quote(input.stripeCustomerId)}`
+  );
+  if (!line) return "missing";
+  const [mode, account] = line.split("|");
+  const livemode = mode === "true" ? true : mode === "false" ? false : null;
+  const stripeAccountId = account || null;
+  if (livemode === input.livemode && stripeAccountId === input.stripeAccountId) return "already_verified";
+  if (livemode !== null || stripeAccountId !== null) return "conflict";
+  const updated = psql(
+    database,
+    `update public.billing_stripe_customers set livemode = ${input.livemode ? "true" : "false"}, stripe_account_id = ${quote(input.stripeAccountId)} where user_id = ${quote(input.userId)}::uuid and stripe_customer_id = ${quote(input.stripeCustomerId)} and livemode is null and stripe_account_id is null returning stripe_customer_id`
+  );
+  return updated === input.stripeCustomerId ? "recorded" : "conflict";
 }
 
 function pgCheckout(): CheckoutStore {

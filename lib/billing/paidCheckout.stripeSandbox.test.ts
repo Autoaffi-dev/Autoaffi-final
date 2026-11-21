@@ -122,16 +122,18 @@ function serviceSql(statement: string): string {
 function snapshot(userId: string): PaidSubscriptionSnapshot | null {
   const line = psql(
     database,
-    serviceSql(`select coalesce(user_id::text, '') || '|' || coalesce(paid_plan, '') || '|' || coalesce(subscription_status, '') || '|' || coalesce(trunc(extract(epoch from paid_until))::text, '') from public.billing_subscriptions where user_id = ${quote(userId)}::uuid`)
+    serviceSql(`select coalesce(user_id::text, '') || '|' || coalesce(paid_plan, '') || '|' || coalesce(subscription_status, '') || '|' || coalesce(trunc(extract(epoch from paid_until))::text, '') || '|' || coalesce(livemode::text, '') || '|' || coalesce(stripe_account_id, '') from public.billing_subscriptions where user_id = ${quote(userId)}::uuid`)
   );
   if (!line) return null;
-  const [user_id, paid_plan, subscription_status, paidUntilEpoch] = line.split("|");
+  const [user_id, paid_plan, subscription_status, paidUntilEpoch, mode, account] = line.split("|");
   const epoch = Number(paidUntilEpoch);
   return {
     user_id,
     paid_plan,
     subscription_status,
     paid_until: paidUntilEpoch && Number.isFinite(epoch) ? new Date(epoch * 1000).toISOString() : "",
+    livemode: mode === "true" ? true : mode === "false" ? false : null,
+    stripe_account_id: account || null,
   };
 }
 
@@ -203,6 +205,17 @@ function customerStore(): BillingCustomerStore {
     async insert(binding) {
       psql(database, serviceSql(`insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(binding.userId)}::uuid, ${quote(binding.stripeCustomerId)})`));
       return { ok: true };
+    },
+    async recordVerifiedAccount(input) {
+      const line = psql(database, serviceSql(`select coalesce(livemode::text, '') || '|' || coalesce(stripe_account_id, '') from public.billing_stripe_customers where user_id = ${quote(input.userId)}::uuid and stripe_customer_id = ${quote(input.stripeCustomerId)}`));
+      if (!line) return "missing";
+      const [mode, account] = line.split("|");
+      const livemode = mode === "true" ? true : mode === "false" ? false : null;
+      const stripeAccountId = account || null;
+      if (livemode === input.livemode && stripeAccountId === input.stripeAccountId) return "already_verified";
+      if (livemode !== null || stripeAccountId !== null) return "conflict";
+      psql(database, serviceSql(`update public.billing_stripe_customers set livemode = ${input.livemode ? "true" : "false"}, stripe_account_id = ${quote(input.stripeAccountId)} where user_id = ${quote(input.userId)}::uuid and stripe_customer_id = ${quote(input.stripeCustomerId)} and livemode is null and stripe_account_id is null`));
+      return "recorded";
     },
   };
 }
@@ -289,11 +302,14 @@ describe("Stripe sandbox paid checkout", () => {
     assert.equal(psql("postgres", "select inet_server_addr() is null"), "t");
     const capturedCustomer = { id: null as string | null };
     let server: PaidWebhookServer | null = null;
+    const client = new Stripe(key, { apiVersion: PAID_SANDBOX_API_VERSION, maxNetworkRetries: 0, timeout: 20_000, telemetry: false });
+    const sandboxAccount = await client.accounts.retrieve();
     try {
       server = await createPaidWebhookServer({
         port: PAID_SANDBOX_WEBHOOK_PORT,
         secret: webhookSecret,
         prices,
+        accountId: sandboxAccount.id,
         capturedCustomerId: () => capturedCustomer.id,
         openStore: async () => createServiceRoleEventStore((sql) => psql(database, sql)),
       });
@@ -329,7 +345,7 @@ describe("Stripe sandbox paid checkout", () => {
       psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
       psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
       psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
-      const client = new Stripe(key, { apiVersion: PAID_SANDBOX_API_VERSION, maxNetworkRetries: 0, timeout: 20_000, telemetry: false });
+      psqlFile(database, "supabase/migrations/20261122_billing_verified_binding.sql");
       const sessions = createCaptureBag();
       const customers = createCaptureBag();
       const stripe = captureCreate(createStripeCheckoutClient(client), sessions);
@@ -427,7 +443,8 @@ describe("Stripe sandbox paid checkout", () => {
           console.log(`checkout_session=${safeStripeId("cs", sessions.ids[0]) ?? "unrecognized"}`);
           console.log(`checkout_url_file=${urlFile}`);
           console.log("entitlement_layer=getPaidPlan");
-          while (Date.now() < paymentDeadline && receiver.gaps().length === 0 && getPaidPlan(snapshot(userA), userA, new Date()) !== "basic") {
+          const access = { livemode: false as const, accountId: sandboxAccount.id };
+          while (Date.now() < paymentDeadline && receiver.gaps().length === 0 && getPaidPlan(snapshot(userA), userA, new Date(), access) !== "basic") {
             if (abort.signal.aborted) throw new SandboxError("STRIPE_SANDBOX_INTERRUPTED", { operation: "sandbox" });
             await new Promise((resolve) => setTimeout(resolve, 1_000));
           }
@@ -436,13 +453,13 @@ describe("Stripe sandbox paid checkout", () => {
             throw new SandboxError("STRIPE_SANDBOX_INVOICE_GAP", { operation: "invoice.paid" });
           }
           const row = snapshot(userA);
-          const entitlement = getPaidPlan(row, userA, new Date());
+          const entitlement = getPaidPlan(row, userA, new Date(), access);
           if (!paymentChainAccepted({ gaps: receiver.gaps(), entitlement })) {
             throw new SandboxError("STRIPE_SANDBOX_TIMEOUT", { operation: "invoice.paid" });
           }
           const periodEnd = psql(database, serviceSql("select trunc(extract(epoch from period_end))::text from public.billing_stripe_invoices"));
           assert.equal(row?.paid_until, new Date(Number(periodEnd) * 1000).toISOString());
-          assert.equal(getPaidPlan(snapshot(userB), userB, new Date()), "none");
+          assert.equal(getPaidPlan(snapshot(userB), userB, new Date(), access), "none");
           assert.equal(snapshot(userB), null);
           if (!capturedCustomer.id) throw new SandboxError("STRIPE_SANDBOX_LISTENER_UNCONFIRMED", { operation: "customer.updated" });
           const proof = readProof(userA);
@@ -478,7 +495,7 @@ describe("Stripe sandbox paid checkout", () => {
           assert.equal(snapshot(userA)?.paid_until, paidUntil);
           assert.equal(psql(database, serviceSql("select count(*) from public.billing_stripe_invoices")), "1");
           assert.equal(psql(database, serviceSql(`select invoice_event_id || '|' || payment_event_id || '|' || invoice_payment_id || '|' || payment_intent_id || '|' || amount_paid::text || '|' || currency || '|' || stripe_subscription_id from public.billing_stripe_invoice_proofs where stripe_invoice_id = ${quote(proof.invoiceId)}`)), proofBefore);
-          assert.equal(getPaidPlan(snapshot(userB), userB, new Date()), "none");
+          assert.equal(getPaidPlan(snapshot(userB), userB, new Date(), access), "none");
           assert.equal(receiver.apiVersions().every((version) => version === PAID_SANDBOX_API_VERSION), true);
           console.log(`event_api_version=${PAID_SANDBOX_API_VERSION}`);
           console.log("paid_chain=basic");

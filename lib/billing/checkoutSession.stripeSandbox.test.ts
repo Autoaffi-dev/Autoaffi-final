@@ -102,6 +102,17 @@ function customerStore(): BillingCustomerStore {
       psql(database, serviceSql(`insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(binding.userId)}::uuid, ${quote(binding.stripeCustomerId)})`));
       return { ok: true };
     },
+    async recordVerifiedAccount(input) {
+      const line = psql(database, serviceSql(`select coalesce(livemode::text, '') || '|' || coalesce(stripe_account_id, '') from public.billing_stripe_customers where user_id = ${quote(input.userId)}::uuid and stripe_customer_id = ${quote(input.stripeCustomerId)}`));
+      if (!line) return "missing";
+      const [mode, account] = line.split("|");
+      const livemode = mode === "true" ? true : mode === "false" ? false : null;
+      const stripeAccountId = account || null;
+      if (livemode === input.livemode && stripeAccountId === input.stripeAccountId) return "already_verified";
+      if (livemode !== null || stripeAccountId !== null) return "conflict";
+      psql(database, serviceSql(`update public.billing_stripe_customers set livemode = ${input.livemode ? "true" : "false"}, stripe_account_id = ${quote(input.stripeAccountId)} where user_id = ${quote(input.userId)}::uuid and stripe_customer_id = ${quote(input.stripeCustomerId)} and livemode is null and stripe_account_id is null`));
+      return "recorded";
+    },
   };
 }
 
@@ -209,6 +220,7 @@ describe("Stripe sandbox checkout session", () => {
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
     psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
+    psqlFile(database, "supabase/migrations/20261122_billing_verified_binding.sql");
     const client = new Stripe(key, {
       apiVersion: "2025-11-17.clover",
       maxNetworkRetries: 0,

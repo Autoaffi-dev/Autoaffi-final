@@ -24,15 +24,45 @@ export type PortalCustomer = {
   deleted: true;
 };
 
+export type PortalConfigurationSnapshot = {
+  id: string;
+  active: boolean;
+  livemode: boolean;
+  paymentMethodUpdate: boolean;
+  invoiceHistory: boolean;
+  subscriptionCancelEnabled: boolean;
+  subscriptionCancelMode: string;
+  subscriptionCancelProration: string;
+  subscriptionUpdateEnabled: boolean;
+};
+
 export type PortalStripe = {
   retrieveAccount(): Promise<{ id: string }>;
   retrieveCustomer(customerId: string): Promise<PortalCustomer>;
+  retrievePortalConfiguration(configurationId: string): Promise<PortalConfigurationSnapshot>;
   createPortalSession(input: {
     customerId: string;
     returnUrl: string;
     configurationId: string;
   }): Promise<{ url: string }>;
 };
+
+export function portalConfigurationAllowed(
+  configuration: PortalConfigurationSnapshot,
+  expected: { configurationId: string; livemode: boolean }
+): boolean {
+  return (
+    configuration.id === expected.configurationId &&
+    configuration.active === true &&
+    configuration.livemode === expected.livemode &&
+    configuration.paymentMethodUpdate === true &&
+    configuration.invoiceHistory === true &&
+    configuration.subscriptionCancelEnabled === true &&
+    configuration.subscriptionCancelMode === "at_period_end" &&
+    configuration.subscriptionCancelProration === "none" &&
+    configuration.subscriptionUpdateEnabled === false
+  );
+}
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -128,6 +158,14 @@ export async function handlePortalPost(input: {
   if (customer.deleted || customer.livemode !== config.livemode || customer.userId !== userId || customer.id !== binding.stripeCustomerId) {
     return json(409, { error: "PORTAL_CUSTOMER_REJECTED" });
   }
+
+  let configuration: PortalConfigurationSnapshot;
+  try {
+    configuration = await runtime.stripe.retrievePortalConfiguration(config.configurationId);
+  } catch {
+    return json(500, { error: "PORTAL_CONFIG" });
+  }
+  if (!portalConfigurationAllowed(configuration, config)) return json(500, { error: "PORTAL_CONFIG" });
 
   try {
     const session = await runtime.stripe.createPortalSession({

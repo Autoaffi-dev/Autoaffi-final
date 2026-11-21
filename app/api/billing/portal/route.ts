@@ -1,7 +1,12 @@
 import { requireUserId } from "@/lib/auth/server";
 import { createSupabaseBillingCustomerStore } from "@/lib/billing/billingCustomerStore";
 import type { BillingCustomerQueryClient } from "@/lib/billing/billingCustomerStore";
-import { handlePortalPost, readPortalConfig, type PortalCustomer } from "@/lib/billing/portalSession";
+import {
+  handlePortalPost,
+  readPortalConfig,
+  type PortalConfigurationSnapshot,
+  type PortalCustomer,
+} from "@/lib/billing/portalSession";
 import { stripeClientForSecret } from "@/lib/billing/stripeCheckout";
 
 export const runtime = "nodejs";
@@ -32,6 +37,20 @@ export async function POST(request: Request) {
             if ("deleted" in customer && customer.deleted) return { id: customer.id, deleted: true };
             const userId = typeof customer.metadata?.user_id === "string" ? customer.metadata.user_id : null;
             return { id: customer.id, deleted: false, livemode: customer.livemode, userId };
+          },
+          async retrievePortalConfiguration(configurationId): Promise<PortalConfigurationSnapshot> {
+            const configuration = await stripe.billingPortal.configurations.retrieve(configurationId);
+            return {
+              id: configuration.id,
+              active: configuration.active,
+              livemode: configuration.livemode,
+              paymentMethodUpdate: configuration.features.payment_method_update.enabled,
+              invoiceHistory: configuration.features.invoice_history.enabled,
+              subscriptionCancelEnabled: configuration.features.subscription_cancel.enabled,
+              subscriptionCancelMode: configuration.features.subscription_cancel.mode,
+              subscriptionCancelProration: configuration.features.subscription_cancel.proration_behavior,
+              subscriptionUpdateEnabled: configuration.features.subscription_update.enabled,
+            };
           },
           async createPortalSession(input) {
             const session = await stripe.billingPortal.sessions.create({

@@ -11,6 +11,10 @@ type WebhookHarness = {
   throwSignature: boolean;
   outcome: string;
   event: unknown;
+  accountId: string;
+  endpointLivemode: boolean;
+  endpointStatus: string;
+  secrets: string[];
 };
 
 const harness: WebhookHarness = {
@@ -20,6 +24,10 @@ const harness: WebhookHarness = {
   throwSignature: false,
   outcome: "ignored_type",
   event: null,
+  accountId: "acct_test",
+  endpointLivemode: false,
+  endpointStatus: "enabled",
+  secrets: [],
 };
 (globalThis as typeof globalThis & { __autoaffiWebhookRouteTest: WebhookHarness }).__autoaffiWebhookRouteTest = harness;
 
@@ -54,7 +62,21 @@ registerHooks({
         format: "module",
         shortCircuit: true,
         source: `
-          class Stripe {}
+          class Stripe {
+            constructor(secret) {
+              const harness = globalThis.__autoaffiWebhookRouteTest;
+              harness.secrets.push(secret);
+              this.accounts = { retrieve: async () => ({ id: harness.accountId }) };
+              this.webhookEndpoints = {
+                retrieve: async (id) => ({
+                  id,
+                  livemode: harness.endpointLivemode,
+                  status: harness.endpointStatus,
+                  deleted: false,
+                }),
+              };
+            }
+          }
           Stripe.webhooks = {
             constructEvent(payload, header) {
               const harness = globalThis.__autoaffiWebhookRouteTest;
@@ -87,6 +109,10 @@ const previous: Record<string, string | undefined> = {
   STRIPE_PRICE_BASIC_TEST: process.env.STRIPE_PRICE_BASIC_TEST,
   STRIPE_PRICE_PRO_TEST: process.env.STRIPE_PRICE_PRO_TEST,
   STRIPE_PRICE_ELITE_TEST: process.env.STRIPE_PRICE_ELITE_TEST,
+  STRIPE_WEBHOOK_ENDPOINT_TEST: process.env.STRIPE_WEBHOOK_ENDPOINT_TEST,
+  STRIPE_WEBHOOK_ENDPOINT: process.env.STRIPE_WEBHOOK_ENDPOINT,
+  STRIPE_SECRET_KEY_TEST: process.env.STRIPE_SECRET_KEY_TEST,
+  STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
   NODE_ENV: process.env.NODE_ENV,
   VERCEL_ENV: process.env.VERCEL_ENV,
 };
@@ -109,6 +135,11 @@ function enable() {
   delete process.env.BILLING_LIVE_WEBHOOK_ENABLED;
   process.env.STRIPE_WEBHOOK_SECRET_TEST = "whsec_testsecret123";
   process.env.STRIPE_ACCOUNT_ID_TEST = "acct_test";
+  process.env.STRIPE_WEBHOOK_ENDPOINT_TEST = "we_test";
+  process.env.STRIPE_SECRET_KEY_TEST = "sk_test_route";
+  harness.accountId = "acct_test";
+  harness.endpointLivemode = false;
+  harness.endpointStatus = "enabled";
   process.env.STRIPE_PRICE_BASIC_TEST = "price_basic";
   process.env.STRIPE_PRICE_PRO_TEST = "price_pro";
   process.env.STRIPE_PRICE_ELITE_TEST = "price_elite";
@@ -233,6 +264,11 @@ describe("POST /api/billing/webhook", () => {
     process.env.STRIPE_WEBHOOK_SECRET_TEST = "whsec_testsecret123";
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_livesecret123";
     process.env.STRIPE_ACCOUNT_ID = "acct_live";
+    process.env.STRIPE_WEBHOOK_ENDPOINT = "we_live";
+    process.env.STRIPE_SECRET_KEY = "sk_live_route";
+    harness.accountId = "acct_live";
+    harness.endpointLivemode = true;
+    harness.endpointStatus = "enabled";
     process.env.STRIPE_PRICE_BASIC = "price_basic";
     process.env.STRIPE_PRICE_PRO = "price_pro";
     process.env.STRIPE_PRICE_ELITE = "price_elite";

@@ -28,6 +28,8 @@ type SubscriptionRow = {
   subscription_status: string;
   paid_until: string;
   cancel_at_period_end: boolean;
+  livemode: boolean | null;
+  stripe_account_id: string | null;
 };
 
 type EntitlementHarness = {
@@ -130,31 +132,42 @@ function forgedRequest(): Request {
 }
 
 const previousNodeEnv = process.env.NODE_ENV;
+const previousAccount = process.env.STRIPE_ACCOUNT_ID;
+const previousTestAccount = process.env.STRIPE_ACCOUNT_ID_TEST;
+const previousVercel = process.env.VERCEL_ENV;
 
 after(() => {
   process.env.NODE_ENV = previousNodeEnv;
+  if (previousAccount === undefined) delete process.env.STRIPE_ACCOUNT_ID;
+  else process.env.STRIPE_ACCOUNT_ID = previousAccount;
+  if (previousTestAccount === undefined) delete process.env.STRIPE_ACCOUNT_ID_TEST;
+  else process.env.STRIPE_ACCOUNT_ID_TEST = previousTestAccount;
+  if (previousVercel === undefined) delete process.env.VERCEL_ENV;
+  else process.env.VERCEL_ENV = previousVercel;
 });
+
+function liveRow(userId: string, plan: string): SubscriptionRow {
+  return {
+    user_id: userId,
+    paid_plan: plan,
+    subscription_status: "active",
+    paid_until: FUTURE,
+    cancel_at_period_end: false,
+    livemode: true,
+    stripe_account_id: "acct_live",
+  };
+}
 
 describe("exported GET with real requireUserId", () => {
   it("returns B's Basic when the signed-in session is B and the request claims A and Pro", async () => {
     process.env.NODE_ENV = "production";
+    process.env.STRIPE_ACCOUNT_ID = "acct_live";
+    delete process.env.VERCEL_ENV;
     harness.session = { user: { id: USER_B } };
     harness.queries = [];
     harness.rows = {
-      [USER_A]: {
-        user_id: USER_A,
-        paid_plan: "pro",
-        subscription_status: "active",
-        paid_until: FUTURE,
-        cancel_at_period_end: false,
-      },
-      [USER_B]: {
-        user_id: USER_B,
-        paid_plan: "basic",
-        subscription_status: "active",
-        paid_until: FUTURE,
-        cancel_at_period_end: false,
-      },
+      [USER_A]: liveRow(USER_A, "pro"),
+      [USER_B]: liveRow(USER_B, "basic"),
     };
 
     const response = await GET(forgedRequest());
@@ -175,16 +188,12 @@ describe("exported GET with real requireUserId", () => {
 
   it("returns 401 and does not read the database when there is no session", async () => {
     process.env.NODE_ENV = "production";
+    process.env.STRIPE_ACCOUNT_ID = "acct_live";
+    delete process.env.VERCEL_ENV;
     harness.session = null;
     harness.queries = [];
     harness.rows = {
-      [USER_A]: {
-        user_id: USER_A,
-        paid_plan: "pro",
-        subscription_status: "active",
-        paid_until: FUTURE,
-        cancel_at_period_end: false,
-      },
+      [USER_A]: liveRow(USER_A, "pro"),
     };
 
     const response = await GET(forgedRequest());
@@ -194,5 +203,32 @@ describe("exported GET with real requireUserId", () => {
     assert.deepEqual(body, { error: "UNAUTHORIZED" });
     assert.equal(response.headers.get("cache-control"), "private, no-store");
     assert.deepEqual(harness.queries, []);
+  });
+
+  it("returns a config error and does not read when production has no account", async () => {
+    process.env.NODE_ENV = "production";
+    delete process.env.STRIPE_ACCOUNT_ID;
+    delete process.env.VERCEL_ENV;
+    harness.session = { user: { id: USER_B } };
+    harness.queries = [];
+    harness.rows = { [USER_B]: liveRow(USER_B, "basic") };
+    const response = await GET(forgedRequest());
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "ENTITLEMENT_CONFIG" });
+    assert.deepEqual(harness.queries, []);
+  });
+
+  it("does not grant an active Pro row whose mode is unknown", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.STRIPE_ACCOUNT_ID = "acct_live";
+    delete process.env.VERCEL_ENV;
+    harness.session = { user: { id: USER_B } };
+    harness.queries = [];
+    harness.rows = {
+      [USER_B]: { ...liveRow(USER_B, "pro"), livemode: null, stripe_account_id: null },
+    };
+    const response = await GET(forgedRequest());
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { plan: "none" });
   });
 });

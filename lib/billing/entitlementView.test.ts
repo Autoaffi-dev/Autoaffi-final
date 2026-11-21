@@ -38,6 +38,7 @@ describe("entitlement view", () => {
     assert.match(page, /title="Settings"/);
     assert.match(page, /title="Support"/);
     assert.match(page, /title="Payments & Integrations"/);
+    assert.match(page, /forceLocked=\{false\}[\s\S]{0,160}title="Social Accounts"/);
     assert.match(weekly, /readDashboardPlan/);
     assert.doesNotMatch(weekly, /searchParams\.get\("plan"\)/);
     assert.match(daily, /readDashboardPlan/);

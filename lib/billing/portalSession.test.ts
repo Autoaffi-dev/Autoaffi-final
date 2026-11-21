@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { BillingCustomerStore } from "./billingCustomer.ts";
-import { handlePortalPost, portalReturnUrl, readPortalConfig, type PortalConfig, type PortalStripe } from "./portalSession.ts";
+import {
+  handlePortalPost,
+  portalConfigurationAllowed,
+  portalReturnUrl,
+  readPortalConfig,
+  type PortalConfig,
+  type PortalConfigurationSnapshot,
+  type PortalStripe,
+} from "./portalSession.ts";
 
 const USER = "11111111-1111-4111-8111-111111111111";
 const ORIGIN = "https://app.example";
@@ -36,6 +44,9 @@ function customers(binding: { userId: string; stripeCustomerId: string } | null,
     async insert() {
       throw new Error("portal must not create a customer");
     },
+    async recordVerifiedAccount() {
+      throw new Error("portal must not relabel a customer");
+    },
   };
 }
 
@@ -49,11 +60,28 @@ function stripe(overrides: Partial<PortalStripe> = {}): PortalStripe & { created
     async retrieveCustomer() {
       return { id: "cus_bound", deleted: false, livemode: false, userId: USER };
     },
+    async retrievePortalConfiguration(configurationId) {
+      return allowedConfiguration(configurationId);
+    },
     async createPortalSession(input) {
       created.push(input);
       return { url: "https://billing.stripe.com/p/session/test" };
     },
     ...overrides,
+  };
+}
+
+function allowedConfiguration(id: string, livemode = false): PortalConfigurationSnapshot {
+  return {
+    id,
+    active: true,
+    livemode,
+    paymentMethodUpdate: true,
+    invoiceHistory: true,
+    subscriptionCancelEnabled: true,
+    subscriptionCancelMode: "at_period_end",
+    subscriptionCancelProration: "none",
+    subscriptionUpdateEnabled: false,
   };
 }
 
@@ -155,5 +183,28 @@ describe("billing portal session", () => {
         },
       }),
     })).body.error, "PORTAL_CUSTOMER_REJECTED");
+  });
+
+  it("rejects a portal configuration that can change the plan or cancel immediately", async () => {
+    assert.equal(portalConfigurationAllowed(allowedConfiguration("bpc_test"), { configurationId: "bpc_test", livemode: false }), true);
+    for (const configuration of [
+      { ...allowedConfiguration("bpc_test"), subscriptionUpdateEnabled: true },
+      { ...allowedConfiguration("bpc_test"), subscriptionCancelMode: "immediately" },
+      { ...allowedConfiguration("bpc_test"), subscriptionCancelProration: "create_prorations" },
+      { ...allowedConfiguration("bpc_test"), active: false },
+      { ...allowedConfiguration("bpc_test"), livemode: true },
+      { ...allowedConfiguration("bpc_other"), id: "bpc_other" },
+    ]) {
+      const opened = await post({
+        stripe: stripe({
+          async retrievePortalConfiguration() {
+            return configuration;
+          },
+        }),
+      });
+      assert.equal(opened.body.error, "PORTAL_CONFIG");
+      assert.equal(opened.response.status, 500);
+      assert.deepEqual(opened.stripe.created, []);
+    }
   });
 });
