@@ -250,7 +250,7 @@ export default function EmailSettingsPage() {
 
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/80">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-            Active Plan: <span className="font-semibold text-[#f7d57b]">{entitlementLabel(entitlement)}</span>
+            Access: <span className="font-semibold text-[#f7d57b]">{entitlementLabel(entitlement)}</span>
           </div>
         </div>
 

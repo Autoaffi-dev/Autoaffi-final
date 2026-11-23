@@ -1,4 +1,5 @@
-import { getPaidPlan, readPaidAccess, type EntitlementPlan, type PaidSubscriptionSnapshot } from "./paidPlan";
+import { getPaidPlan, readPaidAccess, type PaidSubscriptionSnapshot } from "./paidPlan";
+import { effectivePlan, readActiveTest, type TestAccessSnapshot } from "./testAccess";
 
 const UNAUTHORIZED = "UNAUTHORIZED";
 
@@ -6,6 +7,7 @@ export type EntitlementGetDeps = {
   request: Request;
   resolveUserId: (request: Request) => Promise<string>;
   loadSubscription: (userId: string) => Promise<PaidSubscriptionSnapshot | null>;
+  loadTestAccess: (userId: string) => Promise<TestAccessSnapshot | null>;
   env: { readonly [key: string]: string | undefined };
   nodeEnv: string | undefined;
   now?: Date;
@@ -16,11 +18,23 @@ const ENTITLEMENT_HEADERS = {
   "cache-control": "private, no-store",
 };
 
-function entitlementResponse(plan: EntitlementPlan, status: number): Response {
-  return new Response(JSON.stringify({ plan }), {
-    status,
-    headers: ENTITLEMENT_HEADERS,
-  });
+function entitlementResponse(
+  paidPlan: ReturnType<typeof getPaidPlan>,
+  testPlan: ReturnType<typeof getPaidPlan>,
+  testExpiresAt: string | null
+): Response {
+  return new Response(
+    JSON.stringify({
+      paidPlan,
+      testPlan,
+      effectivePlan: effectivePlan(paidPlan, testPlan),
+      testExpiresAt: testPlan === "none" ? null : testExpiresAt,
+    }),
+    {
+      status: 200,
+      headers: ENTITLEMENT_HEADERS,
+    }
+  );
 }
 
 function entitlementError(
@@ -49,8 +63,13 @@ export async function handleEntitlementGet(deps: EntitlementGetDeps): Promise<Re
   if (!userId) return entitlementError("UNAUTHORIZED", 401);
 
   try {
-    const row = await deps.loadSubscription(userId);
-    return entitlementResponse(getPaidPlan(row, userId, now, access), 200);
+    const [row, testRow] = await Promise.all([
+      deps.loadSubscription(userId),
+      deps.loadTestAccess(userId),
+    ]);
+    const paidPlan = getPaidPlan(row, userId, now, access);
+    const test = readActiveTest(testRow, userId, now);
+    return entitlementResponse(paidPlan, test.plan, test.expiresAt);
   } catch {
     return entitlementError("ENTITLEMENT_READ_FAILED", 500);
   }

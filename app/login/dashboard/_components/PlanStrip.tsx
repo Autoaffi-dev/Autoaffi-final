@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { entitlementLabel, type EntitlementView } from "@/lib/billing/entitlementView";
+import { entitlementLabel, paidStatusLabel, testStatusLabel, type EntitlementView } from "@/lib/billing/entitlementView";
 
 export interface PlanStripProps {
   view: EntitlementView;
@@ -11,7 +11,8 @@ export interface PlanStripProps {
 export default function PlanStrip({ view, beginnerHoursLeft }: PlanStripProps) {
   const [billingMessage, setBillingMessage] = useState("");
   const label = entitlementLabel(view);
-  const paid = view.status === "ready" && view.plan !== "none";
+  const paying = view.status === "ready" && view.paidPlan !== "none";
+  const showUpgrade = view.status === "ready" && paying && view.paidPlan !== "elite" && view.effectivePlan !== "elite";
 
   async function openBilling() {
     setBillingMessage("");
@@ -43,10 +44,15 @@ export default function PlanStrip({ view, beginnerHoursLeft }: PlanStripProps) {
 
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-100">
             <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
-              {label}
+              {view.status === "ready" ? paidStatusLabel(view.paidPlan) : label}
             </span>
+            {view.status === "ready" && testStatusLabel(view.testPlan) ? (
+              <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200">
+                {testStatusLabel(view.testPlan)}
+              </span>
+            ) : null}
 
-            {paid && view.plan !== "elite" && (
+            {showUpgrade && (
               <span className="text-[11px] text-slate-400">
                 Upgrade to unlock Elite Engines & advanced automation.
               </span>
@@ -71,7 +77,7 @@ export default function PlanStrip({ view, beginnerHoursLeft }: PlanStripProps) {
           </button>
           {billingMessage ? <span className="text-slate-400">{billingMessage}</span> : null}
 
-          {paid && view.plan !== "elite" && (
+          {showUpgrade && (
             <button className="rounded-full bg-emerald-500 px-3 py-1 font-semibold text-black hover:bg-emerald-400">
               See Elite benefits
             </button>

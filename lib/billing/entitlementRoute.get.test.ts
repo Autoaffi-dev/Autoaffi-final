@@ -4,6 +4,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 import { PAID_SUBSCRIPTION_COLUMNS } from "./paidPlan.ts";
+import { TEST_ACCESS_COLUMNS } from "./testAccess";
 
 /**
  * Calls the exported GET with the real requireUserId.
@@ -32,16 +33,25 @@ type SubscriptionRow = {
   stripe_account_id: string | null;
 };
 
+type TestRow = {
+  user_id: string;
+  test_plan: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+};
+
 type EntitlementHarness = {
   session: { user?: { id?: string } } | null;
   queries: Query[];
   rows: Record<string, SubscriptionRow>;
+  testRows: Record<string, TestRow>;
 };
 
 const harness: EntitlementHarness = {
   session: null,
   queries: [],
   rows: {},
+  testRows: {},
 };
 
 (globalThis as typeof globalThis & { __autoaffiEntitlementTest: EntitlementHarness }).__autoaffiEntitlementTest =
@@ -98,6 +108,10 @@ export function createClient() {
               state.queries.push({ table, columns, column, value });
               return {
                 async maybeSingle() {
+                  const state = globalThis.__autoaffiEntitlementTest;
+                  if (table === "billing_test_access") {
+                    return { data: state.testRows[value] ?? null, error: null };
+                  }
                   return { data: state.rows[value] ?? null, error: null };
                 },
               };
@@ -174,12 +188,23 @@ describe("exported GET with real requireUserId", () => {
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.deepEqual(body, { plan: "basic" });
+    assert.deepEqual(body, {
+      paidPlan: "basic",
+      testPlan: "none",
+      effectivePlan: "basic",
+      testExpiresAt: null,
+    });
     assert.equal(response.headers.get("cache-control"), "private, no-store");
     assert.deepEqual(harness.queries, [
       {
         table: "billing_subscriptions",
         columns: PAID_SUBSCRIPTION_COLUMNS,
+        column: "user_id",
+        value: USER_B,
+      },
+      {
+        table: "billing_test_access",
+        columns: TEST_ACCESS_COLUMNS,
         column: "user_id",
         value: USER_B,
       },
@@ -229,6 +254,48 @@ describe("exported GET with real requireUserId", () => {
     };
     const response = await GET(forgedRequest());
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { plan: "none" });
+    assert.deepEqual(await response.json(), {
+      paidPlan: "none",
+      testPlan: "none",
+      effectivePlan: "none",
+      testExpiresAt: null,
+    });
+  });
+
+  it("drops an Elite test grant on the next request after revoked_at is set", async () => {
+    Reflect.set(process.env, "NODE_ENV", "production");
+    process.env.STRIPE_ACCOUNT_ID = "acct_live";
+    delete process.env.VERCEL_ENV;
+    harness.session = { user: { id: USER_B } };
+    harness.queries = [];
+    harness.rows = {};
+    harness.testRows = {
+      [USER_B]: {
+        user_id: USER_B,
+        test_plan: "elite",
+        expires_at: FUTURE,
+        revoked_at: null,
+      },
+    };
+    const first = await GET(forgedRequest());
+    assert.deepEqual(await first.json(), {
+      paidPlan: "none",
+      testPlan: "elite",
+      effectivePlan: "elite",
+      testExpiresAt: FUTURE,
+    });
+    harness.testRows[USER_B] = {
+      user_id: USER_B,
+      test_plan: "elite",
+      expires_at: FUTURE,
+      revoked_at: "2026-11-22T00:00:00.000Z",
+    };
+    const second = await GET(forgedRequest());
+    assert.deepEqual(await second.json(), {
+      paidPlan: "none",
+      testPlan: "none",
+      effectivePlan: "none",
+      testExpiresAt: null,
+    });
   });
 });

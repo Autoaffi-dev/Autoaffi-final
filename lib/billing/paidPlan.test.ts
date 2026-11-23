@@ -18,6 +18,7 @@ const USER_B = "22222222-2222-4222-8222-222222222222";
 const NOW = new Date("2026-11-01T00:00:00.000Z");
 const FUTURE = "2026-12-01T00:00:00.000Z";
 const EXACT = "2026-11-01T00:00:00.000Z";
+const loadNoTestAccess = async () => null;
 
 const ACCESS = { livemode: true as const, accountId: "acct_live" };
 
@@ -52,9 +53,19 @@ function requestForBAskingAsA(): Request {
 async function readPlan(response: Response) {
   assert.equal(response.headers.get("cache-control"), "private, no-store");
   const text = await response.text();
-  const body = JSON.parse(text) as { plan?: string };
-  assert.deepEqual(Object.keys(body), ["plan"]);
-  return { status: response.status, plan: body.plan, text };
+  const body = JSON.parse(text) as {
+    paidPlan?: string;
+    testPlan?: string;
+    effectivePlan?: string;
+    testExpiresAt?: string | null;
+    plan?: string;
+  };
+  assert.equal(body.plan, undefined);
+  assert.deepEqual(Object.keys(body), ["paidPlan", "testPlan", "effectivePlan", "testExpiresAt"]);
+  assert.equal(body.testPlan, "none");
+  assert.equal(body.effectivePlan, body.paidPlan);
+  assert.equal(body.testExpiresAt, null);
+  return { status: response.status, plan: body.paidPlan, text };
 }
 
 describe("getPaidPlan", () => {
@@ -140,6 +151,7 @@ describe("GET entitlement behavior", () => {
       request: requestForBAskingAsA(),
       now: NOW,
       resolveUserId: async () => USER_B,
+      loadTestAccess: loadNoTestAccess,
       loadSubscription: async (userId) => {
         lookedUp.push(userId);
         return row({ user_id: USER_A, paid_plan: "pro", pending_plan: "elite" });
@@ -157,6 +169,7 @@ describe("GET entitlement behavior", () => {
       request: requestForBAskingAsA(),
       now: NOW,
       resolveUserId: async () => USER_B,
+      loadTestAccess: loadNoTestAccess,
       loadSubscription: async (userId) => {
         assert.equal(userId, USER_B);
         return row({ user_id: USER_B, paid_plan: "basic", pending_plan: "pro" });
@@ -173,6 +186,7 @@ describe("GET entitlement behavior", () => {
       request: requestForBAskingAsA(),
       now: NOW,
       resolveUserId: async () => USER_A,
+      loadTestAccess: loadNoTestAccess,
       loadSubscription: async () => null,
     });
     const body = await readPlan(response);
@@ -187,6 +201,7 @@ describe("GET entitlement behavior", () => {
       resolveUserId: async () => {
         throw new Error("UNAUTHORIZED");
       },
+      loadTestAccess: loadNoTestAccess,
       loadSubscription: async () => {
         reads += 1;
         return row({ user_id: USER_A });
@@ -205,6 +220,7 @@ describe("GET entitlement behavior", () => {
     const response = await handleEntitlementGet({ env: { STRIPE_ACCOUNT_ID: "acct_live" }, nodeEnv: "production",
       request: requestForBAskingAsA(),
       resolveUserId: async () => USER_A,
+      loadTestAccess: loadNoTestAccess,
       loadSubscription: async () => {
         throw new Error(secret);
       },
@@ -229,6 +245,10 @@ describe("GET entitlement behavior", () => {
         reads += 1;
         return row({ user_id: USER_A });
       },
+      loadTestAccess: async () => {
+        reads += 1;
+        return null;
+      },
     });
     const body = await response.json();
     assert.equal(response.status, 500);
@@ -243,6 +263,7 @@ describe("GET entitlement behavior", () => {
       request: new Request("http://localhost/api/billing/entitlement"),
       now: NOW,
       resolveUserId: async () => USER_A,
+      loadTestAccess: loadNoTestAccess,
       loadSubscription: async () => row({ user_id: USER_A, livemode: null, stripe_account_id: null }),
     });
     assert.equal((await readPlan(response)).plan, "none");
@@ -253,6 +274,7 @@ describe("GET entitlement behavior", () => {
       request: new Request("http://localhost/api/billing/entitlement"),
       now: NOW,
       resolveUserId: async () => USER_A,
+      loadTestAccess: loadNoTestAccess,
       loadSubscription: async () =>
         row({ user_id: USER_A, cancel_at_period_end: true, paid_plan: "pro" }),
     });
@@ -262,6 +284,7 @@ describe("GET entitlement behavior", () => {
       request: new Request("http://localhost/api/billing/entitlement?plan=pro"),
       now: NOW,
       resolveUserId: async () => USER_A,
+      loadTestAccess: loadNoTestAccess,
       loadSubscription: async () =>
         row({ user_id: USER_A, cancel_at_period_end: true, paid_until: EXACT }),
     });
@@ -276,6 +299,7 @@ describe("GET entitlement behavior", () => {
         request: new Request("http://localhost/api/billing/entitlement?plan=elite"),
         now: NOW,
         resolveUserId: async () => USER_A,
+        loadTestAccess: loadNoTestAccess,
         loadSubscription: async () => row({ user_id: USER_A, subscription_status }),
       });
       const body = await readPlan(response);
@@ -362,6 +386,7 @@ describe("B1.1 wiring stays out of the existing product flow", () => {
     const route = readFileSync("app/api/billing/entitlement/route.ts", "utf8");
     assert.match(route, /resolveUserId: requireUserId/);
     assert.match(route, /loadSubscription: loadPaidSubscription/);
+    assert.match(route, /loadTestAccess/);
     assert.match(route, /handleEntitlementGet/);
     assert.doesNotMatch(route, /searchParams|pending_plan|stripe|last_applied|x-autoaffi-user-id/);
   });

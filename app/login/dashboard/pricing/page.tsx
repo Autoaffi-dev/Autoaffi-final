@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { entitlementLabel } from "@/lib/billing/entitlementView";
+import { entitlementLabel, isCurrentPaidPlan } from "@/lib/billing/entitlementView";
 import { useEntitlementView } from "../_components/useEntitlementView";
 
 const PLANS = [
@@ -50,14 +50,14 @@ features: [
 
 export default function DashboardPricingPage() {
 const entitlement = useEntitlementView();
-const currentName =
-  entitlement.status === "ready" && entitlement.plan !== "none"
-    ? entitlement.plan === "basic"
-      ? "Basic"
-      : entitlement.plan === "pro"
-        ? "Pro"
-        : "Elite"
-    : "";
+const testName =
+  entitlement.status === "ready" && entitlement.testPlan === "basic"
+    ? "Basic test"
+    : entitlement.status === "ready" && entitlement.testPlan === "pro"
+      ? "Pro test"
+      : entitlement.status === "ready" && entitlement.testPlan === "elite"
+        ? "Elite test"
+        : "";
 return (
 <main className="min-h-screen bg-gradient-to-b from-white to-slate-50 px-6 py-10 md:px-12">
 <div className="mx-auto flex max-w-6xl flex-col gap-8">
@@ -72,7 +72,8 @@ Your plan & upgrades
 </h1>
 <p className="max-w-2xl text-sm md:text-base text-slate-600">
 See what’s included in your current plan and what you unlock by upgrading.
-Current status: {entitlementLabel(entitlement)}. Billing opens in Stripe Customer Portal when a customer binding exists.
+Current status: {entitlementLabel(entitlement)}.
+{testName ? ` Test access: ${testName}. This is not a paid subscription.` : ""} Billing opens in Stripe Customer Portal when a customer binding exists.
 </p>
 </motion.header>
 
@@ -83,7 +84,7 @@ transition={{ duration: 0.45 }}
 className="grid gap-6 md:grid-cols-3"
 >
 {PLANS.map((plan) => {
-const isCurrent = currentName !== "" && plan.name === currentName;
+const isCurrent = isCurrentPaidPlan(entitlement, plan.name);
 
 return (
 <Card

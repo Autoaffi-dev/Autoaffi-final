@@ -1161,7 +1161,10 @@ Always protect trust. The goal is not just to contact more people. The goal is t
 
 export default function ContactManager({ plan: planProp }: ContactManagerProps) {
   const entitlement = useEntitlementView();
-  const plan = planProp ?? (entitlement.status === "ready" && entitlement.plan !== "none" ? entitlement.plan : undefined);
+  const plan =
+    planProp ??
+    (entitlement.status === "ready" && entitlement.effectivePlan !== "none" ? entitlement.effectivePlan : undefined);
+  const accessLabel = planProp ? PLAN_CONFIG[planProp].label : entitlementLabel(entitlement);
   const [items, setItems] = useState<ContactManagerItem[]>([]);
   const [overview, setOverview] =
     useState<ContactManagerOverviewResponse | null>(null);
@@ -1193,9 +1196,9 @@ export default function ContactManager({ plan: planProp }: ContactManagerProps) 
   const [draftVariant, setDraftVariant] = useState(0);
 
   const planConfig = plan
-    ? PLAN_CONFIG[plan]
+    ? { ...PLAN_CONFIG[plan], label: accessLabel }
     : {
-        label: entitlementLabel(planProp ? { status: "ready", plan: planProp } : entitlement),
+        label: accessLabel,
         canSendEmail: true,
         canUseDailyBrief: true,
         canUseDraftVariants: true,

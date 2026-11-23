@@ -167,6 +167,9 @@ export function createClient() {
               return {
                 async maybeSingle() {
                   const state = globalThis.__autoaffiPaidChain;
+                  if (table === "billing_test_access" && column === "user_id") {
+                    return { data: null, error: null };
+                  }
                   if (table !== "billing_subscriptions" || column !== "user_id") {
                     return { data: null, error: { message: "unexpected entitlement query" } };
                   }
@@ -317,10 +320,12 @@ function entitlementRequest(sessionUser: string): Request {
 async function planFor(userId: string): Promise<string> {
   bridge.session = { user: { id: userId } };
   const response = await GET(entitlementRequest(userId));
-  const body = (await response.json()) as { plan?: string };
+  const body = (await response.json()) as { paidPlan?: string; testPlan?: string; effectivePlan?: string };
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(response.headers.get("cache-control"), "private, no-store");
-  return String(body.plan);
+  assert.equal(body.testPlan, "none");
+  assert.equal(body.effectivePlan, body.paidPlan);
+  return String(body.paidPlan);
 }
 
 function customerClient(): BillingCustomerQueryClient {

@@ -9,6 +9,8 @@ import {
 } from "next/navigation";
 
 import AccountManageModal from "@/components/social-accounts/modals/AccountManageModal";
+import type { EntitlementPlan } from "@/lib/billing/paidPlan";
+import { accessAllows } from "@/lib/billing/testAccess";
 
 // -------------------------------------------------------
 // PLATFORM TYPES
@@ -619,28 +621,24 @@ export default function SocialAccountsClient() {
   const pathname =
     usePathname();
 
-  const [entitlementPlan, setEntitlementPlan] = useState<
-    "loading" | "error" | "none" | "Basic" | "Pro" | "Elite"
-  >("loading");
+  const [featurePlan, setFeaturePlan] = useState<"loading" | "error" | EntitlementPlan>("loading");
 
   useEffect(() => {
     let mounted = true;
     fetch("/api/billing/entitlement", { cache: "no-store" })
       .then(async (response) => {
-        const body = (await response.json().catch(() => null)) as { plan?: string } | null;
+        const body = (await response.json().catch(() => null)) as { effectivePlan?: unknown } | null;
         if (!mounted) return;
         if (!response.ok) {
-          setEntitlementPlan("error");
+          setFeaturePlan("error");
           return;
         }
-        if (body?.plan === "basic") setEntitlementPlan("Basic");
-        else if (body?.plan === "pro") setEntitlementPlan("Pro");
-        else if (body?.plan === "elite") setEntitlementPlan("Elite");
-        else if (body?.plan === "none") setEntitlementPlan("none");
-        else setEntitlementPlan("error");
+        const level = body?.effectivePlan;
+        if (level === "none" || level === "basic" || level === "pro" || level === "elite") setFeaturePlan(level);
+        else setFeaturePlan("error");
       })
       .catch(() => {
-        if (mounted) setEntitlementPlan("error");
+        if (mounted) setFeaturePlan("error");
       });
     return () => {
       mounted = false;
@@ -838,17 +836,10 @@ export default function SocialAccountsClient() {
   function isLocked(
     platform: PlatformKey
   ): boolean {
-    const neededPlan =
-      PLATFORM_PLAN[
-        platform
-      ];
-
-    if (entitlementPlan === "Elite") return false;
-    if (entitlementPlan === "Pro") return neededPlan === "Elite";
-    if (entitlementPlan === "Basic") {
-      return neededPlan === "Pro" || neededPlan === "Elite";
-    }
-    return true;
+    if (featurePlan === "loading" || featurePlan === "error" || featurePlan === "none") return true;
+    const neededPlan = PLATFORM_PLAN[platform];
+    const minimum = neededPlan === "Elite" ? "elite" : neededPlan === "Pro" ? "pro" : "basic";
+    return !accessAllows(featurePlan, minimum);
   }
 
   // -----------------------------------------------------

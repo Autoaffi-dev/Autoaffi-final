@@ -1,6 +1,8 @@
 import { requireUserId } from "@/lib/auth/server";
+import { loadTestAccess } from "./loadTestAccess";
 import { loadPaidSubscription } from "./loadPaidSubscription";
 import { getPaidPlan, readPaidAccess, type EntitlementPlan } from "./paidPlan";
+import { effectivePlan, readActiveTest } from "./testAccess";
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -14,7 +16,10 @@ function json(body: Record<string, unknown>, status: number): Response {
 export async function readDashboardPlan(
   request: Request,
   now = new Date()
-): Promise<{ ok: true; userId: string; plan: EntitlementPlan } | { ok: false; response: Response }> {
+): Promise<
+  | { ok: true; userId: string; paidPlan: EntitlementPlan; testPlan: EntitlementPlan; effectivePlan: EntitlementPlan }
+  | { ok: false; response: Response }
+> {
   let userId = "";
   try {
     userId = String((await requireUserId(request)) || "");
@@ -27,8 +32,10 @@ export async function readDashboardPlan(
   if (!access) return { ok: false, response: json({ error: "ENTITLEMENT_CONFIG" }, 500) };
 
   try {
-    const row = await loadPaidSubscription(userId);
-    return { ok: true, userId, plan: getPaidPlan(row, userId, now, access) };
+    const [row, testRow] = await Promise.all([loadPaidSubscription(userId), loadTestAccess(userId)]);
+    const paidPlan = getPaidPlan(row, userId, now, access);
+    const testPlan = readActiveTest(testRow, userId, now).plan;
+    return { ok: true, userId, paidPlan, testPlan, effectivePlan: effectivePlan(paidPlan, testPlan) };
   } catch {
     return { ok: false, response: json({ error: "ENTITLEMENT_READ_FAILED" }, 500) };
   }

@@ -24,7 +24,7 @@ import OnboardingFlow from "./_components/OnboardingFlow";
 import AISpeech from "./_components/AISpeech";
 import SpotlightHighlight from "./_components/SpotlightHighlight";
 import { useEntitlementView } from "./_components/useEntitlementView";
-import { cardForceLocked, paidCardPlan } from "@/lib/billing/entitlementView";
+import { cardForceLocked, effectiveCardPlan } from "@/lib/billing/entitlementView";
 
 // TYPES
 type Plan = "basic" | "pro" | "elite";
@@ -138,8 +138,8 @@ export default function DashboardPage() {
   const suppressSpeechRef = useRef(false);
 
   const entitlement = useEntitlementView();
-  const paidPlan = paidCardPlan(entitlement);
-  const cardPlan: Plan = paidPlan ?? "basic";
+  const featurePlan = effectiveCardPlan(entitlement);
+  const cardPlan: Plan = featurePlan ?? "basic";
   const lockPaidCards = cardForceLocked(entitlement, false);
 
   // STATE
@@ -577,7 +577,7 @@ export default function DashboardPage() {
       )}
 
       {/* WEEKLY FOCUS */}
-      <WeeklyFocus creatorMode={creatorMode} plan={paidPlan ?? "none"} />
+      <WeeklyFocus creatorMode={creatorMode} plan={featurePlan ?? "none"} />
 
       {/* GROWTH PLAN */}
       {creatorMode && (
