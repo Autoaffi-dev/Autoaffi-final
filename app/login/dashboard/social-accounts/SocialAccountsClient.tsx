@@ -9,6 +9,8 @@ import {
 } from "next/navigation";
 
 import AccountManageModal from "@/components/social-accounts/modals/AccountManageModal";
+import type { EntitlementPlan } from "@/lib/billing/paidPlan";
+import { accessAllows } from "@/lib/billing/testAccess";
 
 // -------------------------------------------------------
 // PLATFORM TYPES
@@ -166,18 +168,6 @@ const PLATFORM_DESCRIPTION: Record<
   linkedin:
     "Connect LinkedIn to bring your professional profile into Autoaffi. Deeper content analytics will only appear when LinkedIn gives Autoaffi access to those signals.",
 };
-
-/*
- * TEMPORARY:
- *
- * This is intentionally left as the existing plan source
- * until Autoaffi's real subscription/plan state is wired
- * into this page.
- *
- * Do not treat this as the final launch plan implementation.
- */
-const ACTIVE_PLAN: Plan =
-  "Elite";
 
 const INITIAL_STATE: Record<
   PlatformKey,
@@ -631,6 +621,30 @@ export default function SocialAccountsClient() {
   const pathname =
     usePathname();
 
+  const [featurePlan, setFeaturePlan] = useState<"loading" | "error" | EntitlementPlan>("loading");
+
+  useEffect(() => {
+    let mounted = true;
+    fetch("/api/billing/entitlement", { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => null)) as { effectivePlan?: unknown } | null;
+        if (!mounted) return;
+        if (!response.ok) {
+          setFeaturePlan("error");
+          return;
+        }
+        const level = body?.effectivePlan;
+        if (level === "none" || level === "basic" || level === "pro" || level === "elite") setFeaturePlan(level);
+        else setFeaturePlan("error");
+      })
+      .catch(() => {
+        if (mounted) setFeaturePlan("error");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const safePath =
     pathname ??
     "/login/dashboard/social-accounts";
@@ -822,34 +836,10 @@ export default function SocialAccountsClient() {
   function isLocked(
     platform: PlatformKey
   ): boolean {
-    const neededPlan =
-      PLATFORM_PLAN[
-        platform
-      ];
-
-    if (
-      ACTIVE_PLAN ===
-      "Elite"
-    ) {
-      return false;
-    }
-
-    if (
-      ACTIVE_PLAN ===
-      "Pro"
-    ) {
-      return (
-        neededPlan ===
-        "Elite"
-      );
-    }
-
-    return (
-      neededPlan ===
-        "Pro" ||
-      neededPlan ===
-        "Elite"
-    );
+    if (featurePlan === "loading" || featurePlan === "error" || featurePlan === "none") return true;
+    const neededPlan = PLATFORM_PLAN[platform];
+    const minimum = neededPlan === "Elite" ? "elite" : neededPlan === "Pro" ? "pro" : "basic";
+    return !accessAllows(featurePlan, minimum);
   }
 
   // -----------------------------------------------------

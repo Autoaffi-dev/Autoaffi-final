@@ -3,6 +3,15 @@ export type BillingCustomerBinding = {
   stripeCustomerId: string;
 };
 
+export type VerifiedCustomerAccount = {
+  userId: string;
+  stripeCustomerId: string;
+  livemode: boolean;
+  stripeAccountId: string;
+};
+
+export type RecordVerifiedAccountResult = "recorded" | "already_verified" | "conflict" | "missing";
+
 export type BillingCustomerInsertResult =
   | { ok: true }
   | { ok: false; reason: "unique_violation" };
@@ -11,6 +20,7 @@ export type BillingCustomerStore = {
   findByUserId(userId: string): Promise<BillingCustomerBinding | null>;
   findByStripeCustomerId(stripeCustomerId: string): Promise<BillingCustomerBinding | null>;
   insert(binding: BillingCustomerBinding): Promise<BillingCustomerInsertResult>;
+  recordVerifiedAccount(input: VerifiedCustomerAccount): Promise<RecordVerifiedAccountResult>;
 };
 
 export type StripeCustomerClient = {

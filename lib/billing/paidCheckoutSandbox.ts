@@ -92,6 +92,7 @@ const GAP_CODES = new Set([
 ]);
 
 const CUSTOMER_ID = /^cus_[A-Za-z0-9]+$/;
+const ACCOUNT_ID = /^acct_[A-Za-z0-9]+$/;
 const EVENT_ID = /^evt_[A-Za-z0-9]+$/;
 const EVENT_TYPE = /^[a-z0-9_.]+$/;
 const PLAN = /^(basic|pro|elite)$/;
@@ -368,7 +369,8 @@ export function applyStripeEventSql(command: WebhookCommand): string {
     ${amountRequested},
     ${sqlText(command.currency, command.currency === null ? null : /^usd$/)},
     ${sqlText(command.paymentStatus, command.paymentStatus === null ? null : /^paid$/)},
-    ${command.isDefault === null ? "null::boolean" : command.isDefault ? "true" : "false"}
+    ${command.isDefault === null ? "null::boolean" : command.isDefault ? "true" : "false"},
+    ${sqlText(command.accountId, ACCOUNT_ID)}
   )`;
 }
 
@@ -475,9 +477,11 @@ export async function createPaidWebhookServer(input: {
   port: number;
   secret: string;
   prices: WebhookPrices;
+  accountId?: string;
   capturedCustomerId: () => string | null;
   openStore: () => Promise<StripeEventStore>;
 }): Promise<PaidWebhookServer> {
+  const accountId = input.accountId ?? "acct_sandbox";
   const gaps: string[] = [];
   const apiVersions: string[] = [];
   const listener: ListenerState = { ready: false, apiVersionFault: false };
@@ -572,8 +576,18 @@ export async function createPaidWebhookServer(input: {
           STRIPE_PRICE_BASIC_TEST: input.prices.basic,
           STRIPE_PRICE_PRO_TEST: input.prices.pro,
           STRIPE_PRICE_ELITE_TEST: input.prices.elite,
+          STRIPE_ACCOUNT_ID_TEST: accountId,
+          STRIPE_WEBHOOK_ENDPOINT_TEST: "we_sandbox",
         },
         constructEvent: (payload, stripeSignature, secret) => Stripe.webhooks.constructEvent(payload, stripeSignature, secret),
+        accountProof: {
+          async retrieveAccount() {
+            return { id: accountId };
+          },
+          async retrieveWebhookEndpoint(id) {
+            return { id, livemode: false, status: "enabled" };
+          },
+        },
         openStore: async () => {
           storeOpens += 1;
           return input.openStore();

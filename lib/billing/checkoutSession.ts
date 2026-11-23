@@ -114,8 +114,13 @@ function customerMatches(customer: CustomerSnapshot, customerId: string, userId:
   return customer.id === customerId && customer.livemode === livemode && customer.userId === userId;
 }
 
-function localSubscriptionBlocks(row: PaidSubscriptionSnapshot | null, userId: string): boolean {
+function localSubscriptionBlocks(
+  row: PaidSubscriptionSnapshot | null,
+  userId: string,
+  access: { livemode: boolean; accountId: string }
+): boolean {
   if (!row || row.user_id !== userId) return false;
+  if (row.livemode !== access.livemode || row.stripe_account_id !== access.accountId) return false;
   return (
     row.subscription_status === "incomplete" ||
     row.subscription_status === "trialing" ||
@@ -529,7 +534,9 @@ async function startNew(ctx: Ctx, accountId: string): Promise<Response> {
   } catch {
     return unavailable();
   }
-  if (localSubscriptionBlocks(local, ctx.userId)) return blocked("CHECKOUT_SUBSCRIPTION_BLOCKED");
+  if (localSubscriptionBlocks(local, ctx.userId, { livemode: ctx.runtime.livemode, accountId })) {
+    return blocked("CHECKOUT_SUBSCRIPTION_BLOCKED");
+  }
   let binding: { userId: string; stripeCustomerId: string };
   try {
     binding = await findOrCreateBillingCustomer({
@@ -556,6 +563,20 @@ async function startNew(ctx: Ctx, accountId: string): Promise<Response> {
   if (!customerMatches(customer, binding.stripeCustomerId, ctx.userId, ctx.runtime.livemode)) {
     return blocked("CHECKOUT_CUSTOMER_BLOCKED");
   }
+  let recorded: Awaited<ReturnType<CheckoutRuntime["customerStore"]["recordVerifiedAccount"]>>;
+  try {
+    recorded = await ctx.runtime.customerStore.recordVerifiedAccount({
+      userId: ctx.userId,
+      stripeCustomerId: binding.stripeCustomerId,
+      livemode: ctx.runtime.livemode,
+      stripeAccountId: accountId,
+    });
+  } catch (err) {
+    if (err instanceof CheckoutTransportError) return unavailable();
+    return unavailable();
+  }
+  if (recorded === "conflict") return blocked("CHECKOUT_ACCOUNT_MISMATCH");
+  if (recorded !== "recorded" && recorded !== "already_verified") return blocked("CHECKOUT_CUSTOMER_BLOCKED");
   const scan = await subscriptionScan(ctx.runtime, binding.stripeCustomerId);
   if (scan === "error" || !scan.complete) return unavailable();
   if (scan.blocking) return blocked("CHECKOUT_SUBSCRIPTION_BLOCKED");

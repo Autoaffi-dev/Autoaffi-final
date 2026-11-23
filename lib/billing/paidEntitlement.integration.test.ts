@@ -167,6 +167,9 @@ export function createClient() {
               return {
                 async maybeSingle() {
                   const state = globalThis.__autoaffiPaidChain;
+                  if (table === "billing_test_access" && column === "user_id") {
+                    return { data: null, error: null };
+                  }
                   if (table !== "billing_subscriptions" || column !== "user_id") {
                     return { data: null, error: { message: "unexpected entitlement query" } };
                   }
@@ -269,6 +272,8 @@ const webhookEnv = {
   STRIPE_PRICE_BASIC_TEST: PRICE_BASIC,
   STRIPE_PRICE_PRO_TEST: PRICE_PRO,
   STRIPE_PRICE_ELITE_TEST: PRICE_ELITE,
+  STRIPE_ACCOUNT_ID_TEST: ACCOUNT,
+  STRIPE_WEBHOOK_ENDPOINT_TEST: "we_chain",
 };
 
 async function postSigned(signed: { raw: string; header: string }): Promise<string> {
@@ -281,6 +286,14 @@ async function postSigned(signed: { raw: string; header: string }): Promise<stri
     enabled: true,
     env: webhookEnv,
     constructEvent: (payload, header, secret) => Stripe.webhooks.constructEvent(payload, header, secret),
+    accountProof: {
+      async retrieveAccount() {
+        return { id: ACCOUNT };
+      },
+      async retrieveWebhookEndpoint(id) {
+        return { id, livemode: false, status: "enabled" };
+      },
+    },
     openStore: async () => createServiceRoleEventStore((sql) => psql(database, sql)),
   });
   const body = (await response.json()) as { outcome?: string; error?: string };
@@ -307,17 +320,19 @@ function entitlementRequest(sessionUser: string): Request {
 async function planFor(userId: string): Promise<string> {
   bridge.session = { user: { id: userId } };
   const response = await GET(entitlementRequest(userId));
-  const body = (await response.json()) as { plan?: string };
+  const body = (await response.json()) as { paidPlan?: string; testPlan?: string; effectivePlan?: string };
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(response.headers.get("cache-control"), "private, no-store");
-  return String(body.plan);
+  assert.equal(body.testPlan, "none");
+  assert.equal(body.effectivePlan, body.paidPlan);
+  return String(body.paidPlan);
 }
 
 function customerClient(): BillingCustomerQueryClient {
   return {
     from() {
       return {
-        select() {
+        select(columns) {
           return {
             eq(column, value) {
               return {
@@ -325,13 +340,26 @@ function customerClient(): BillingCustomerQueryClient {
                   if (column !== "user_id" && column !== "stripe_customer_id") {
                     return { data: null, error: { message: "unexpected customer column" } };
                   }
+                  const verified = columns.includes("livemode");
                   const cast = column === "user_id" ? "::uuid" : "";
+                  const projection = verified
+                    ? "user_id::text || '|' || stripe_customer_id || '|' || coalesce(livemode::text, '') || '|' || coalesce(stripe_account_id, '')"
+                    : "user_id::text || '|' || stripe_customer_id";
                   const line = serviceText(
-                    `select user_id::text || '|' || stripe_customer_id from public.billing_stripe_customers where ${column} = ${quote(value)}${cast}`
+                    `select ${projection} from public.billing_stripe_customers where ${column} = ${quote(value)}${cast}`
                   );
                   if (!line) return { data: null, error: null };
-                  const [user_id, stripe_customer_id] = line.split("|");
-                  return { data: { user_id, stripe_customer_id }, error: null };
+                  const parts = line.split("|");
+                  if (!verified) return { data: { user_id: parts[0], stripe_customer_id: parts[1] }, error: null };
+                  return {
+                    data: {
+                      user_id: parts[0],
+                      stripe_customer_id: parts[1],
+                      livemode: parts[2] === "true" ? true : parts[2] === "false" ? false : null,
+                      stripe_account_id: parts[3] || null,
+                    },
+                    error: null,
+                  };
                 },
               };
             },
@@ -344,6 +372,28 @@ function customerClient(): BillingCustomerQueryClient {
           if (result.ok) return { error: null };
           if (/23505/.test(result.stderr)) return { error: { code: "23505", message: result.stderr } };
           return { error: { message: result.stderr || "insert failed" } };
+        },
+        update(row) {
+          return {
+            eq(userColumn, userId) {
+              return {
+                eq(customerColumn, customerId) {
+                  return {
+                    is() {
+                      return {
+                        async is() {
+                          const result = psqlTry(
+                            `begin; select set_config('role', 'service_role', true); update public.billing_stripe_customers set livemode = ${row.livemode ? "true" : "false"}, stripe_account_id = ${quote(row.stripe_account_id)} where ${userColumn} = ${quote(userId)}::uuid and ${customerColumn} = ${quote(customerId)} and livemode is null and stripe_account_id is null; commit;`
+                          );
+                          return result.ok ? { error: null } : { error: { message: result.stderr || "update failed" } };
+                        },
+                      };
+                    },
+                  };
+                },
+              };
+            },
+          };
         },
       };
     },
@@ -616,6 +666,13 @@ async function startCheckout(subject: Subject): Promise<void> {
     ),
     `${subject.userId}|${subject.customerId}`
   );
+  assert.equal(
+    psql(
+      database,
+      `select livemode::text || '|' || stripe_account_id from public.billing_stripe_customers where user_id = ${quote(subject.userId)}::uuid`
+    ),
+    `false|${ACCOUNT}`
+  );
 }
 
 function rememberFlags(): { webhook: string | undefined; checkout: string | undefined } {
@@ -655,6 +712,12 @@ describe("paid entitlement chain", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
+    psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
+    psqlFile(database, "supabase/migrations/20261122_billing_verified_binding.sql");
+    process.env.NODE_ENV = "test";
+    process.env.STRIPE_ACCOUNT_ID_TEST = ACCOUNT;
+    delete process.env.STRIPE_ACCOUNT_ID;
+    delete process.env.VERCEL_ENV;
   });
 
   it("keeps access through refund and renewal, then removes it when an active subscription is deleted", { timeout: 30_000 }, async () => {

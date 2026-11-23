@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
+import { readDashboardPlan } from "@/lib/billing/dashboardPlan";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const NO_STORE = { "cache-control": "private, no-store" };
+
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, { status, headers: NO_STORE });
+}
 
 function getDayKeyStockholm(d = new Date()) {
   const fmt = new Intl.DateTimeFormat("sv-SE", {
@@ -21,12 +29,18 @@ export async function GET(req: Request) {
   const email = session?.user?.email ?? null;
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return json({ error: "Unauthorized" }, 401);
+  }
+
+  const entitlement = await readDashboardPlan(req);
+  if (!entitlement.ok) return entitlement.response;
+  if (entitlement.userId !== userId) {
+    return json({ error: "UNAUTHORIZED" }, 401);
   }
 
   const url = new URL(req.url);
   const creatorMode = String(url.searchParams.get("creatorMode") ?? "beginner");
-  const plan = String(url.searchParams.get("plan") ?? "basic");
+  const plan = entitlement.effectivePlan === "none" ? null : entitlement.effectivePlan;
   const dayKey = getDayKeyStockholm();
 
   const [{ data, error }, { data: preview }] = await Promise.all([
@@ -35,20 +49,22 @@ export async function GET(req: Request) {
       .select("enabled, email, last_sent_day_key")
       .eq("user_id", userId)
       .maybeSingle(),
-    supabaseAdmin
-      .from("dashboard_daily_content_cache")
-      .select("email_subject")
-      .eq("day_key", dayKey)
-      .eq("creator_mode", creatorMode)
-      .eq("plan", plan)
-      .maybeSingle(),
+    plan
+      ? supabaseAdmin
+          .from("dashboard_daily_content_cache")
+          .select("email_subject")
+          .eq("day_key", dayKey)
+          .eq("creator_mode", creatorMode)
+          .eq("plan", plan)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return json({ error: error.message }, 500);
   }
 
-  return NextResponse.json({
+  return json({
     enabled: data?.enabled ?? false,
     email: data?.email ?? email,
     latest_day_key: data?.last_sent_day_key ?? null,
@@ -63,20 +79,23 @@ export async function POST(req: Request) {
   const email = session?.user?.email ?? null;
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return json({ error: "Unauthorized" }, 401);
   }
 
   if (!email) {
-    return NextResponse.json(
-      { error: "No email found on this account." },
-      { status: 400 }
-    );
+    return json({ error: "No email found on this account." }, 400);
+  }
+
+  const entitlement = await readDashboardPlan(req);
+  if (!entitlement.ok) return entitlement.response;
+  if (entitlement.userId !== userId) {
+    return json({ error: "UNAUTHORIZED" }, 401);
   }
 
   const body = await req.json().catch(() => ({}));
   const enabled = !!body?.enabled;
   const creatorMode = String(body?.creatorMode ?? "beginner");
-  const plan = String(body?.plan ?? "basic");
+  const plan = entitlement.effectivePlan === "none" ? null : entitlement.effectivePlan;
   const dayKey = getDayKeyStockholm();
 
   const [{ data, error }, { data: preview }] = await Promise.all([
@@ -92,20 +111,22 @@ export async function POST(req: Request) {
       )
       .select("enabled, email, last_sent_day_key")
       .single(),
-    supabaseAdmin
-      .from("dashboard_daily_content_cache")
-      .select("email_subject")
-      .eq("day_key", dayKey)
-      .eq("creator_mode", creatorMode)
-      .eq("plan", plan)
-      .maybeSingle(),
+    plan
+      ? supabaseAdmin
+          .from("dashboard_daily_content_cache")
+          .select("email_subject")
+          .eq("day_key", dayKey)
+          .eq("creator_mode", creatorMode)
+          .eq("plan", plan)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return json({ error: error.message }, 500);
   }
 
-  return NextResponse.json({
+  return json({
     enabled: data.enabled,
     email: data.email,
     latest_day_key: data.last_sent_day_key ?? null,

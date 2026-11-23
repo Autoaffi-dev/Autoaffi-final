@@ -13,6 +13,8 @@ const user = process.env.BILLING_CUSTOMER_PGUSER || "";
 const data = process.env.BILLING_CUSTOMER_PGDATA || "";
 const database = "billing_webhook_test";
 const APPLY = "public.billing_apply_stripe_event(text,text,timestamptz,boolean,text,text,text,text,text,text,boolean,text,text,text,integer,timestamptz,timestamptz,text,text,text,integer,text,text,boolean)";
+const APPLY_MODE = `${APPLY.slice(0, -1)},text)`;
+let includeAccount = false;
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
@@ -170,6 +172,7 @@ type ApplyInput = {
   periodStart?: number | null;
   periodEnd?: number | null;
   metadataUserId?: string | null;
+  accountId?: string | null;
 };
 
 function sqlText(value: string | null): string {
@@ -218,7 +221,7 @@ function call(input: ApplyInput): string {
     ${sqlInt(amountRequested)},
     ${sqlText(currency)},
     ${sqlText(paymentStatus)},
-    ${sqlBool(isDefault)}
+    ${sqlBool(isDefault)}${includeAccount ? `,\n    ${sqlText(input.accountId === undefined ? "acct_test" : input.accountId)}` : ""}
   )`;
 }
 
@@ -282,21 +285,25 @@ function status(eventId: string, subscriptionStatus: string, created = TIE, canc
 function snapshot(userId: string) {
   const line = psql(
     database,
-    `select coalesce(user_id::text, '') || '|' || coalesce(paid_plan, '') || '|' || coalesce(subscription_status, '') || '|' || coalesce(cancel_at_period_end::text, '') || '|' || coalesce(to_char(paid_until at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') from public.billing_subscriptions where user_id = ${quote(userId)}::uuid`
+    `select coalesce(user_id::text, '') || '|' || coalesce(paid_plan, '') || '|' || coalesce(subscription_status, '') || '|' || coalesce(cancel_at_period_end::text, '') || '|' || coalesce(to_char(paid_until at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') || '|' || coalesce(livemode::text, '') || '|' || coalesce(stripe_account_id, '') from public.billing_subscriptions where user_id = ${quote(userId)}::uuid`
   );
   if (!line) return null;
-  const [user_id, paid_plan, subscription_status, cancel, paid_until] = line.split("|");
+  const [user_id, paid_plan, subscription_status, cancel, paid_until, mode, stripe_account_id] = line.split("|");
   return {
     user_id,
     paid_plan,
     subscription_status,
     cancel_at_period_end: cancel === "t" || cancel === "true",
     paid_until,
+    livemode: mode === "true" ? true : mode === "false" ? false : null,
+    stripe_account_id: stripe_account_id || null,
   };
 }
 
+const TEST_ACCESS = { livemode: false as const, accountId: "acct_test" };
+
 function entitlement(userId: string): string {
-  return getPaidPlan(snapshot(userId), userId, NOW);
+  return getPaidPlan(snapshot(userId), userId, NOW, TEST_ACCESS);
 }
 
 describe("stripe webhook postgres", { concurrency: 1 }, () => {
@@ -490,6 +497,27 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
     const anonRead = psqlTry("begin; set local role anon; select count(*) from public.billing_stripe_invoice_proofs; commit;");
     assert.equal(anonRead.ok, false);
     assert.match(anonRead.stderr, /permission denied/);
+    psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
+    includeAccount = true;
+    assert.equal(psql(database, "select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'billing_apply_stripe_event'"), "1");
+    assert.equal(
+      psql(database, "select pg_get_function_identity_arguments(p.oid) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'billing_apply_stripe_event'"),
+      `${signatureBefore}, p_account_id text`
+    );
+    assert.equal(psql(database, `select has_function_privilege('service_role', '${APPLY_MODE}', 'execute')`), "t");
+    assert.equal(psql(database, `select has_function_privilege('anon', '${APPLY_MODE}', 'execute')`), "f");
+    assert.equal(psql(database, `select has_function_privilege('authenticated', '${APPLY_MODE}', 'execute')`), "f");
+    assert.equal(psql(database, `select has_function_privilege('public', '${APPLY_MODE}', 'execute')`), "f");
+    assert.equal(psql(database, "select relrowsecurity from pg_class where oid = 'public.billing_subscriptions'::regclass"), "t");
+    assert.equal(psql(database, "select count(*) from pg_policy where polrelid = 'public.billing_subscriptions'::regclass"), "0");
+    assert.equal(psql(database, "select livemode is null and stripe_account_id is null from public.billing_stripe_customers where stripe_customer_id = 'cus_A'"), "t");
+    psqlFile(database, "supabase/migrations/20261122_billing_verified_binding.sql");
+    assert.equal(psql(database, "select has_column_privilege('service_role', 'public.billing_stripe_customers', 'livemode', 'UPDATE')"), "t");
+    assert.equal(psql(database, "select has_column_privilege('service_role', 'public.billing_stripe_customers', 'stripe_account_id', 'UPDATE')"), "t");
+    assert.equal(psql(database, "select has_column_privilege('service_role', 'public.billing_stripe_customers', 'user_id', 'UPDATE')"), "f");
+    assert.equal(psql(database, "select has_table_privilege('service_role', 'public.billing_stripe_customers', 'DELETE')"), "f");
+    assert.equal(psql(database, "select pg_get_function_identity_arguments(p.oid) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'billing_apply_stripe_event'"), `${signatureBefore}, p_account_id text`);
+    psql(database, "update public.billing_stripe_customers set livemode = false, stripe_account_id = 'acct_test' where stripe_customer_id in ('cus_A', 'cus_B')");
   });
 
   it("keeps an invoice from granting access until a status event arrives", () => {
@@ -623,8 +651,10 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
     assert.equal(snapshot(USER_B), null);
   });
 
-  it("rejects a live invoice inside the database even if the action says invoice", () => {
+  it("stores a live invoice half without granting access before its payment", () => {
     reset();
+    psql(database, "update public.billing_stripe_customers set livemode = true, stripe_account_id = 'acct_live' where stripe_customer_id = 'cus_B'");
+    try {
     const live = run({
       eventId: "evt_live",
       eventType: "invoice.paid",
@@ -639,10 +669,15 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
       amount: 1900,
       periodStart: PERIOD_START,
       periodEnd: PERIOD_END,
+      accountId: "acct_live",
     });
-    assert.match(live, /livemode_rejected/);
+    assert.match(live, /invoice_awaiting_payment/);
     assert.equal(snapshot(USER_B), null);
-    assert.equal(psql(database, "select livemode::text || ':' || outcome from public.billing_stripe_events where event_id = 'evt_live'"), "true:livemode_rejected");
+    assert.equal(psql(database, "select livemode::text || ':' || outcome || ':' || stripe_account_id from public.billing_stripe_events where event_id = 'evt_live'"), "true:invoice_awaiting_payment:acct_live");
+    assert.equal(entitlement(USER_B), "none");
+    } finally {
+      psql(database, "update public.billing_stripe_customers set livemode = false, stripe_account_id = 'acct_test' where stripe_customer_id = 'cus_B'");
+    }
   });
 
   it("rejects a partial amount before it can extend paid time", () => {
@@ -813,7 +848,7 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
     assert.equal(psql(database, "select count(*) from public.billing_stripe_events where event_id = 'evt_bind_invoice'"), "0");
     assert.equal(psql(database, "select count(*) from public.billing_stripe_customers where stripe_customer_id = 'cus_bindlate'"), "0");
     assert.equal(snapshot(user), null);
-    psql(database, `insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(user)}::uuid, 'cus_bindlate')`);
+    psql(database, `insert into public.billing_stripe_customers (user_id, stripe_customer_id, livemode, stripe_account_id) values (${quote(user)}::uuid, 'cus_bindlate', false, 'acct_test')`);
     assert.match(run(invoiceInput), /invoice_applied/);
     assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
     assert.equal(psql(database, "select count(*) from public.billing_stripe_events where event_id = 'evt_bind_invoice'"), "1");
@@ -1165,6 +1200,156 @@ describe("stripe webhook postgres", { concurrency: 1 }, () => {
       await invoiceSession.close();
       await paymentSession.close();
       await statusSession.close();
+    }
+  });
+
+  it("creates the first subscription from either payment order and isolates mode and account", () => {
+    reset();
+    assert.match(invoice("evt_first_invoice", "in_first", "sub_first"), /invoice_applied/);
+    assert.equal(psql(database, "select livemode::text || ':' || stripe_account_id from public.billing_subscriptions where stripe_subscription_id = 'sub_first'"), "false:acct_test");
+    assert.equal(entitlement(USER_B), "none");
+    assert.match(status("evt_first_status", "active", TIE + 1, false, "sub_first"), /status_applied/);
+    assert.equal(entitlement(USER_B), "pro");
+
+    reset();
+    assert.match(run({
+      eventId: "evt_order_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_A",
+      subscriptionId: "sub_order",
+      invoiceId: "in_order",
+      priceId: "price_basic900",
+      plan: "basic",
+      amount: 900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /invoice_awaiting_payment/);
+    assert.equal(snapshot(USER_A), null);
+    assert.match(payment("evt_order_pay", "in_order", 900, {
+      invoicePaymentId: "inpay_order",
+      paymentIntentId: "pi_order",
+    }), /invoice_applied/);
+    assert.equal(psql(database, "select paid_plan || ':' || livemode::text || ':' || stripe_account_id from public.billing_subscriptions where user_id = " + quote(USER_A) + "::uuid"), "basic:false:acct_test");
+
+    reset();
+    assert.match(payment("evt_mix_pay", "in_mix", 1900, { livemode: false, accountId: "acct_test" }), /payment_awaiting_invoice/);
+    assert.match(run({
+      eventId: "evt_mix_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      livemode: true,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_mix",
+      invoiceId: "in_mix",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+      accountId: "acct_live",
+    }), /mode_mismatch/);
+    assert.equal(psql(database, "select count(*) from public.billing_subscriptions"), "0");
+    assert.equal(psql(database, "select applied_at is null from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_mix'"), "t");
+
+    reset();
+    assert.match(payment("evt_acct_pay", "in_acct"), /payment_awaiting_invoice/);
+    assert.match(run({
+      eventId: "evt_acct_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_acct",
+      invoiceId: "in_acct",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+      accountId: "acct_other",
+    }), /account_mismatch/);
+    assert.equal(snapshot(USER_B), null);
+  });
+
+  it("does not guess a mode for an existing subscription or an old payment half", () => {
+    reset();
+    psql(database, `insert into public.billing_subscriptions (
+      user_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, paid_plan, paid_until, subscription_status
+    ) values (
+      ${quote(USER_B)}::uuid, 'cus_B', 'sub_B', 'price_pro', 'pro', to_timestamp(${PERIOD_END}), 'active'
+    )`);
+    const before = psql(database, "select paid_until::text || ':' || coalesce(livemode::text, 'unknown') from public.billing_subscriptions where user_id = " + quote(USER_B) + "::uuid");
+    assert.match(invoice("evt_unknown_mode", "in_unknown"), /mode_unknown/);
+    assert.equal(psql(database, "select paid_until::text || ':' || coalesce(livemode::text, 'unknown') from public.billing_subscriptions where user_id = " + quote(USER_B) + "::uuid"), before);
+    assert.equal(entitlement(USER_B), "none");
+
+    reset();
+    psql(database, `insert into public.billing_stripe_events (
+      event_id, event_type, event_created, livemode, outcome
+    ) values ('evt_oldhalf', 'invoice_payment.paid', now(), false, 'payment_awaiting_invoice')`);
+    psql(database, `insert into public.billing_stripe_invoice_proofs (
+      stripe_invoice_id, payment_event_id, invoice_payment_id, payment_intent_id, amount_paid, amount_requested, currency, payment_status, is_default, livemode
+    ) values (
+      'in_oldhalf', 'evt_oldhalf', 'inpay_oldhalf', 'pi_oldhalf', 1900, 1900, 'usd', 'paid', true, false
+    )`);
+    assert.match(run({
+      eventId: "evt_old_invoice",
+      eventType: "invoice.paid",
+      created: TIE,
+      action: "invoice",
+      customerId: "cus_B",
+      subscriptionId: "sub_old",
+      invoiceId: "in_oldhalf",
+      priceId: "price_pro",
+      plan: "pro",
+      amount: 1900,
+      periodStart: PERIOD_START,
+      periodEnd: PERIOD_END,
+    }), /account_unknown/);
+    assert.equal(snapshot(USER_B), null);
+    assert.equal(psql(database, "select stripe_account_id is null and applied_at is null from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_oldhalf'"), "t");
+  });
+
+  it("stores a payment half when the customer is unverified and refuses an invoice that would grant access", () => {
+    reset();
+    psql(database, "update public.billing_stripe_customers set livemode = null, stripe_account_id = null where stripe_customer_id = 'cus_B'");
+    try {
+      assert.match(payment("evt_unverified_pay", "in_unverified"), /payment_awaiting_invoice/);
+      assert.equal(snapshot(USER_B), null);
+      assert.match(run({
+        eventId: "evt_unverified_invoice",
+        eventType: "invoice.paid",
+        created: TIE,
+        action: "invoice",
+        customerId: "cus_B",
+        subscriptionId: "sub_unverified",
+        invoiceId: "in_unverified_only",
+        priceId: "price_pro",
+        plan: "pro",
+        amount: 1900,
+        periodStart: PERIOD_START,
+        periodEnd: PERIOD_END,
+        metadataUserId: USER_A,
+      }), /binding_unverified/);
+      assert.equal(snapshot(USER_B), null);
+      assert.equal(psql(database, "select outcome from public.billing_stripe_events where event_id = 'evt_unverified_invoice'"), "binding_unverified");
+      assert.equal(entitlement(USER_B), "none");
+    } finally {
+      psql(database, "update public.billing_stripe_customers set livemode = false, stripe_account_id = 'acct_test' where stripe_customer_id = 'cus_B'");
+    }
+  });
+
+  it("rejects a stored customer mode that does not match the event", () => {
+    reset();
+    psql(database, "update public.billing_stripe_customers set livemode = true, stripe_account_id = 'acct_live' where stripe_customer_id = 'cus_B'");
+    try {
+      assert.match(invoice("evt_customer_mode", "in_customer_mode"), /mode_mismatch/);
+      assert.equal(snapshot(USER_B), null);
+    } finally {
+      psql(database, "update public.billing_stripe_customers set livemode = false, stripe_account_id = 'acct_test' where stripe_customer_id = 'cus_B'");
     }
   });
 });

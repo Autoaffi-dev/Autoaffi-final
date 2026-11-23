@@ -80,6 +80,22 @@ class MemoryCustomers implements BillingCustomerStore {
     this.rows.set(binding.userId, binding);
     return { ok: true as const };
   }
+
+  async recordVerifiedAccount(input: {
+    userId: string;
+    stripeCustomerId: string;
+    livemode: boolean;
+    stripeAccountId: string;
+  }) {
+    const row = this.rows.get(input.userId);
+    if (!row || row.stripeCustomerId !== input.stripeCustomerId) return "missing" as const;
+    const livemode = "livemode" in row ? row.livemode ?? null : null;
+    const stripeAccountId = "stripeAccountId" in row ? row.stripeAccountId ?? null : null;
+    if (livemode === input.livemode && stripeAccountId === input.stripeAccountId) return "already_verified" as const;
+    if (livemode !== null || stripeAccountId !== null) return "conflict" as const;
+    this.rows.set(input.userId, { ...row, livemode: input.livemode, stripeAccountId: input.stripeAccountId });
+    return "recorded" as const;
+  }
 }
 
 class MemoryCheckout implements CheckoutStore {

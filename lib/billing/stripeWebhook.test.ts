@@ -7,6 +7,7 @@ import {
   STRIPE_WEBHOOK_API_VERSION,
   commandFromEvent,
   handleStripeWebhook,
+  readWebhookLiveConfig,
   readWebhookTestConfig,
   type WebhookCommand,
   type WebhookPrices,
@@ -18,14 +19,30 @@ const PRICES: WebhookPrices = {
   elite: "price_elite",
 };
 const SECRET = "whsec_testsecret123";
+const ACCOUNT = "acct_test";
+const ENDPOINT = "we_test";
 const ENV = {
   STRIPE_WEBHOOK_SECRET_TEST: SECRET,
   STRIPE_PRICE_BASIC_TEST: PRICES.basic,
   STRIPE_PRICE_PRO_TEST: PRICES.pro,
   STRIPE_PRICE_ELITE_TEST: PRICES.elite,
+  STRIPE_ACCOUNT_ID_TEST: ACCOUNT,
+  STRIPE_WEBHOOK_ENDPOINT_TEST: ENDPOINT,
   STRIPE_SECRET_KEY: "sk_live_should_not_be_read",
   STRIPE_WEBHOOK_SECRET: "whsec_live_should_not_be_read",
+  STRIPE_WEBHOOK_ENDPOINT: "we_liveunused",
 };
+
+function accountProof(accountId = ACCOUNT, livemode = false) {
+  return {
+    async retrieveAccount() {
+      return { id: accountId };
+    },
+    async retrieveWebhookEndpoint(id: string) {
+      return { id, livemode, status: "enabled" };
+    },
+  };
+}
 
 type PaidLineFixture = Pick<
   Stripe.InvoiceLineItem,
@@ -322,6 +339,7 @@ async function posted(payload: string, header: string | null, enabled = true) {
     enabled,
     env: ENV,
     constructEvent: (body, signature, secret) => Stripe.webhooks.constructEvent(body, signature, secret),
+    accountProof: accountProof(),
     openStore: async () => ({
       async apply(command) {
         applied.push(command);
@@ -334,7 +352,7 @@ async function posted(payload: string, header: string | null, enabled = true) {
 
 describe("stripe webhook parser", () => {
   it("reads only the test webhook secret and the test price ids", () => {
-    assert.deepEqual(readWebhookTestConfig(ENV), { secret: SECRET, prices: PRICES });
+    assert.deepEqual(readWebhookTestConfig(ENV), { secret: SECRET, prices: PRICES, accountId: ACCOUNT, endpointId: ENDPOINT, livemode: false });
     assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_WEBHOOK_SECRET_TEST: "sk_test_secret" }), null);
     assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_PRO_TEST: PRICES.basic }), null);
     assert.equal(readWebhookTestConfig({ STRIPE_SECRET_KEY: "sk_live_secret" }), null);
@@ -344,10 +362,16 @@ describe("stripe webhook parser", () => {
     const legacy = "price_basic700";
     assert.deepEqual(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: legacy }), {
       secret: SECRET,
+      accountId: ACCOUNT,
+      endpointId: ENDPOINT,
+      livemode: false,
       prices: { ...PRICES, legacyBasic: legacy },
     });
     assert.deepEqual(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: "" }), {
       secret: SECRET,
+      endpointId: ENDPOINT,
+      accountId: ACCOUNT,
+      livemode: false,
       prices: PRICES,
     });
     assert.equal(readWebhookTestConfig({ ...ENV, STRIPE_PRICE_BASIC_TEST_LEGACY: PRICES.basic }), null);
@@ -640,6 +664,7 @@ describe("stripe webhook parser", () => {
       enabled: true,
       env: ENV,
       constructEvent: () => explosive,
+      accountProof: accountProof(),
       openStore: async () => {
         opened = true;
         return { async apply() { return { outcome: "invoice_applied" }; } };
@@ -660,6 +685,7 @@ describe("stripe webhook parser", () => {
       enabled: true,
       env: ENV,
       constructEvent: (body, signature, secret) => Stripe.webhooks.constructEvent(body, signature, secret),
+      accountProof: accountProof(),
       openStore: async () => {
         throw new Error("database");
       },
@@ -719,6 +745,97 @@ describe("stripe webhook parser", () => {
     assert.equal(liveResponse.status, 400);
     assert.deepEqual(await liveResponse.json(), { error: "WEBHOOK_LIVEMODE_REJECTED" });
     assert.equal(liveOpened, false);
+
+    const liveEnv = {
+      STRIPE_WEBHOOK_SECRET: "whsec_livesecret123",
+      STRIPE_ACCOUNT_ID: "acct_live",
+      STRIPE_WEBHOOK_ENDPOINT: "we_live",
+      STRIPE_PRICE_BASIC: PRICES.basic,
+      STRIPE_PRICE_PRO: PRICES.pro,
+      STRIPE_PRICE_ELITE: PRICES.elite,
+      STRIPE_PRICE_BASIC_TEST_LEGACY: "price_basic700",
+      STRIPE_WEBHOOK_SECRET_TEST: SECRET,
+    };
+    assert.deepEqual(readWebhookLiveConfig(liveEnv), {
+      secret: "whsec_livesecret123",
+      accountId: "acct_live",
+      endpointId: "we_live",
+      livemode: true,
+      prices: PRICES,
+    });
+    assert.equal(readWebhookLiveConfig({ ...liveEnv, STRIPE_WEBHOOK_SECRET: SECRET }), null);
+    const liveHeaderOk = Stripe.webhooks.generateTestHeaderString({ payload: livePayload, secret: "whsec_livesecret123" });
+    let liveCommand: WebhookCommand | null = null;
+    const accepted = await handleStripeWebhook({
+      request: new Request("https://app.example/api/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": liveHeaderOk },
+        body: livePayload,
+      }),
+      enabled: true,
+      mode: "live",
+      env: { ...liveEnv, VERCEL_ENV: "production", NODE_ENV: "production" },
+      constructEvent: (body, signature, secret) => Stripe.webhooks.constructEvent(body, signature, secret),
+      accountProof: accountProof("acct_live", true),
+      openStore: async () => ({
+        async apply(command) {
+          liveCommand = command;
+          return { outcome: "invoice_applied" };
+        },
+      }),
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(liveCommand?.livemode, true);
+    assert.equal(liveCommand?.accountId, "acct_live");
+    let unverifiedOpened = false;
+    const unverified = await handleStripeWebhook({
+      request: new Request("https://app.example/api/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": liveHeaderOk },
+        body: livePayload,
+      }),
+      enabled: true,
+      mode: "live",
+      env: liveEnv,
+      constructEvent: (body, signature, secret) => Stripe.webhooks.constructEvent(body, signature, secret),
+      accountProof: {
+        async retrieveAccount() {
+          return { id: "acct_live" };
+        },
+        async retrieveWebhookEndpoint(id) {
+          return { id, livemode: true, status: "disabled" };
+        },
+      },
+      openStore: async () => {
+        unverifiedOpened = true;
+        return { async apply() { return { outcome: "invoice_applied" }; } };
+      },
+    });
+    assert.equal(unverified.status, 409);
+    assert.deepEqual(await unverified.json(), { error: "WEBHOOK_ACCOUNT_UNVERIFIED" });
+    assert.equal(unverifiedOpened, false);
+    const wrongAccount = { ...live, account: "acct_other" };
+    const wrongPayload = JSON.stringify(wrongAccount);
+    const wrongHeader = Stripe.webhooks.generateTestHeaderString({ payload: wrongPayload, secret: "whsec_livesecret123" });
+    let wrongOpened = false;
+    const wrong = await handleStripeWebhook({
+      request: new Request("https://app.example/api/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": wrongHeader },
+        body: wrongPayload,
+      }),
+      enabled: true,
+      mode: "live",
+      env: liveEnv,
+      constructEvent: (body, signature, secret) => Stripe.webhooks.constructEvent(body, signature, secret),
+      openStore: async () => {
+        wrongOpened = true;
+        return { async apply() { return { outcome: "invoice_applied" }; } };
+      },
+    });
+    assert.equal(wrong.status, 400);
+    assert.deepEqual(await wrong.json(), { error: "WEBHOOK_ACCOUNT_REJECTED" });
+    assert.equal(wrongOpened, false);
   });
 
   it("does not accept a deleted subscription whose status is still active", () => {
@@ -735,6 +852,8 @@ describe("stripe webhook parser", () => {
     assert.match(source, /request\.text\(\)/);
     assert.doesNotMatch(source, /request\.json\(|api\.stripe\.com|customers\.create|\.paid_out_of_band/);
     assert.match(route, /process\.env\.BILLING_WEBHOOK_ENABLED === "true"/);
+    assert.match(route, /process\.env\.BILLING_LIVE_WEBHOOK_ENABLED === "true"/);
+    assert.match(route, /WEBHOOK_MODE_AMBIGUOUS/);
     assert.match(route, /constructEvent/);
     assert.doesNotMatch(route, /process\.env\.BILLING_WEBHOOK_ENABLED\s*=\s*"true"/);
     assert.match(source, /VERCEL_ENV === "production"/);
@@ -766,5 +885,29 @@ describe("stripe webhook parser", () => {
     assert.doesNotMatch(widened, /grant delete/i);
     assert.doesNotMatch(widened, /p_amount <> 700/);
     assert.doesNotMatch(widened, /p_amount not in \(700, 1900, 3900\)/);
+    const modeSql = readFileSync("supabase/migrations/20261121_billing_livemode_account.sql", "utf8");
+    assert.match(modeSql, /drop function public\.billing_apply_stripe_event/);
+    assert.match(modeSql, /p_account_id text/);
+    assert.match(modeSql, /mode_mismatch/);
+    assert.match(modeSql, /mode_unknown/);
+    assert.match(modeSql, /account_mismatch/);
+    assert.match(modeSql, /account_unknown/);
+    assert.match(modeSql, /p_amount not in \(700, 900, 1900, 3900\)/);
+    assert.doesNotMatch(modeSql, /grant delete/i);
+    assert.doesNotMatch(modeSql, /grant update on table public\.billing_stripe_customers/i);
+    const bindingSql = readFileSync("supabase/migrations/20261122_billing_verified_binding.sql", "utf8");
+    assert.match(bindingSql, /create or replace function public\.billing_apply_stripe_event/);
+    assert.match(bindingSql, /binding_unverified/);
+    assert.match(bindingSql, /grant update \(livemode, stripe_account_id\) on table public\.billing_stripe_customers to service_role/);
+    assert.doesNotMatch(bindingSql, /grant delete/i);
+    assert.doesNotMatch(bindingSql, /drop function public\.billing_apply_stripe_event/);
+    assert.match(source, /does not prove which Stripe account/);
+    assert.match(source, /Ordinary account events omit event.account/);
+    const liveReader = source.slice(
+      source.indexOf("export function readWebhookLiveConfig"),
+      source.indexOf("export function commandFromEvent"),
+    );
+    assert.doesNotMatch(liveReader, /STRIPE_PRICE_BASIC_TEST_LEGACY/);
+    assert.doesNotMatch(liveReader, /legacyBasic/);
   });
 });

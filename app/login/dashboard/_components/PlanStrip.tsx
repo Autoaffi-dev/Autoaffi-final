@@ -1,20 +1,38 @@
 "use client";
 
-type Plan = "basic" | "pro" | "elite";
+import { useState } from "react";
+import { entitlementLabel, paidStatusLabel, testStatusLabel, type EntitlementView } from "@/lib/billing/entitlementView";
 
 export interface PlanStripProps {
-  plan: Plan;
-  // ✅ inte optional längre – alltid number eller null
+  view: EntitlementView;
   beginnerHoursLeft: number | null;
 }
 
-const LABELS: Record<Plan, string> = {
-  basic: "Basic",
-  pro: "Pro",
-  elite: "Elite",
-};
+export default function PlanStrip({ view, beginnerHoursLeft }: PlanStripProps) {
+  const [billingMessage, setBillingMessage] = useState("");
+  const label = entitlementLabel(view);
+  const paying = view.status === "ready" && view.paidPlan !== "none";
+  const showUpgrade = view.status === "ready" && paying && view.paidPlan !== "elite" && view.effectivePlan !== "elite";
 
-export default function PlanStrip({ plan, beginnerHoursLeft }: PlanStripProps) {
+  async function openBilling() {
+    setBillingMessage("");
+    try {
+      const response = await fetch("/api/billing/portal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const body = (await response.json().catch(() => null)) as { url?: string; error?: string } | null;
+      if (response.ok && body?.url) {
+        window.location.assign(body.url);
+        return;
+      }
+      setBillingMessage(body?.error || "Billing could not be opened.");
+    } catch {
+      setBillingMessage("Billing could not be opened.");
+    }
+  }
+
   return (
     <section className="border-b border-emerald-400/20 bg-slate-950/70">
       <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
@@ -26,10 +44,15 @@ export default function PlanStrip({ plan, beginnerHoursLeft }: PlanStripProps) {
 
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-100">
             <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
-              {LABELS[plan]} plan
+              {view.status === "ready" ? paidStatusLabel(view.paidPlan) : label}
             </span>
+            {view.status === "ready" && testStatusLabel(view.testPlan) ? (
+              <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200">
+                {testStatusLabel(view.testPlan)}
+              </span>
+            ) : null}
 
-            {plan !== "elite" && (
+            {showUpgrade && (
               <span className="text-[11px] text-slate-400">
                 Upgrade to unlock Elite Engines & advanced automation.
               </span>
@@ -45,11 +68,16 @@ export default function PlanStrip({ plan, beginnerHoursLeft }: PlanStripProps) {
 
         {/* RIGHT */}
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <button className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-slate-200 hover:border-emerald-400 hover:text-emerald-200">
+          <button
+            type="button"
+            onClick={() => void openBilling()}
+            className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-slate-200 hover:border-emerald-400 hover:text-emerald-200"
+          >
             View billing
           </button>
+          {billingMessage ? <span className="text-slate-400">{billingMessage}</span> : null}
 
-          {plan !== "elite" && (
+          {showUpgrade && (
             <button className="rounded-full bg-emerald-500 px-3 py-1 font-semibold text-black hover:bg-emerald-400">
               See Elite benefits
             </button>

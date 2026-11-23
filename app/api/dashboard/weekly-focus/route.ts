@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { readDashboardPlan } from "@/lib/billing/dashboardPlan";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const NO_STORE = { "cache-control": "private, no-store" };
 
 function getISOWeekNumber(d = new Date()) {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -25,9 +29,14 @@ function getWeekKeyStockholm() {
 }
 
 export async function GET(req: Request) {
+  const entitlement = await readDashboardPlan(req);
+  if (!entitlement.ok) return entitlement.response;
   const url = new URL(req.url);
   const creatorMode = String(url.searchParams.get("creatorMode") ?? "beginner");
-  const plan = String(url.searchParams.get("plan") ?? "basic");
+  if (entitlement.effectivePlan === "none") {
+    return NextResponse.json({ plan: "none", item: null }, { headers: NO_STORE });
+  }
+  const plan = entitlement.effectivePlan;
   const weekKey = getWeekKeyStockholm();
 
   const { data, error } = await supabaseAdmin
@@ -39,10 +48,11 @@ export async function GET(req: Request) {
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE });
   }
 
   return NextResponse.json({
+    plan,
     item: data
       ? {
           weekKey: data.week_key,
@@ -53,5 +63,5 @@ export async function GET(req: Request) {
           win: data.win_condition,
         }
       : null,
-  });
+  }, { headers: NO_STORE });
 }

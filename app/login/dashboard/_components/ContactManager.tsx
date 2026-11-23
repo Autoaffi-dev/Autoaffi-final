@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { entitlementLabel } from "@/lib/billing/entitlementView";
+import { useEntitlementView } from "./useEntitlementView";
 
 type ContactTemperature = "cold" | "warm" | "hot";
 
@@ -1157,7 +1159,12 @@ Before writing a message, ask for missing details only if they are truly needed.
 Always protect trust. The goal is not just to contact more people. The goal is to create better conversations.`;
 }
 
-export default function ContactManager({ plan = "basic" }: ContactManagerProps) {
+export default function ContactManager({ plan: planProp }: ContactManagerProps) {
+  const entitlement = useEntitlementView();
+  const plan =
+    planProp ??
+    (entitlement.status === "ready" && entitlement.effectivePlan !== "none" ? entitlement.effectivePlan : undefined);
+  const accessLabel = planProp ? PLAN_CONFIG[planProp].label : entitlementLabel(entitlement);
   const [items, setItems] = useState<ContactManagerItem[]>([]);
   const [overview, setOverview] =
     useState<ContactManagerOverviewResponse | null>(null);
@@ -1188,7 +1195,15 @@ export default function ContactManager({ plan = "basic" }: ContactManagerProps) 
   const [customerProfileLink, setCustomerProfileLink] = useState("");
   const [draftVariant, setDraftVariant] = useState(0);
 
-  const planConfig = PLAN_CONFIG[plan] || PLAN_CONFIG.basic;
+  const planConfig = plan
+    ? { ...PLAN_CONFIG[plan], label: accessLabel }
+    : {
+        label: accessLabel,
+        canSendEmail: true,
+        canUseDailyBrief: true,
+        canUseDraftVariants: true,
+        canUseEliteBlueprint: false,
+      };
   const emailConnected = emailStatus?.connected === true;
   const connectedEmail = emailStatus?.email || null;
   const connectedProvider = emailStatus?.provider || null;

@@ -95,17 +95,21 @@ function readProof(invoiceId: string): StoredPaidProof {
 function snapshot(userId: string): PaidSubscriptionSnapshot | null {
   const line = psql(
     database,
-    `select coalesce(user_id::text, '') || '|' || coalesce(paid_plan, '') || '|' || coalesce(subscription_status, '') || '|' || coalesce(trunc(extract(epoch from paid_until))::text, '') from public.billing_subscriptions where user_id = ${quote(userId)}::uuid`
+    `select coalesce(user_id::text, '') || '|' || coalesce(paid_plan, '') || '|' || coalesce(subscription_status, '') || '|' || coalesce(trunc(extract(epoch from paid_until))::text, '') || '|' || coalesce(livemode::text, '') || '|' || coalesce(stripe_account_id, '') from public.billing_subscriptions where user_id = ${quote(userId)}::uuid`
   );
   if (!line) return null;
-  const [user_id, paid_plan, subscription_status, paidUntilEpoch] = line.split("|");
+  const [user_id, paid_plan, subscription_status, paidUntilEpoch, mode, account] = line.split("|");
   return {
     user_id,
     paid_plan,
     subscription_status,
     paid_until: new Date(Number(paidUntilEpoch) * 1000).toISOString(),
+    livemode: mode === "true" ? true : mode === "false" ? false : null,
+    stripe_account_id: account || null,
   };
 }
+
+const LOCAL_ACCESS = { livemode: false as const, accountId: "acct_sandbox" };
 
 describe("paid checkout local receiver", { concurrency: 1 }, () => {
   it("proves the signed chain on the temporary database and leaves B without access", async () => {
@@ -126,7 +130,9 @@ describe("paid checkout local receiver", { concurrency: 1 }, () => {
     psqlFile(database, "supabase/migrations/20261112_billing_stripe_events.sql");
     psqlFile(database, "supabase/migrations/20261117_billing_invoice_payment_proof.sql");
     psqlFile(database, "supabase/migrations/20261120_billing_basic_amount_900.sql");
-    psql(database, `insert into public.billing_stripe_customers (user_id, stripe_customer_id) values (${quote(userA)}::uuid, ${quote(customerA)})`);
+    psqlFile(database, "supabase/migrations/20261121_billing_livemode_account.sql");
+    psqlFile(database, "supabase/migrations/20261122_billing_verified_binding.sql");
+    psql(database, `insert into public.billing_stripe_customers (user_id, stripe_customer_id, livemode, stripe_account_id) values (${quote(userA)}::uuid, ${quote(customerA)}, false, 'acct_sandbox')`);
 
     const now = Math.floor(Date.now() / 1000);
     const periodStart = now - 3600;
@@ -184,17 +190,17 @@ describe("paid checkout local receiver", { concurrency: 1 }, () => {
       const gapResponse = await postSignedEvent(server.port, gap);
       assert.equal(gapResponse.body.outcome, "paid_out_of_band");
       assert.deepEqual(server.gaps(), ["paid_out_of_band"]);
-      assert.equal(getPaidPlan(snapshot(userA), userA, new Date()), "none");
+      assert.equal(getPaidPlan(snapshot(userA), userA, new Date(), LOCAL_ACCESS), "none");
       assert.equal(paymentChainAccepted({ gaps: server.gaps(), entitlement: "basic" }), false);
 
       const invoice = signSnapshot(secret, basicInvoiceSnapshot({ ...base, eventId: "evt_locala" }));
       assert.equal((await postSignedEvent(server.port, invoice)).body.outcome, "invoice_awaiting_payment");
       assert.equal(snapshot(userA), null);
-      assert.equal(getPaidPlan(snapshot(userA), userA, new Date()), "none");
+      assert.equal(getPaidPlan(snapshot(userA), userA, new Date(), LOCAL_ACCESS), "none");
 
       const payment = signSnapshot(secret, invoicePaymentSnapshot({ ...base, eventId: "evt_localpay" }));
       assert.equal((await postSignedEvent(server.port, payment)).body.outcome, "invoice_applied");
-      assert.equal(getPaidPlan(snapshot(userA), userA, new Date()), "none");
+      assert.equal(getPaidPlan(snapshot(userA), userA, new Date(), LOCAL_ACCESS), "none");
       assert.equal(snapshot(userA)?.paid_plan, "basic");
       assert.equal(snapshot(userA)?.subscription_status, "incomplete");
 
@@ -207,10 +213,10 @@ describe("paid checkout local receiver", { concurrency: 1 }, () => {
       }));
       assert.equal((await postSignedEvent(server.port, status)).body.outcome, "status_applied");
       const paidUntil = snapshot(userA)?.paid_until;
-      assert.equal(getPaidPlan(snapshot(userA), userA, new Date()), "basic");
+      assert.equal(getPaidPlan(snapshot(userA), userA, new Date(), LOCAL_ACCESS), "basic");
       assert.equal(paidUntil, new Date(periodEnd * 1000).toISOString());
       assert.equal(psql(database, "select trunc(extract(epoch from period_end))::text from public.billing_stripe_invoices"), String(periodEnd));
-      assert.equal(getPaidPlan(snapshot(userB), userB, new Date()), "none");
+      assert.equal(getPaidPlan(snapshot(userB), userB, new Date(), LOCAL_ACCESS), "none");
       assert.equal(snapshot(userB), null);
       const proof = readProof("in_locala");
       const events = server.verifiedPaidEvents();
@@ -248,7 +254,7 @@ describe("paid checkout local receiver", { concurrency: 1 }, () => {
       assert.equal(snapshot(userA)?.paid_until, paidUntil);
       assert.equal(psql(database, "select count(*) from public.billing_stripe_invoices"), "1");
       assert.equal(psql(database, "select invoice_event_id || '|' || payment_event_id || '|' || invoice_payment_id || '|' || payment_intent_id || '|' || amount_paid::text || '|' || currency || '|' || stripe_subscription_id from public.billing_stripe_invoice_proofs where stripe_invoice_id = 'in_locala'"), proofBefore);
-      assert.equal(paymentChainAccepted({ gaps: [], entitlement: getPaidPlan(snapshot(userA), userA, new Date()) }), true);
+      assert.equal(paymentChainAccepted({ gaps: [], entitlement: getPaidPlan(snapshot(userA), userA, new Date(), LOCAL_ACCESS) }), true);
       assert.equal(paymentChainAccepted({ gaps: server.gaps(), entitlement: "basic" }), false);
       assert.equal(server.apiVersions().every((version) => version === "2025-11-17.clover"), true);
     } finally {
